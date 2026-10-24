@@ -207,7 +207,10 @@ function createExecutor({ pool, store, downloads, ffprobe, fixture=false, getDis
           if(task.nextPollAt>Date.now())await wait(task.nextPollAt-Date.now(),undefined,{signal});
           Object.assign(selectors,store.get(account.id)?.selectors || {});
           const state=await page.evaluate(readPageState,{selectors,baseline:before.keys,prompt:task.prompt,anchorKey});
-          if(state.otherUser)throw new Error('任务会话出现额外用户消息，已停止操作以避免混用结果');
+          if(state.otherUser){
+            update({conversationURL:page.url(), userKey:state.userKey, ownershipDiagnostics:{messageCount:state.messageCount,userId:state.userId}});
+            throw new Error('任务会话出现额外用户消息，已停止操作以避免混用结果');
+          }
           if(state.captcha) {
             update({status:'paused',message:'请在任务浏览器窗口完成人工验证',progress:20});
             await wait(1000,undefined,{signal});continue;
@@ -224,8 +227,10 @@ function createExecutor({ pool, store, downloads, ffprobe, fixture=false, getDis
           }
           if(anchorKey)await page.locator('[data-testid="message-list"] .scroller').evaluateAll(es=>es.forEach(e=>{e.scrollTop=e.scrollHeight;}));
           if(state.text!==lastReply){lastReply=state.text;stableSince=Date.now();}
-          update({status:'generating',message:state.generating?'平台正在生成':'等待本次会话回复',progress:30});
-          if(state.generating&&!task.generationWaitStartedAt){update({generationWaitStartedAt:new Date().toISOString(),nextPollAt:Date.now()+5*60*1000,pollIntervalSeconds:30,message:'平台正在生成：先等待5分钟，随后每30秒查询一次'});}
+          const awaitingConfirmation=state.confirmation && !state.confirmationSent && !task.confirmationSentAt;
+          const generating=state.generating && !state.responding && !awaitingConfirmation;
+          update({status:'generating',message:state.responding?'豆包正在回复方案，等待回复完成':awaitingConfirmation?'方案已回复，等待稳定后确认生成':generating?'平台正在生成':'等待本次会话回复',progress:30});
+          if(generating&&!task.generationWaitStartedAt){update({generationWaitStartedAt:new Date().toISOString(),nextPollAt:Date.now()+5*60*1000,pollIntervalSeconds:30,message:'平台正在生成：先等待5分钟，随后每30秒查询一次'});}
           // A playable video in a new assistant reply takes priority over text rules.
           const candidate=state.media.find(m=>m.ready);
           if(candidate || state.complete) {
@@ -243,8 +248,8 @@ function createExecutor({ pool, store, downloads, ffprobe, fixture=false, getDis
           }
           if(state.refusal) throw new Error('平台拒绝：'+state.text.slice(-1000));
           if(state.failure) throw new Error('平台生成失败：'+state.text.slice(-1000));
-          if(!state.generating && !state.responding && !state.confirmationSent && confirmations===0 && !task.confirmationSentAt && state.confirmation && Date.now()-stableSince>=15000 && state.text!==lastConfirmation) {
-            confirmations++;update({confirmationSentAt:new Date().toISOString()});
+          if(!generating && !state.responding && !state.confirmationSent && confirmations===0 && !task.confirmationSentAt && state.confirmation && Date.now()-stableSince>=15000 && state.text!==lastConfirmation) {
+            confirmations++;update({confirmationSentAt:new Date().toISOString(),message:'方案回复已结束，正在确认生成视频'});
             update({status:'submitting',message:'平台方案已输出完成，确认并开始生成视频',progress:25});
             await submitText(page,'确认，开始生成视频',selectors,signal);lastConfirmation=state.text;
           }

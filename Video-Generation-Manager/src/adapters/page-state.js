@@ -26,14 +26,15 @@ function readPageState({ selectors = {}, baseline = [], prompt = '', anchorKey =
     const role = e.matches(config.userMessage) || /(?:^|[ _-])user(?:$|[ _-])/i.test(tag) ? 'user' :
       e.matches(config.assistantMessage) || /assistant|(?:^|[ _-])bot(?:$|[ _-])/i.test(tag) ? 'assistant' : 'unknown';
     const content=[...e.querySelectorAll('[data-testid="message_text_content"]')].map(n=>n.textContent).join('\n');
-    return { e, key, role, text:normalize(content || e.innerText || e.textContent), id:String(e.getAttribute('data-message-id') || e.querySelector('[data-message-id]')?.getAttribute('data-message-id') || '') };
+    const attachmentOnly=role==='user' && !normalize(content || e.innerText || e.textContent) && Boolean(e.querySelector('img, video, [data-testid="attachment-image-card"]'));
+    return { e, key, role, attachmentOnly, text:normalize(content || e.innerText || e.textContent), id:String(e.getAttribute('data-message-id') || e.querySelector('[data-message-id]')?.getAttribute('data-message-id') || '') };
   });
   let anchor = messages.find(m => m.key === anchorKey);
   if (!anchor && prompt) anchor = messages.find(m => !before.has(m.key) && m.role === 'user' && matchesPrompt(m.text,prompt));
   if(anchor && prompt) window.__LOCAL_MANAGER_ANCHOR__={key:anchor.key,prompt:normalize(prompt),id:anchor.id,element:anchor.e};
   const cached=window.__LOCAL_MANAGER_ANCHOR__;
   if(!anchor && anchorKey && cached?.key===anchorKey && cached.prompt===normalize(prompt)) anchor={key:cached.key,id:cached.id,e:cached.element};
-  const otherUser=anchor && messages.some(m=>m.role==='user'&&!before.has(m.key)&&m.key!==anchor.key&&!matchesPrompt(m.text,prompt)&&!['生成视频','确认，开始生成视频'].includes(m.text));
+  const otherUser=anchor && messages.some(m=>m.role==='user'&&!before.has(m.key)&&m.key!==anchor.key&&!(m.attachmentOnly && Boolean(m.e.compareDocumentPosition(anchor.e) & Node.DOCUMENT_POSITION_FOLLOWING))&&!matchesPrompt(m.text,prompt)&&!['生成视频','确认，开始生成视频'].includes(m.text));
   const replies = anchor && !otherUser ? messages.filter(m => m.role==='assistant' && !before.has(m.key) && !anchor.e.contains(m.e)
     && (!anchor.e.isConnected || Boolean(anchor.e.compareDocumentPosition(m.e) & Node.DOCUMENT_POSITION_FOLLOWING))) : [];
   const media = [];
