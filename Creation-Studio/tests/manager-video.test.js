@@ -26,7 +26,7 @@ const MP4 = Buffer.concat([Buffer.from('000000206674797069736f6d0000020069736f6d
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
 
 function startMockManager() {
-  const state = { tasks: [], submits: [], polls: 0, auth: '' };
+  const state = { tasks: [], submits: [], polls: 0, auth: '', failDownloadOnce: true };
   const server = http.createServer((req, res) => {
     const send = (code, payload, type = 'application/json') => {
       const body = Buffer.isBuffer(payload) ? payload : Buffer.from(JSON.stringify(payload));
@@ -61,7 +61,10 @@ function startMockManager() {
     }
     const taskRoute = /^\/api\/tasks\/([^/]+)(?:\/(file))?$/.exec(url.pathname);
     if (taskRoute) {
-      if (taskRoute[2] === 'file') return send(200, MP4, 'video/mp4');
+      if (taskRoute[2] === 'file') {
+        if (state.failDownloadOnce) { state.failDownloadOnce = false; return send(503, {error:'temporary download failure'}); }
+        return send(200, MP4, 'video/mp4');
+      }
       state.polls += 1;
       const task = state.tasks[0] || {};
       if (state.polls >= 2) {
@@ -145,13 +148,23 @@ test('外接管理器：豆包 / Gemini 视频任务跑通', { timeout: 90000 },
     assert.equal(jobRes.ok, true, JSON.stringify(jobRes));
     const jobId = jobRes.data.jobs[0].id;
 
-    const done = await waitFor(async () => {
+    let done = await waitFor(async () => {
       const list = await json('/api/jobs');
       const job = list.data.jobs.find((j) => j.id === jobId);
       if (job && ['success', 'failed'].includes(job.status)) return job;
       return null;
     }, 45000);
-    assert.equal(done.status, 'success', '任务应成功：' + (done.error || ''));
+    assert.equal(done.status, 'failed', '首次下载故障应保留远程任务');
+    const originalRemote = done.remotePromptId;
+    const continued = await post('/api/jobs/' + jobId + '/resume', {});
+    assert.equal(continued.ok, true, JSON.stringify(continued));
+    done = await waitFor(async () => {
+      const job = (await json('/api/jobs')).data.jobs.find(j => j.id === jobId);
+      return ['success','failed'].includes(job.status) ? job : null;
+    }, 45000);
+    assert.equal(done.status, 'success', done.error || '继续下载应成功');
+    assert.equal(done.remotePromptId, originalRemote);
+    assert.equal(manager.state.submits.length, 1, '继续下载不能重新提交生成');
     assert.ok(done.outputs.length === 1, '应该有一个成片输出');
     assert.ok(fs.existsSync(done.outputs[0].path), '成片应该落盘');
     assert.equal(fs.readFileSync(done.outputs[0].path).length, MP4.length);

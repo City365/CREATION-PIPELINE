@@ -1611,6 +1611,7 @@ function renderJobs() {
         <td class="small">${fmtTime(job.createdAt)}<div class="hint">${ago(job.createdAt)}</div></td>
         <td><div class="cell-actions">
           ${job.status === 'queued' || job.status === 'running' ? `<button class="btn sm" data-act="cancel" data-id="${job.id}">取消</button>` : ''}
+          ${job.provider === 'manager' && job.remotePromptId && ['failed', 'canceled'].includes(job.status) ? `<button class="btn sm" data-act="resume" data-id="${job.id}">继续查询／下载</button>` : ''}
           ${job.status === 'failed' || job.status === 'canceled' || job.status === 'success' ? `<button class="btn sm" data-act="retry" data-id="${job.id}">重试</button>` : ''}
           ${job.status === 'queued' ? `<button class="btn sm" data-act="${job.held ? 'unhold' : 'hold'}" data-id="${job.id}">${job.held ? '解锁' : '锁定'}</button>` : ''}
           ${video ? `<button class="btn sm" data-act="play" data-id="${job.id}">播放</button>` : ''}
@@ -1637,6 +1638,7 @@ function bindJobs(root) {
     try {
       if (act === 'go-studio') { location.hash = '#studio'; return; }
       if (act === 'cancel') { await api(`/api/jobs/${id}/cancel`, { method: 'POST' }); toast('已请求取消'); }
+      if (act === 'resume') { await api(`/api/jobs/${id}/resume`, { method: 'POST' }); toast('已继续原任务，不会重新生成'); }
       if (act === 'retry') { await api(`/api/jobs/${id}/retry`, { method: 'POST' }); toast('已重新排队'); }
       if (act === 'delete') {
         if (!confirm('删除这条任务记录？（不会删除已下载的视频）')) return;

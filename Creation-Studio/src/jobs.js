@@ -33,7 +33,7 @@ function loadState() {
     if (job.status === 'running' || job.status === 'queued') {
       job.status = 'failed';
       job.stage = '已中断';
-      job.error = '服务重启，任务已中断；可点「重试」重新提交';
+      job.error = job.provider === 'manager' && job.remotePromptId ? '服务重启，任务已中断；可点「继续查询／下载」恢复原任务' : '服务重启，任务已中断；可点「重试」重新提交';
       job.finishedAt = Date.now();
       job.progress = 0;
     }
@@ -292,6 +292,21 @@ function cancel(id) {
   throw new Error('任务已结束，无法取消');
 }
 
+async function resume(id) {
+  const job = get(id);
+  if (!job || job.provider !== 'manager' || !job.remotePromptId) throw new Error('任务没有可继续的管理器编号');
+  if (!['failed', 'canceled'].includes(job.status)) throw new Error('任务尚未结束或已完成');
+  const channel = channels.get('video', job.channelId);
+  if (!channel) throw new Error('管理器渠道已删除');
+  // Restore the existing remote task; never call the generation submission endpoint.
+  await managerVideo.resume(channel, job.remotePromptId);
+  if (!['failed', 'canceled'].includes(job.status)) return job;
+  job.resumeRemote = true; job.status = 'queued'; job.stage = '继续查询原任务';
+  job.error = null; job.finishedAt = null; job.held = false;
+  log(job, 'info', '继续原管理器任务 ' + job.remotePromptId + '，不重新生成');
+  touch(job); setImmediate(pump); return job;
+}
+
 function retry(id) {
   const job = get(id);
   if (!job) throw new Error('任务不存在');
@@ -305,6 +320,7 @@ function retry(id) {
   job.finishedAt = null;
   job.logs = [];
   job.held = false;
+  job.resumeRemote = false;
   log(job, 'info', '重新排队');
   touch(job);
   setImmediate(pump);
@@ -588,7 +604,9 @@ async function runManagerVideo(job, wf, a, slot) {
   job.stage = '提交到管理器…';
   touch(job, { progress: 10 });
   log(job, 'info', `管理器渠道「${channel.name}」· ${managerVideo.PLATFORM_LABEL[platform] || platform}`);
-  const submitted = await managerVideo.submit(channel, job, platform);
+  const submitted = job.resumeRemote && job.remotePromptId
+    ? { taskId: job.remotePromptId, account: { name: '原任务账号' } }
+    : await managerVideo.submit(channel, job, platform);
   job.remotePromptId = submitted.taskId;
   log(job, 'info', `已交给管理器账号「${submitted.account.name}」，任务 ${submitted.taskId}`);
   touch(job, { progress: 18, stage: '生成中…' });
@@ -653,6 +671,7 @@ module.exports = {
   addJobs,
   cancel,
   retry,
+  resume,
   remove,
   setHeld,
   reorder,

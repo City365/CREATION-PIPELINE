@@ -1106,7 +1106,7 @@ function mediaPath(input) {
     return ok(res, { jobs: created.map((j) => ({ id: j.id })), warnings: check.warnings });
   }
 
-  const jobAction = /^\/api\/jobs\/([^/]+)\/(cancel|retry|delete|hold|unhold|logs)$/.exec(pathname);
+  const jobAction = /^\/api\/jobs\/([^/]+)\/(cancel|retry|resume|delete|hold|unhold|logs)$/.exec(pathname);
   if (jobAction) {
     const id = jobAction[1];
     const action = jobAction[2];
@@ -1118,6 +1118,7 @@ function mediaPath(input) {
     if (method !== 'POST') return bad(res, 'method not allowed', 405);
     if (action === 'cancel') return ok(res, jobs.cancel(id));
     if (action === 'retry') return ok(res, jobs.retry(id));
+    if (action === 'resume') return ok(res, await jobs.resume(id));
     if (action === 'delete') return ok(res, jobs.remove(id));
     if (action === 'hold') return ok(res, jobs.setHeld(id, true));
     if (action === 'unhold') return ok(res, jobs.setHeld(id, false));

@@ -121,7 +121,19 @@ async function poll(channel, taskId) {
     message: String(data.message || data.error || ''),
     result: data.result || null,
     accountId: data.accountId || '',
+    conversationURL: data.conversationURL || '',
   };
+}
+
+async function resume(channel, taskId) {
+  const current = await poll(channel, taskId);
+  if (current.status !== 'failed') return current;
+  if (!current.conversationURL) throw new Error('原任务没有可恢复会话，请打开管理器检查，未重新提交');
+  const response = await httpJson(baseUrl(channel) + '/api/tasks/' + encodeURIComponent(taskId) + '/resume', {
+    method: 'POST', headers: authHeaders(channel, { 'Content-Type': 'application/json' }), body: '{}', timeoutMs: 30000,
+  });
+  if (!response.ok) throw new Error('继续管理器任务失败：' + failMessage(response, 'HTTP ' + response.status));
+  return response.data;
 }
 
 async function cancel(channel, taskId) {
@@ -167,4 +179,4 @@ async function test(channel) {
   }
 }
 
-module.exports = { DEFAULT_BASE, PLATFORM_LABEL, health, state, accounts, accountsFor, submit, poll, download, cancel, test, shortAspect, baseUrl };
+module.exports = { DEFAULT_BASE, PLATFORM_LABEL, health, state, accounts, accountsFor, submit, poll, resume, download, cancel, test, shortAspect, baseUrl };
