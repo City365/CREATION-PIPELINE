@@ -8,7 +8,8 @@ async function prepareReferenceDraft(pool,account,input){
  await applyOptions(page,{platform:'doubao'},account.selectors||{},signal);
  try{await uploadReferences(page,input.references||[],account.selectors||{},signal,'doubao');}catch(error){return {sent:false,error:error.message,uploadDiagnostics:error.uploadDiagnostics};}
  const editor=await firstVisible(page,account.selectors?.editor||'[contenteditable=true]');
- const binding=await require('./adapters/doubao-mentions').bindReferences(page,editor,input.prompt||'图片绑定草稿测试 @图1 与 <Picture 2> 同框。仅草稿，不发送。',input.references||[],signal);
+ const conversion=require('./prompt-mappings').createMappings(pool.store.directory).convert(input.prompt||'图片绑定草稿测试 @图1 与 <Picture 2> 同框。仅草稿，不发送。','doubao');
+ const binding=await require('./adapters/doubao-mentions').bindReferences(page,editor,conversion.text,input.references||[],signal);
  return page.evaluate(binding=>({bindings:binding.bindings,url:location.origin+location.pathname,editor:document.querySelector('[contenteditable=true]')?.outerHTML,tail:document.body.innerText.slice(-2500),sent:false}),binding);
 }
 module.exports={prepareReferenceDraft};

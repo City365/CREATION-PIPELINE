@@ -126,3 +126,10 @@ npm run test:ui
 工作台提交豆包任务时，提示词中的 `@图1`、`@图片1`、`<Picture 1>` 按本次图片上传顺序转换为豆包原生附件引用。转换通过真实 @ 素菜单选择对应文件，并核对引用节点的名称、缩略图和数量。重复引用同一图片受支持。编号越界、重名文件或绑定校验失败时停止发送。未写图片引用的提示词维持原有文本。
 
 管理器提供仅草稿验收接口 `POST /api/accounts/:id/reference-draft`，参数为 `references`（图片路径数组）和 `prompt`；该入口只上传并填写草稿，不发送消息、不创建视频生成任务。生成任务保存 `referenceBindings` 与转换后的 `submittedPrompt`，用于后续会话归属检查与恢复。
+
+
+### H3 平台转换映射表
+
+在系统管理 → H3 标签转换与平台映射中，可分别维护豆包与 Gemini 的五类输出模板、语言名称和规则开关，并预览未保存的规则。规则保存在本地 data/prompt-mappings.json。模板变量包括 {n}、{language}、{text}、{voice}；对白和画外音必须保留 {text}，编号规则必须保留 {n}。
+
+正式任务在执行前生成 convertedPrompt，保留原始 prompt，并保存 promptMapping 配置快照与 conversionWarnings。恢复任务沿用原规则快照。豆包转换后的图片引用交给原生绑定器；Gemini 使用文字引用。关闭镜头规则可保留原始 [Shot N]，未知语言保留名称并提示。画外音不添加说话人绑定；重复的 Subject 与 S 编号会合并。

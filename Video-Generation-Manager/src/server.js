@@ -113,7 +113,14 @@ async function createService(options={}) {
   const getDispatcher=url=>settings.dispatcher(url);
   const doubaoExecutor=createExecutor({pool,store,downloads:currentDownloads,ffprobe,fixture:Boolean(options.testBaseURL),getDispatcher});
   const geminiExecutor=createGeminiExecutor({pool,store,downloads:currentDownloads,ffprobe,getDispatcher});
-  const execute=options.execute || ((task,account,signal,update)=>(task.platform==='gemini'?geminiExecutor:doubaoExecutor)(task,account,signal,update));
+  const mappings=require('./prompt-mappings').createMappings(directory);
+  const execute=options.execute || ((task,account,signal,update)=>{
+    const conversion=task.resume && task.promptMapping ? {text:task.convertedPrompt,config:task.promptMapping,warnings:task.conversionWarnings||[]} : mappings.convert(task.prompt,task.platform);
+    const prepared={...task,prompt:conversion.text};
+    const patch={convertedPrompt:conversion.text,promptMapping:conversion.config,conversionWarnings:conversion.warnings};
+    Object.assign(prepared,patch);update(patch);
+    return (task.platform==='gemini'?geminiExecutor:doubaoExecutor)(prepared,account,signal,p=>{Object.assign(prepared,p);update(p);});
+  });
   const queue=new TaskQueue({directory,store,execute});
   const webRoot=path.join(__dirname,'..','web');let dashboard, dashboardPage, dashboardOpening, closePromise;let shuttingDown=false;
   let resolveClosed;const closed=new Promise(resolve=>{resolveClosed=resolve;});
@@ -134,6 +141,15 @@ async function createService(options={}) {
       if(req.method==='GET' && pathname==='/health'){send(res,200,{ok:true,version:'0.1.0',service:'doubao-local-manager'});return;}
       if(pathname.startsWith('/api/')) {
         if(!authorized(req)){send(res,401,{error:'本地连接凭据无效，请从管理器打开页面或配置插件connection_file'});return;}
+        if(pathname==='/api/prompt-mappings'){
+          if(req.method==='GET'){send(res,200,mappings.get());return;}
+          if(req.method==='PUT'){send(res,200,mappings.save(await body(req)));return;}
+        }
+        if(pathname==='/api/prompt-mappings/preview' && req.method==='POST'){
+          const input=await body(req);const config=input.config?require('./prompt-mappings').validate(input.config):mappings.get();
+          if(!['doubao','gemini'].includes(input.platform)||typeof input.text!=='string'||input.text.length>100000)throw new Error('预览参数无效');
+          send(res,200,require('./prompt-mappings').convert(input.text,input.platform,config));return;
+        }
         if(req.method==='GET' && pathname==='/api/connection'){send(res,200,{baseURL:expected,apiToken:token,connectionFile});return;}
         if(req.method==='GET' && pathname==='/api/settings'){send(res,200,settings.public());return;}
         if(req.method==='PUT' && pathname==='/api/settings'){
