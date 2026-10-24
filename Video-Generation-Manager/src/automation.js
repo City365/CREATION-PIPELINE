@@ -79,11 +79,13 @@ async function applyOptions(page, task, selectors, signal) {
   if(task.resolution && proof.applied.resolution.toLowerCase()!==task.resolution.toLowerCase())throw new Error('分辨率回读不一致，未提交生成');
   return proof;
 }
-async function submitText(page, text, selectors, signal, beforeSend) {
+async function submitText(page, text, selectors, signal, beforeSend, referenceFiles = null) {
   signal.throwIfAborted();
   const editor=await firstVisible(page,selectors.editor || 'textarea, [contenteditable="true"][role="textbox"], [data-slate-editor="true"], [contenteditable="true"]');
-  await editor.fill(text); signal.throwIfAborted();
-  if(beforeSend)await beforeSend();
+  const binding=referenceFiles ? await require('./adapters/doubao-mentions').bindReferences(page,editor,text,referenceFiles,signal) : null;
+  if(!binding)await editor.fill(text);
+  signal.throwIfAborted();
+  if(beforeSend)await beforeSend(binding);
   if(selectors.send) await (await firstVisible(page,selectors.send,5000)).click();
   else {
     const stableSend=page.locator('[data-testid="chat_input_send_button"]');
@@ -116,7 +118,7 @@ async function uploadReferences(page, files, selectors, signal, platform) {
       const chooser=await chooserPromise;if(chooser instanceof Error)throw new Error('图片选择器未打开');
       await chooser.setFiles(file);
     }else throw new Error('找不到图片上传控件，请配置uploadButton和uploadMenuItem');
-    const end=Date.now()+30000;let ready=false;
+    const end=Date.now()+120000;let ready=false;
     while(Date.now()<end) {
       signal.throwIfAborted();
       const count=await page.locator(selectors.attachment).count();
@@ -196,9 +198,10 @@ function createExecutor({ pool, store, downloads, ffprobe, fixture=false, getDis
         const before=task.resume?{keys:[],captcha:false}:await page.evaluate(readPageState,{selectors});
         if(before.captcha) {update({status:'paused',message:'请在账号窗口完成人工验证'});throw new Error('提交前需要人工验证，请完成后重新提交');}
         update({status:'submitting',message:'提交提示词',progress:10});
-        if(!task.resume)await submitText(page,task.prompt,selectors,signal,()=>{
+        if(!task.resume)await submitText(page,task.prompt,selectors,signal,(binding)=>{
+          if(binding)update({submittedPrompt:binding.text,referenceBindings:binding.bindings});
           const quota=store.consumeQuota(account.id);update({quotaCharged:true,quotaDate:quota.date});
-        });
+        },account.platform==='doubao'?task.references:null);
         const deadline=Date.now()+task.timeoutSeconds*1000;
         let anchorKey='',submittedDeadline=Date.now()+60000, confirmations=0,lastConfirmation='',lastReply='',stableSince=Date.now();
         let media,ownership;
@@ -206,7 +209,7 @@ function createExecutor({ pool, store, downloads, ffprobe, fixture=false, getDis
           signal.throwIfAborted();
           if(task.nextPollAt>Date.now())await wait(task.nextPollAt-Date.now(),undefined,{signal});
           Object.assign(selectors,store.get(account.id)?.selectors || {});
-          const state=await page.evaluate(readPageState,{selectors,baseline:before.keys,prompt:task.prompt,anchorKey});
+          const state=await page.evaluate(readPageState,{selectors,baseline:before.keys,prompt:task.submittedPrompt||task.prompt,anchorKey});
           if(state.otherUser){
             update({conversationURL:page.url(), userKey:state.userKey, ownershipDiagnostics:{messageCount:state.messageCount,userId:state.userId}});
             throw new Error('任务会话出现额外用户消息，已停止操作以避免混用结果');

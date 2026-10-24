@@ -158,7 +158,7 @@ async function createService(options={}) {
           const input=await body(req);if(input.platform==='fixture' && !options.testBaseURL)throw new Error('测试平台未启用');
           send(res,201,store.add(input));queue.kick();return;
         }
-        const accountRoute=pathname.match(/^\/api\/accounts\/([0-9a-f-]{36})(?:\/(open|close|inspect|prepare-video))?$/i);
+        const accountRoute=pathname.match(/^\/api\/accounts\/([0-9a-f-]{36})(?:\/(open|close|inspect|prepare-video|reference-draft))?$/i);
         if(accountRoute){
           const account=store.get(accountRoute[1]);if(!account){send(res,404,{error:'账号不存在'});return;}
           if(req.method==='PATCH' && !accountRoute[2]){send(res,200,store.update(account.id,await body(req)));queue.kick();return;}
@@ -167,6 +167,12 @@ async function createService(options={}) {
             await pool.closeAccount(account.id);send(res,200,store.remove(account.id));return;
           }
           if(req.method==='POST' && accountRoute[2]==='prepare-video'){if(queue.busy.has(account.id))throw new Error('账号正在执行任务');await pool.open(account);const context=await pool.context(account);const page=context.pages().filter(p=>!p.isClosed()&&p.url().startsWith(pool.url(account).split('/chat')[0])).at(-1);const input=await body(req);if(input.prompt)await page.locator(account.selectors?.editor||'[contenteditable=true]').fill(String(input.prompt));send(res,200,await applyOptions(page,{...input,platform:account.platform},account.selectors||{},new AbortController().signal));return;}
+          if(req.method==='POST' && accountRoute[2]==='reference-draft'){
+            if(queue.busy.has(account.id))throw new Error('账号正在执行任务');
+            const input=await body(req);
+            const {prepareReferenceDraft}=require('./reference-draft');
+            send(res,200,await prepareReferenceDraft(pool,account,input));return;
+          }
           if(req.method==='GET' && accountRoute[2]==='inspect'){send(res,200,await pool.inspect(account));return;}
           if(req.method==='POST' && accountRoute[2]==='open'){send(res,200,await pool.open(account));return;}
           if(req.method==='POST' && accountRoute[2]==='close'){
@@ -236,7 +242,7 @@ async function createService(options={}) {
         const taskRoute=pathname.match(/^\/api\/tasks\/([0-9a-f-]{36})(?:\/(cancel|file|resume|diagnostics|play|open))?$/i);
         if(taskRoute){
           const t=queue.get(taskRoute[1]);
-          if(req.method==='GET'&&taskRoute[2]==='diagnostics'){send(res,200,await pool.diagnoseVideo(store.get(t.accountId),t.prompt,url=>settings.dispatcher(url)));return;}
+          if(req.method==='GET'&&taskRoute[2]==='diagnostics'){send(res,200,await pool.diagnoseVideo(store.get(t.accountId),t.submittedPrompt||t.prompt,url=>settings.dispatcher(url)));return;}
           if(req.method==='GET' && !taskRoute[2]){send(res,200,queue.public(t));return;}
           if(req.method==='POST' && taskRoute[2]==='resume'){
             const input=await body(req);
@@ -246,7 +252,7 @@ async function createService(options={}) {
               if(queue.busy.has(account.id))throw new Error('账号正在执行任务');
               const page=await pool.taskPage(account,String(input.conversationURL));
               await page.locator(account.selectors?.editor||'[contenteditable=true]').first().waitFor({timeout:30000});
-              const found=await page.evaluate(readPageState,{selectors:account.selectors||{},prompt:t.prompt});
+              const found=await page.evaluate(readPageState,{selectors:account.selectors||{},prompt:t.submittedPrompt||t.prompt});
               if(!found.userKey||found.otherUser)throw new Error('会话中没有匹配本任务的提示词，未继续生成');
               t.conversationURL=page.url().split('?')[0];queue.persist();
             }
