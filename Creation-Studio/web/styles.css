@@ -1793,3 +1793,5 @@ body.is-pane-resizing * { user-select: none !important; }
 .ask-inline-error { margin: 8px 0; padding: 8px 10px; border: 1px solid rgba(220,80,80,.45); background: rgba(220,80,80,.08); color: #d05a5a; border-radius: 6px; font-size: 12px; line-height: 1.6; }
 
 .ask-gen-elapsed { margin-left: 4px; font-size: 10px; color: var(--ask-muted); font-variant-numeric: tabular-nums; }
+
+.h3-prompt-wrap{position:relative}.studio-reference-menu{position:absolute;bottom:8px;left:8px;right:8px;z-index:30;max-height:220px;overflow:auto;background:var(--surface,#fff);color:var(--text,#222);border:1px solid var(--border,#aaa);box-shadow:0 4px 16px #0002;padding:6px}.studio-reference-menu[hidden]{display:none}.studio-reference-menu button{display:block;width:100%;padding:9px;text-align:left;background:transparent;color:inherit;border:0;cursor:pointer}.studio-reference-menu button[aria-selected="true"],.studio-reference-menu button:hover{background:var(--surface-2,#e9eef8)}.studio-reference-menu span{display:block;padding:9px}

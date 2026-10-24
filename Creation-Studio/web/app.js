@@ -1055,7 +1055,8 @@ function renderStudio() {
           </div>
           <div class="h3-prompt-wrap${mode === 'code' ? ' is-editing' : ''}">
             <div class="h3-prompt ${mode === 'tags' ? '' : 'is-hidden'}" id="prompt-view">${mode === 'tags' ? promptPreviewHtml(s.prompt) : ''}</div>            <textarea class="h3-prompt-code ${mode === 'code' ? '' : 'is-hidden'}" id="prompt-editor" spellcheck="false"
-              placeholder="描述画面、动作、运镜与声音。用 <Picture 1> 引用参考图、<Subject 1> 引用主体、<Audio 1> 引用音频，用 <d>[Chinese] 台词</d> 写对白。">${esc(s.prompt)}</textarea>
+              placeholder="输入 @ 选择已上传的图片或音频。用 <Picture 1> 引用参考图、<Subject 1> 引用主体、<Audio 1> 引用音频，用 <d>[Chinese] 台词</d> 写对白。">${esc(s.prompt)}</textarea>
+            <div id="studio-reference-menu" class="studio-reference-menu" role="listbox" aria-label="参考素材" hidden></div>
           </div>
           <div class="prompt-warn ${(s.warnings || []).length ? 'show' : ''}" id="prompt-warn">${(s.warnings || []).map((w) => '· ' + esc(w)).join('<br>')}</div>
         </div>
@@ -1169,6 +1170,8 @@ function bindStudio(root) {
       if (count) count.textContent = s.prompt.length + '字';
     };
     editor.onblur = () => { validatePromptSoon(); };
+    const menu = $('#studio-reference-menu', root);
+    if (menu) bindStudioMentions(editor, menu);
   }
 
   // 标签视图只读，点一下直接进代码视图（原版是行内富文本编辑，这里用等价的编辑入口）
@@ -1313,14 +1316,53 @@ function insertAtCursor(text) {
   editor.focus();
 }
 
+function studioReferenceTags(studio = state.studio, workflow = currentWorkflow()) {
+  const images = studio.images.slice(0, workflow.images).filter(Boolean);
+  const audios = studio.audios.slice(0, workflow.audios).filter(Boolean);
+  return [
+    ...images.map((img, i) => ({ label: '<Picture ' + (i + 1) + '>  ' + (img.subject || img.name || '图像 ' + (i + 1)), insert: '<Picture ' + (i + 1) + '>' })),
+    ...images.flatMap((img, i) => img.subject ? [{ label: '<Subject ' + (i + 1) + '>  ' + img.subject, insert: '<Subject ' + (i + 1) + '>' }] : []),
+    ...audios.map((audio, i) => ({ label: '<Audio ' + (i + 1) + '>  ' + (audio.name || '音频 ' + (i + 1)), insert: '<Audio ' + (i + 1) + '>' })),
+  ];
+}
+
+function bindStudioMentions(editor, host) {
+  let range = null, index = 0, items = [];
+  function close() { range = null; host.hidden = true; host.innerHTML = ''; editor.removeAttribute('aria-expanded'); }
+  function choose(at) {
+    if (!range || !items[at]) return;
+    editor.setSelectionRange(range.start, range.end);
+    insertAtCursor(items[at].insert + ' ');
+    close(); validatePromptSoon();
+  }
+  function update() {
+    if (editor.selectionStart !== editor.selectionEnd) return close();
+    const prefix = editor.value.slice(0, editor.selectionStart);
+    const match = prefix.match(/@([^@\s<>]*)$/);
+    if (!match) return close();
+    const query = match[1].toLowerCase();
+    range = { start: prefix.length - match[0].length, end: prefix.length };
+    items = studioReferenceTags().filter(item => item.label.toLowerCase().includes(query));
+    index = Math.min(index, Math.max(0, items.length - 1));
+    host.hidden = false; editor.setAttribute('aria-expanded', 'true');
+    host.innerHTML = items.length ? items.map((item, at) => '<button type="button" role="option" aria-selected="' + (at === index) + '" data-reference-index="' + at + '">' + esc(item.label) + '</button>').join('') : '<span>没有匹配素材，请先上传图片或音频</span>';
+    host.querySelectorAll('button').forEach(button => { button.onmousedown = event => event.preventDefault(); button.onclick = () => choose(Number(button.dataset.referenceIndex)); });
+  }
+  editor.addEventListener('input', () => { index = 0; update(); });
+  editor.addEventListener('click', update);
+  editor.addEventListener('keyup', event => { if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) update(); });
+  editor.addEventListener('keydown', event => {
+    if (event.isComposing || !range) return;
+    if (event.key === 'Escape') { event.preventDefault(); close(); }
+    else if (items.length && ['ArrowDown', 'ArrowUp'].includes(event.key)) { event.preventDefault(); index = (index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length; update(); }
+    else if (items.length && ['Enter', 'Tab'].includes(event.key)) { event.preventDefault(); choose(index); }
+  });
+  editor.addEventListener('blur', close);
+}
+
 function openTagMenu() {
   const s = state.studio;
-  const subjects = s.images.map((img, i) => img && img.subject ? { ordinal: i + 1, name: img.subject } : null).filter(Boolean);
-  const tags = [
-    ...s.images.map((img, i) => ({ label: `<Picture ${i + 1}>  图像 ${i + 1}`, insert: `<Picture ${i + 1}>` })),
-    ...subjects.map((sub) => ({ label: `<Subject ${sub.ordinal}>  ${sub.name}`, insert: `<Subject ${sub.ordinal}>` })),
-    ...s.audios.map((audio, i) => ({ label: `<Audio ${i + 1}>  音频 ${i + 1}`, insert: `<Audio ${i + 1}>` })),
-  ];
+  const tags = studioReferenceTags();
   const extra = [
     { label: '对白  <d>[Chinese] 台词</d>', insert: '<d>[Chinese] </d>' },
     { label: '分镜  [Shot 2] At 00:04.000, ', insert: '[Shot 2] At 00:04.000, ' },
