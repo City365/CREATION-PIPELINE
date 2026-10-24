@@ -95,7 +95,14 @@ async function submitText(page, text, selectors, signal, beforeSend) {
 }
 async function uploadReferences(page, files, selectors, signal, platform) {
   if(!files.length) return;
-  if(!selectors.attachment || !selectors.uploading) throw new Error('参考图上传需要配置attachment和uploading选择器，避免未上传完成就发送');
+  // Doubao exposes authoritative upload completion in attachmentStates; a separate
+  // progress selector is optional there, but remains mandatory for generic pages.
+  selectors = { ...selectors };
+  if (platform === 'doubao') {
+    selectors.attachment ||= '[data-testid="attachment-image-card"]';
+    selectors.upload ||= 'input[data-testid="upload-file-input"], input[type="file"]';
+  }
+  if(!selectors.attachment || (platform !== 'doubao' && !selectors.uploading)) throw new Error('参考图上传需要配置attachment和uploading选择器，避免未上传完成就发送');
   for(const file of files) {
     signal.throwIfAborted();
     const before=await page.locator(selectors.attachment).count();
@@ -113,7 +120,7 @@ async function uploadReferences(page, files, selectors, signal, platform) {
     while(Date.now()<end) {
       signal.throwIfAborted();
       const count=await page.locator(selectors.attachment).count();
-      const uploading=await page.locator(selectors.uploading).count();
+      const uploading=selectors.uploading ? await page.locator(selectors.uploading).count() : 0;
       if(count===before+1 && uploading===0) {
         if(platform==='doubao'){
           const states=await page.evaluate(readAttachmentState,selectors.attachment);
