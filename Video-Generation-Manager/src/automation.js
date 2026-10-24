@@ -132,7 +132,13 @@ async function uploadReferences(page, files, selectors, signal, platform) {
       }
       await wait(300,undefined,{signal});
     }
-    if(!ready) throw new Error('参考图未确认上传完成，已停止发送：'+path.basename(file));
+    if(!ready) {
+      const states=platform==='doubao'?await page.evaluate(readAttachmentState,selectors.attachment):[];
+      const count=await page.locator(selectors.attachment).count();
+      const error=new Error('参考图未确认上传完成，已停止发送：'+path.basename(file));
+      error.uploadDiagnostics={expectedCount:before+1,actualCount:count,attachments:states};
+      throw error;
+    }
   }
 }
 // 下载地址解析顺序（豆包）：插件 fallback_api 无水印原片 → 官方节点接口 → 页面明确标记的地址。

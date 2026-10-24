@@ -72,7 +72,7 @@ class TaskQueue extends EventEmitter {
         if(error.code==='ACCOUNT_QUOTA_EXHAUSTED' && !t.requestedAccountId && !controller.signal.aborted){
           this.update(t,{status:'queued',accountId:'',message:'账号额度不足，等待其他可用账号',quotaCharged:false});return;
         }
-        if (!controller.signal.aborted) this.update(t, { status: 'failed', error: String(error.message || error), message: String(error.message || error) });
+        if (!controller.signal.aborted) this.update(t, { status: 'failed', error: String(error.message || error), message: String(error.message || error), ...(error.uploadDiagnostics ? { uploadDiagnostics: error.uploadDiagnostics } : {}) });
       }).finally(() => { this.busy.delete(a.id); this.running.delete(t.id); this.kick(); });
     }
   }

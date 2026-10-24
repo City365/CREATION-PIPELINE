@@ -25,3 +25,24 @@ test('doubao does not accept a different uploaded file',async()=>{
 test('generic platform still requires explicit completion selectors',async()=>{
   await assert.rejects(uploadReferences({},['ref.png'],{},new AbortController().signal,'fixture'),/attachment和uploading/);
 });
+
+const {readAttachmentState}=require('../src/adapters/attachment-state');
+const vm=require('node:vm');
+test('attachment reader skips stale first-card snapshot after subsequent upload',()=>{
+  const a={fileName:'one.png',fileKey:'one',status:'Normal',uploadPercent:100,imageWidth:100,imageHeight:100};
+  const b={...a,fileName:'two.png',fileKey:'two'};
+  const cards=[{__reactFiberTest:{memoizedProps:{attachmentStates:[a]}}},{__reactFiberTest:{memoizedProps:{attachmentStates:[a,b]}}}];
+  const context={document:{querySelectorAll:()=>cards}};vm.createContext(context);
+  const result=vm.runInContext('('+readAttachmentState.toString()+')()',context);
+  assert.deepEqual(Array.from(result,x=>x.fileName),['one.png','two.png']);
+});
+test('attachment reader rejects snapshots whose count does not match mounted cards',()=>{
+  const context={document:{querySelectorAll:()=>[{__reactFiberTest:{memoizedProps:{attachmentStates:[]}}}]}};
+  vm.createContext(context);assert.equal(vm.runInContext('('+readAttachmentState.toString()+')()',context).length,0);
+});
+
+test('four images upload sequentially despite older cards keeping shorter snapshots',async()=>{
+  const names=['one.png','two.png','three.png','four.png'];const cards=[];
+  const page={locator(selector){return {first(){return this;},async count(){return selector.includes('input')?1:cards.length;},async setInputFiles(file){const states=names.slice(0,cards.length+1).map(name=>({fileName:name,fileKey:name,status:'Normal',uploadPercent:100,imageWidth:100,imageHeight:100}));cards.push({__reactFiberTest:{memoizedProps:{attachmentStates:states}}});}};},async evaluate(fn,selector){const context={document:{querySelectorAll:()=>cards},selector};vm.createContext(context);return vm.runInContext('('+fn.toString()+')(selector)',context);}};
+  await uploadReferences(page,names,{},new AbortController().signal,'doubao');assert.equal(cards.length,4);
+});
