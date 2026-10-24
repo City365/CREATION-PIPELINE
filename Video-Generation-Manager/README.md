@@ -133,3 +133,5 @@ npm run test:ui
 在系统管理 → H3 标签转换与平台映射中，可分别维护豆包与 Gemini 的五类输出模板、语言名称和规则开关，并预览未保存的规则。规则保存在本地 data/prompt-mappings.json。模板变量包括 {n}、{language}、{text}、{voice}；对白和画外音必须保留 {text}，编号规则必须保留 {n}。
 
 正式任务在执行前生成 convertedPrompt，保留原始 prompt，并保存 promptMapping 配置快照与 conversionWarnings。恢复任务沿用原规则快照。豆包转换后的图片引用交给原生绑定器；Gemini 使用文字引用。关闭镜头规则可保留原始 [Shot N]，未知语言保留名称并提示。画外音不添加说话人绑定；重复的 Subject 与 S 编号会合并。
+
+Gemini 图片引用现统一输出为 `<Picture N>`：`@图N`、`@图片N`、`<Subject N>` 和已有 Picture 标签都使用同一编号格式，说话人也引用该格式。

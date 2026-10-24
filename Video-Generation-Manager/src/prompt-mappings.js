@@ -1,11 +1,11 @@
 'use strict';
 const path=require('node:path');const {readJSON,saveJSON}=require('./store');
 const defaults={version:1,languages:{Chinese:'中文',English:'英文',Korean:'韩文',Japanese:'日文'},rules:[
- {id:'speaker',name:'说话人 (S1)',enabled:true,doubao:'<Picture {n}>说：',gemini:'图{n}中的人物说：'},
+ {id:'speaker',name:'说话人 (S1)',enabled:true,doubao:'<Picture {n}>说：',gemini:'<Picture {n}>中的人物说：'},
  {id:'dialogue',name:'对白 <d>[语言]台词</d>',enabled:true,doubao:'（{language}）{text}',gemini:'（{language}）{text}'},
  {id:'voiceover',name:'男声／女声画外音',enabled:true,doubao:'（{language}，{voice}画外音）{text}',gemini:'（{language}，{voice}画外音）{text}'},
  {id:'shot',name:'镜头 [Shot 1]',enabled:true,doubao:'Shot {n}：',gemini:'Shot {n}：'},
- {id:'reference',name:'主体及图片引用',enabled:true,doubao:'<Picture {n}>',gemini:'图{n}'}]};
+ {id:'reference',name:'主体及图片引用',enabled:true,doubao:'<Picture {n}>',gemini:'<Picture {n}>'}]};
 function validate(value){
  if(!value||!Array.isArray(value.rules)||value.rules.length!==5)throw new Error('必须包含五类映射规则');
  const ids=new Set();for(const rule of value.rules){
@@ -33,8 +33,6 @@ function convert(text,platform,config=defaults){
  });
  text=text.replace(/\(S(\d+)\)/g,(m,n)=>format('speaker',{n},m));
  text=text.replace(/<Subject\s+(\d+)>|<Picture\s+(\d+)>|@(?:图片|图)\s*(\d+)/gi,(m,a,b,c)=>{
-  // Gemini leaves existing Picture/@ forms intact; Subject must become an explicit image reference.
-  if(platform==='gemini'&&!a)return m;
   return format('reference',{n:a||b||c},m);
  });
  text=text.replace(/\[Shot\s+(\d+)\]/gi,(m,n)=>format('shot',{n},m));
