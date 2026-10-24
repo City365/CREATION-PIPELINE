@@ -1,0 +1,52 @@
+{
+  "format": "doubao-manager-protected-build",
+  "version": 4,
+  "buildInfo": {
+    "version": "7.8.7",
+    "buildId": "20261013-075201-b7fca8a91ab3",
+    "commit": "b7fca8a91ab3",
+    "builtAt": "2026-10-13T07:52:01.151Z",
+    "dirty": false,
+    "component": "manager"
+  },
+  "releaseName": "V2.0",
+  "appVersion": "7.8.7",
+  "generatedAt": "2026-10-13T07:52:01.151Z",
+  "sourceMaps": false,
+  "bytecode": {
+    "format": "electron-main-v8-bytecode",
+    "file": "src/main.jsc",
+    "sha256": "a6f40e86a5ee43886c39a9d1a529f0f464f78429bf203126d96bb3b05d0ff653",
+    "bytes": 1013888,
+    "loaderBytes": 417,
+    "electronVersion": "43.4.1"
+  },
+  "licenseCore": {
+    "format": "embedded-in-electron-main-v4-bytecode",
+    "file": "src/main.jsc",
+    "sha256": "a6f40e86a5ee43886c39a9d1a529f0f464f78429bf203126d96bb3b05d0ff653",
+    "bytes": 1013888,
+    "embeddedModules": [
+      "license-format",
+      "device-identity",
+      "license-service",
+      "ipc-license-guard",
+      "plugin-authorization-protocol"
+    ]
+  },
+  "resolver": {
+    "sourceSha256": "d9af0220349c5c0d986793ec3f6cc572f6f6375668aa2780fd3534f62c5d71dc",
+    "protectedPlaintextSha256": "4575216ec0e279aee706c0f1117762f2e83afa44b7067c76e5db5c5b07c9499a",
+    "encryptedPayloadSha256": "6fa796844ba52bee20981a09ae05e95f0707ca31b06186215ab0913b8f10ff4f",
+    "sourceBytes": 48633,
+    "protectedBytes": 27603,
+    "encryptedBytes": 27639
+  },
+  "pluginAuthorization": {
+    "protocol": "dbm-plugin-authorization-v4",
+    "protocolVersion": 4,
+    "proofAlgorithm": "Ed25519",
+    "signingPublicKeySha256": "9ed2a69f94c616a6ddff38bf6240f57a7a4032b8f5301f7cf2470c05b229c2b5",
+    "minimumPluginVersion": "7.4.3"
+  }
+}

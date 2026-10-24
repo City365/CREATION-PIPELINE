@@ -1,0 +1,11 @@
+node_modules/
+data/config.json
+data/internal-token.json
+data/jobs.json
+data/logs/
+data/uploads/
+data/media/
+data/assets/
+data/assets.json
+.cache/
+*.log

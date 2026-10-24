@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice">
+<defs><linearGradient id="sky" x2="0" y2="1"><stop stop-color="#342e54"/><stop offset=".5" stop-color="#b57480"/><stop offset=".8" stop-color="#e9b396"/><stop offset="1" stop-color="#e9cdac"/></linearGradient><linearGradient id="sea" x2="0" y2="1"><stop stop-color="#8b7c97"/><stop offset="1" stop-color="#242a47"/></linearGradient><radialGradient id="glow"><stop stop-color="#ffdfad" stop-opacity=".5"/><stop offset="1" stop-color="#ffd7a4" stop-opacity="0"/></radialGradient><linearGradient id="beam" x2="0" y2="1"><stop stop-color="#fbd9b5" stop-opacity=".4"/><stop offset="1" stop-color="#fbd9b5" stop-opacity="0"/></linearGradient></defs>
+<path fill="url(#sky)" d="M0 0h1920v1080H0z"/>
+<ellipse cx="1380" cy="520" rx="600" ry="460" fill="url(#glow)"/>
+<circle cx="1380" cy="490" r="78" fill="#ffe0b1"/>
+<g fill="none" stroke-linecap="round"><path stroke="#f8c5ad" stroke-width="18" opacity=".16" d="M840 270q210-35 430-15M1140 325q310-37 640-8M250 370q220-22 370 0"/><path stroke="#655273" stroke-width="25" opacity=".26" d="M0 140q360 100 680 26M1180 145q340-10 740 65"/></g>
+<path fill="#62637f" d="M0 584 203 502 355 571 560 526 735 602H0z"/>
+<path fill="url(#sea)" d="M0 603h1920v477H0z"/>
+<path fill="url(#beam)" d="m1320 605-180 475h510l-210-475z"/>
+<g fill="none" stroke="#f9d3b6" opacity=".23"><path d="M1200 637h310M1240 663h330M1110 703h520M1220 750h360M1080 805h610M1000 872h730M900 950h930" stroke-width="3"/><path d="M110 659q400-25 760 8M280 729q260-19 560 4M690 830q200-10 390 8M1390 946q250-13 520 4"/></g>
+<path fill="#171d31" d="M0 624q100-50 188 43l30 93q134-35 240 70l76 74q105-6 201 77l70 99H0z"/>
+<path fill="#3b3448" d="M0 624q100-50 188 43l30 93-60-16-47-69L0 650zM218 760q134-35 240 70l-110-32-72 4z"/>
+<path fill="#141c30" d="m1730 1080 51-191 75-53 64 53v191z"/>
+<g fill="none" stroke="#28314a" stroke-width="3" opacity=".7"><path d="m1660 373 13-5 13 5M1715 346l10-4 10 4M1628 340l9-4 9 4"/></g>
+<path fill="none" stroke="#d2a9a0" opacity=".25" stroke-width="5" d="M450 918q280-65 520 18t450 12"/>
+</svg>

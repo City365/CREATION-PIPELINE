@@ -1,0 +1,16 @@
+{
+  "name": "doubao-local-manager",
+  "version": "0.1.0",
+  "private": true,
+  "description": "可维护的本地豆包/Dola账号与视频任务管理器",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test tests/*.test.js",
+    "test:browser": "node tests/browser-smoke.js",
+    "test:ui": "node tests/ui-pages.js"
+  },
+  "dependencies": {
+    "playwright-core": "1.58.2",
+    "undici": "^7.30.1"
+  }
+}

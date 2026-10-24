@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice">
+<defs><linearGradient id="sky" x2="0" y2="1"><stop stop-color="#183c3e"/><stop offset=".55" stop-color="#7caaa1"/><stop offset="1" stop-color="#d9d5ae"/></linearGradient><linearGradient id="ground" x2="0" y2="1"><stop stop-color="#37685c"/><stop offset="1" stop-color="#081e20"/></linearGradient><radialGradient id="light"><stop stop-color="#fff6cc" stop-opacity=".65"/><stop offset="1" stop-color="#eff3ce" stop-opacity="0"/></radialGradient><linearGradient id="ray" x2="0" y2="1"><stop stop-color="#f5f1c2" stop-opacity=".16"/><stop offset="1" stop-color="#e8edca" stop-opacity="0"/></linearGradient><g id="tree"><path fill="#17443e" d="M-7 0h14v-390H-7z"/><path fill="#24564b" d="m0-510-71 183h42l-83 161h56l-83 139h278L56-166h56l-83-161h42z"/></g></defs>
+<path fill="url(#sky)" d="M0 0h1920v1080H0z"/>
+<ellipse cx="1300" cy="380" rx="600" ry="500" fill="url(#light)"/>
+<path fill="#477e70" opacity=".45" d="m0 690 170-120 185 60 230-135 220 166 238-107 225 70 200-155 232 167 220-67v511H0z"/>
+<g opacity=".28"><use href="#tree" transform="translate(180 724) scale(.8)"/><use href="#tree" transform="translate(440 738) scale(.67)"/><use href="#tree" transform="translate(750 748) scale(.8)"/><use href="#tree" transform="translate(1090 760) scale(.6)"/><use href="#tree" transform="translate(1480 730) scale(.8)"/><use href="#tree" transform="translate(1730 740) scale(.9)"/></g>
+<path fill="url(#ground)" d="M0 780q530-74 960 16t960-31v315H0z"/>
+<path fill="#8fae9c" opacity=".3" d="M0 717q420-46 900-3t1020-5v66q-430-24-980-4T0 780z"/>
+<path fill="#bcc3a0" opacity=".48" d="M1160 759q-220 60-110 115t-76 90l-195 116h420l-72-119q-12-50 44-63t-90-66-21-73z"/>
+<path fill="url(#ray)" d="M1270 0h100L860 1080H530zM1480 0h45l-34 1080h-204z"/>
+<g><use href="#tree" transform="translate(40 990) scale(1.8)"/><use href="#tree" transform="translate(280 1040) scale(1.5)"/><use href="#tree" transform="translate(520 940) scale(1.1)"/><use href="#tree" transform="translate(1625 970) scale(1.4)"/><use href="#tree" transform="translate(1865 1030) scale(1.85)"/></g>
+<path fill="#0b2928" d="M0 1000q390-50 710 80H0zM1350 1080q310-100 570-55v55z"/>
+<g fill="#e6e8b0" opacity=".6"><circle cx="620" cy="855" r="2"/><circle cx="1440" cy="839" r="2"/><circle cx="1315" cy="932" r="2.5"/><circle cx="1500" cy="771" r="1.5"/><circle cx="860" cy="989" r="1.5"/></g>
+</svg>

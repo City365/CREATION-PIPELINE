@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="studio-light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CREATION PIPELINE</title>
+<link rel="icon" href="/favicon.svg" />
+<link rel="stylesheet" href="/h3.css" />
+<link rel="stylesheet" href="/styles.css" />
+<link rel="stylesheet" href="/skins.css?v=daylight-1" />
+</head>
+<body>
+<div id="root">
+  <div class="h3-app" id="app">
+    <header class="h3-topbar">
+      <div class="h3-brand">
+        <div class="h3-brand-mark">Y9</div>
+        <div class="h3-brand-text">
+          <span class="h3-brand-name">WENYUN.M</span>
+          <span class="h3-brand-sub">COMIC-DRAMA</span>
+        </div>
+      </div>
+      <nav class="h3-maintabs" id="nav">
+        <button type="button" class="h3-maintab" data-route="image" title="Ctrl+1" style="--i:0">图像创作台</button>
+        <button type="button" class="h3-maintab" data-route="studio" title="Ctrl+2" style="--i:1">视频创作台</button>
+        <button type="button" class="h3-maintab" data-route="script" title="Ctrl+3" style="--i:2">剧本创作台</button>
+        <button type="button" class="h3-maintab" data-route="assets" title="Ctrl+4" style="--i:3">素材库</button>
+        <button type="button" class="h3-maintab" data-route="batch" title="Ctrl+5" style="--i:4">批量任务</button>
+        <button type="button" class="h3-maintab" data-route="jobs" title="Ctrl+6" style="--i:5">任务<span class="h3-maintab-count" id="job-count"></span></button>
+        <button type="button" class="h3-maintab" data-route="media" title="Ctrl+7" style="--i:6">媒体库</button>
+        <button type="button" class="h3-maintab" data-route="compare" title="Ctrl+8" style="--i:7">对比</button>
+        <button type="button" class="h3-maintab" data-route="logs" title="Ctrl+9" style="--i:8">任务日志</button>
+      </nav>
+      <span class="h3-topbar-spacer"></span>
+      <div class="h3-topbar-right">
+        <span class="h3-svc" id="svc-lights" title="服务状态"><button type="button" class="h3-svc-item" data-svc="agent" aria-label="智能体服务" title="点击启动/停止智能体"><i></i><span>智能体</span><em class="h3-svc-act">启动</em></button><button type="button" class="h3-svc-item" data-svc="manager" aria-label="管理器服务" title="点击启动/停止管理器"><i></i><span>管理器</span><em class="h3-svc-act">启动</em></button></span>
+        <button type="button" class="h3-project-btn" id="project-btn" title="项目">项目</button>
+        
+        <div class="h3-queue">
+          <button type="button" class="h3-queue-btn" id="queue-btn" title="任务队列">
+            <svg class="h3-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2 10 5-10 5L2 7zM2 12l10 5 10-5M2 17l10 5 10-5"></path></svg>
+            <span>队列 <span id="queue-count">0</span></span>
+          </button>
+        </div>
+        <div class="h3-volume" id="volume-box">
+          <button type="button" class="h3-iconbtn" id="mute-btn" title="静音">
+            <svg class="h3-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4z"></path><path d="M15.5 8.5a5 5 0 0 1 0 7"></path><path d="M18.5 5.5a9 9 0 0 1 0 13"></path></svg>
+          </button>
+          <input class="h3-volume-range" id="volume-range" type="range" min="0" max="100" step="1" value="60" aria-label="全局音量" style="--h3-vol:60%" />
+        </div>
+        <button type="button" class="h3-iconbtn" id="theme-btn" title="切换为亮色">
+          <svg class="h3-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path></svg>
+        </button>
+        <button type="button" class="h3-iconbtn" id="settings-btn" title="设置 (Ctrl+,)">
+          <svg class="h3-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+        </button>
+        <span class="h3-version">v2026.10.23</span>
+      </div>
+    </header>
+
+    <main id="view" class="h3-page"></main>
+
+  </div>
+</div>
+
+<div class="modal-backdrop" id="modal" hidden>
+  <div class="modal" id="modal-panel" role="dialog" aria-modal="true"></div>
+</div>
+<div class="toasts" id="toasts"></div>
+<input type="file" id="file-input" hidden multiple accept="image/*,audio/*" />
+<script src="/wallpaper-library.js?v=daylight-1"></script>
+<script src="/app.js?v=daylight-1"></script>
+</body>
+</html>

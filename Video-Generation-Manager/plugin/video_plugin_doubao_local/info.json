@@ -1,0 +1,9 @@
+{
+  "name": "豆包本地创作台",
+  "display_name": "豆包本地创作台",
+  "version": "0.1.0",
+  "description": "连接可维护的本地Chrome账号任务服务，下载原片并返回视频",
+  "author": "Local",
+  "api_version": 2,
+  "type": "video"
+}

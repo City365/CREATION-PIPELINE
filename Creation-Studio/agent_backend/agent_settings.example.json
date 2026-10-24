@@ -1,0 +1,22 @@
+{
+  "model": {
+    "active": "deepseek",
+    "providers": {
+      "deepseek": {
+        "model": "deepseek-v4-pro",
+        "base_url": "https://api.deepseek.com/anthropic",
+        "api_key": "",
+        "max_tokens": 4096,
+        "temperature": 0.7,
+        "protocol": "anthropic"
+      },
+      "openai": {
+        "model": "填写模型名称",
+        "base_url": "填写兼容接口地址",
+        "api_key": "",
+        "max_tokens": 4096,
+        "temperature": 0.7
+      }
+    }
+  }
+}

@@ -1,0 +1,9 @@
+<!doctype html><html><head><meta charset="UTF-8"><title>Local generation fixture</title></head><body><button id="mode">视频生成</button><div id="messages"></div><input id="upload" type="file"><div id="attachments"></div><textarea id="editor"></textarea><button id="send">发送</button><script>
+const q=s=>document.querySelector(s);let seq=123456780;
+q('#upload').onchange=()=>{const e=document.createElement('div');e.className='uploading';q('#attachments').append(e);setTimeout(()=>{e.className='attachment';e.textContent='uploaded';},300);};
+q('#send').onclick=()=>{const prompt=q('#editor').value;const user=document.createElement('div');user.dataset.role='user';user.dataset.messageId=String(++seq);user.textContent=prompt;q('#messages').append(user);q('#editor').value='';
+  if(prompt.includes('cancel-test'))return;
+  if(prompt.includes('captcha-test')){const c=document.createElement('div');c.dataset.testid='captcha';c.textContent='人工验证';q('#messages').append(c);return;}
+  setTimeout(()=>{const m=document.createElement('div');m.dataset.role='assistant';m.dataset.messageId=String(++seq);m.innerHTML='<p>视频生成完成</p><video controls data-watermark="false" src="/video.mp4"></video>';q('#messages').append(m);},400);
+};
+</script></body></html>
