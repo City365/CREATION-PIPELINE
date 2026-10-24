@@ -125,3 +125,25 @@ def test_compaction_uses_same_lease_and_idempotency(isolated,monkeypatch):
     replay=client.post('/agent/sessions/s/compact',headers=headers,json={'client_request_id':'compact-once'})
     assert replay.json()['run_id']==rid and len(calls)==1
     assert not run_store.busy('p1','s')
+
+
+def test_cancelled_stream_delivers_terminal_event(isolated):
+    async def check():
+        req=main.ChatRequest(session_id="s",text="hi",client_request_id="cancel-stream")
+        async def prepare():
+            ctx=runtime.current.get()
+            ctx.receipt={"status":"running"}
+            async def body():
+                yield runtime.encode({"type":"start"})
+                await asyncio.sleep(10)
+            return StreamingResponse(body())
+        response=await runtime.execute(req,"p1",prepare)
+        iterator=response.body_iterator
+        first=json.loads((await anext(iterator))[6:])
+        run_store.cancel("p1",first["run_id"])
+        events=[json.loads(item[6:]) async for item in iterator]
+        assert events[-1]["type"]=="run_finished"
+        assert events[-1]["status"]=="cancelled"
+        assert events[-1]["reason_code"]=="user_cancelled"
+        assert not run_store.busy("p1","s")
+    asyncio.run(check())

@@ -347,3 +347,12 @@ node scripts\gen-style-previews.cjs --force    :: 全部重生成
 - 启动由 `POST /api/services/control` 完成，PID 记录在 `data/service-pids.json`，停止用 `taskkill /T /F`。
 
 启动顺序：先启动 Creation-Studio（`node src/server.js` 或 `start-all.cmd`），再点顶栏两个按钮即可，不用再单独开终端。
+
+
+### 智能体执行控制
+
+创作台项目 h3-studio 默认使用 harness/2.0，健康接口返回 harness_runtime 与 engine_version。其他项目须通过 HARNESS_PROJECT_ALLOWLIST 配置；临时回退可设置 HARNESS_RUNTIME_ENABLED=false，但旧路径不支持持久运行取消与事件恢复。
+
+每轮执行有 180 秒总时限，模型和工具调用计入统一预算；harness 内不再叠加模型重试。停止按钮提交取消请求后等待后端终态回执，取消失败会显示提示。断流恢复按事件序号分页读取，每页最多 100 条，并去重；未取得结束回执时会明确显示中断。
+
+启动器对自动补启和退出重启统一限流，五分钟内最多五次；达到上限后需检查日志并重新启动启动器。本启动器持有的进程连续三次健康检查失败后会停止并按限流规则恢复；外部进程不会被自动终止。

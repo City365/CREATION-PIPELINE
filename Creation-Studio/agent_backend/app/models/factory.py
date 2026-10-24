@@ -120,6 +120,9 @@ def create_chat_model(selection=None, effort=None):
 
 def with_retry(model, attempts=5):
     """同一模型最多请求 attempts 次，间隔 1–5 秒；不做任何模型切换。"""
+    from app.harness.runtime import current
+    if current.get() is not None:
+        return model
     import asyncio
     import random
 
@@ -136,6 +139,9 @@ def with_retry(model, attempts=5):
                     return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
                 except Exception as exc:
                     last = exc
+                    status = getattr(exc, 'status_code', None)
+                    if status not in (408, 429, 500, 502, 503, 504, 529):
+                        raise
                     if i >= attempts - 1:
                         break
                     time.sleep(delay_for(i))
@@ -148,6 +154,9 @@ def with_retry(model, attempts=5):
                     return await super()._agenerate(messages, stop=stop, run_manager=run_manager, **kwargs)
                 except Exception as exc:
                     last = exc
+                    status = getattr(exc, 'status_code', None)
+                    if status not in (408, 429, 500, 502, 503, 504, 529):
+                        raise
                     if i >= attempts - 1:
                         break
                     await asyncio.sleep(delay_for(i))

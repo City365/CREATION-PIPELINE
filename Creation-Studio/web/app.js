@@ -4104,12 +4104,6 @@ function askApplyEvent(msg, data) {
     msg.error = data.message || '执行失败';
     if (!msg.text) msg.text = '⚠ ' + msg.error;
     msg._streaming = false;
-    const a = askState();
-    if (a.generating) {
-      a.generating = false;
-      a.startedAt = 0;
-      if (a.controller) a.controller.abort();
-    }
   }
   if (data.type === 'done' || data.type === 'run_finished') {
     if (data.execution) msg.execution = data.execution;
@@ -4134,6 +4128,14 @@ async function askQueueReply(chat, question, insertAt, fileIds = [], resumeId = 
   chat.updated = Date.now();
   askRenderMessages();
   let runId = '';
+  let lastSeq = 0;
+  const applyEvent = (data) => {
+    if (typeof data.sequence === 'number') {
+      if (data.sequence <= lastSeq) return;
+      lastSeq = data.sequence;
+    }
+    askApplyEvent(msg, data);
+  };
   try {
     if (!resumeId) {
       const saved = await fetch('/api/agent/sessions/' + encodeURIComponent(chat.id), {
@@ -4170,7 +4172,6 @@ async function askQueueReply(chat, question, insertAt, fileIds = [], resumeId = 
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
-    let lastSeq = 0;
     let done = false;
     for (;;) {
       const part = await reader.read();
@@ -4182,17 +4183,13 @@ async function askQueueReply(chat, question, insertAt, fileIds = [], resumeId = 
         if (!line) continue;
         let data;
         try { data = JSON.parse(line.slice(6)); } catch { continue; }
-        if (typeof data.sequence === 'number') {
-          if (data.sequence <= lastSeq) continue;
-          lastSeq = data.sequence;
-        }
         if (data.type === 'done' || data.type === 'run_finished') done = true;
-        askApplyEvent(msg, data);
+        applyEvent(data);
         askRenderSoon();
       }
       if (part.done) break;
     }
-    if (!done && msg._streaming) msg._streaming = false;
+    if (!done) throw new Error('回复连接中断，尚未收到任务结束确认');
   } catch (err) {
     const aborted = controller.signal.aborted;
     msg._streaming = false;
@@ -4200,12 +4197,18 @@ async function askQueueReply(chat, question, insertAt, fileIds = [], resumeId = 
       let recovered = false;
       if (runId) {
         try {
-          const events = await fetch('/api/agent/runs/' + encodeURIComponent(runId) + '/events?after=0&limit=200', {
-            headers: { 'X-Project-Id': ASK_PROJECT },
-          }).then((r) => (r.ok ? r.json() : null));
-          if (events && Array.isArray(events.items)) {
-            for (const ev of events.items) askApplyEvent(msg, ev);
-            recovered = true;
+          for (;;) {
+            const response = await fetch('/api/agent/runs/' + encodeURIComponent(runId) + '/events?after=' + lastSeq + '&limit=100', {
+              headers: { 'X-Project-Id': ASK_PROJECT }, signal: AbortSignal.timeout(10000),
+            });
+            if (!response.ok) break;
+            const events = await response.json();
+            if (!Array.isArray(events.items) || !events.items.length) break;
+            for (const ev of events.items) {
+              applyEvent(ev);
+              if (ev.type === 'done' || ev.type === 'run_finished') recovered = true;
+            }
+            if (recovered || events.items.length < 100) break;
           }
         } catch { /* ignore */ }
       }
@@ -4221,6 +4224,7 @@ async function askQueueReply(chat, question, insertAt, fileIds = [], resumeId = 
       msg.text += '\n\n[生成已停止]';
     }
   } finally {
+    if (a.request && a.request.controller !== controller) return;
     a.generating = false;
     a.startedAt = 0;
     a.controller = null;
@@ -4283,20 +4287,24 @@ async function askSend(text) {
   askQueueReply(chat, raw, undefined, attached.map((f) => f.id));
 }
 
-function askStop() {
+async function askStop() {
   const a = askState();
-  if (a.request) {
-    fetch('/api/agent/sessions/' + encodeURIComponent(a.request.sessionId) + '/requests/' + encodeURIComponent(a.request.requestId) + '/cancel', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Project-Id': ASK_PROJECT },
-      body: '{}',
-    }).catch(() => {});
+  const request = a.request;
+  if (!request || request.stopping) return;
+  request.stopping = true;
+  try {
+    const res = await fetch('/api/agent/sessions/' + encodeURIComponent(request.sessionId) + '/requests/' + encodeURIComponent(request.requestId) + '/cancel', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Project-Id': ASK_PROJECT },
+      body: '{}', signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) throw new Error('后端尚未确认停止，请稍后重试');
+    // Keep the response stream open so its terminal receipt confirms cancellation.
+    toast('已请求停止，正在等待后端结束');
+  } catch (err) {
+    toast(err.message || '停止请求失败，请检查后端连接', true);
+  } finally {
+    if (a.request === request) request.stopping = false;
   }
-  if (a.controller) a.controller.abort();
-  a.generating = false;
-  a.controller = null;
-  a.request = null;
-  askRenderMessages();
 }
 
 async function askChooseCommand(id) {

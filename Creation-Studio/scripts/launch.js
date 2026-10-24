@@ -30,6 +30,10 @@ const PYTHON = process.env.H3_PYTHON || 'D:/notebook/AIGC/ml-engineer/backend/.v
 
 const children = new Map();
 const restarts = new Map();
+const restartPending = new Set();
+const restartBlocked = new Set();
+const healthFailures = new Map();
+let checkingServices = false;
 let shuttingDown = false;
 
 function log(tag, message) {
@@ -65,6 +69,11 @@ function spawnChild(name, command, args, options) {
   child.stderr.on('data', (chunk) => {
     for (const line of String(chunk).split(/\r?\n/)) if (line.trim()) log(tag, '! ' + line.trim().slice(0, 500));
   });
+  child.on('error', (err) => {
+    log(name, `启动失败：${err.message}`);
+    children.delete(name);
+    scheduleRestart(name);
+  });
   child.on('exit', (code, signal) => {
     if (shuttingDown) return;
     log(name, `退出（code=${code} signal=${signal}）`);
@@ -75,9 +84,11 @@ function spawnChild(name, command, args, options) {
 }
 
 function scheduleRestart(name) {
+  if (shuttingDown || restartPending.has(name) || restartBlocked.has(name)) return;
   const now = Date.now();
   const list = (restarts.get(name) || []).filter((t) => now - t < 5 * 60 * 1000);
   if (list.length >= 5) {
+    restartBlocked.add(name);
     log(name, '5 分钟内重启超过 5 次，停止自动重启；检查上面的错误日志');
     return;
   }
@@ -85,8 +96,10 @@ function scheduleRestart(name) {
   restarts.set(name, list);
   const delay = 2000 * Math.min(3, list.length);
   log(name, `${Math.round(delay / 1000)} 秒后重启`);
-  setTimeout(() => {
-    if (shuttingDown) return;
+  restartPending.add(name);
+  setTimeout(async () => {
+    restartPending.delete(name);
+    if (shuttingDown || children.has(name) || await health(name)) return;
     if (name === 'agent') startAgent();
     else if (name === 'manager') startManager();
     else if (name === 'h3') startH3();
@@ -192,6 +205,7 @@ process.on('SIGHUP', () => shutdown(0));
   else log('h3', '已在运行，复用');
 
   for (const name of ['manager', 'agent', 'h3']) {
+    if (NO_MANAGER && name === 'manager') continue;
     const ok = await waitHealthy(name, 30000);
     log(name, ok ? '健康检查通过' : '健康检查未通过（看上面的日志）');
   }
@@ -199,15 +213,27 @@ process.on('SIGHUP', () => shutdown(0));
 
   // 守护：健康检查不过且子进程不在时补启
   setInterval(async () => {
-    if (shuttingDown) return;
-    for (const [name, check] of [['manager', 'manager'], ['agent', 'agent'], ['h3', 'h3']]) {
-      if (NO_MANAGER && name === 'manager') continue;
-      if (children.has(name)) continue;
-      if (await health(check)) continue;
-      if (name === 'manager') startManager();
-      else if (name === 'agent') startAgent();
-      else startH3();
-    }
+    if (shuttingDown || checkingServices) return;
+    checkingServices = true;
+    try {
+      for (const name of ['manager', 'agent', 'h3']) {
+        if (NO_MANAGER && name === 'manager') continue;
+        if (restartBlocked.has(name) || restartPending.has(name)) continue;
+        if (await health(name)) { healthFailures.delete(name); continue; }
+        if (children.has(name)) {
+          const failures = (healthFailures.get(name) || 0) + 1;
+          healthFailures.set(name, failures);
+          log(name, `进程健康检查失败（${failures}/3）`);
+          if (failures >= 3) {
+            healthFailures.delete(name);
+            log(name, '连续三次检查失败，停止本启动器持有的进程，随后按重启限流恢复');
+            killChild(name);
+          }
+          continue;
+        }
+        scheduleRestart(name);
+      }
+    } finally { checkingServices = false; }
   }, 15000);
 })();
 

@@ -10,7 +10,7 @@ class RunStopped(RuntimeError):
     def __init__(self,reason):super().__init__(reason);self.reason=reason
 
 def enabled(project):
-    return os.getenv('HARNESS_RUNTIME_ENABLED','').lower() in ('1','true') and project in os.getenv('HARNESS_PROJECT_ALLOWLIST','').split(',')
+    return os.getenv('HARNESS_RUNTIME_ENABLED','true').lower() in ('1','true') and project in os.getenv('HARNESS_PROJECT_ALLOWLIST','h3-studio').split(',')
 
 def encode(event):return 'data: '+json.dumps(event,ensure_ascii=False)+'\n\n'
 
@@ -53,7 +53,7 @@ class Runtime:
     def finish(self):
         receipt=self.receipt_status(self.receipt or {'status':'failed'})
         payload=run_store.update(self.project,self.run_id,status=receipt['outcome'],phase='finished',outcome=receipt['outcome'],reason_code=receipt['reason_code'],finished_at=run_store.now(),execution=receipt)
-        run_store.append_event(self.project,self.run_id,{'type':'run_finished','status':payload['status'],'reason_code':payload['reason_code'],'execution':receipt})
+        return run_store.append_event(self.project,self.run_id,{'type':'run_finished','status':payload['status'],'reason_code':payload['reason_code'],'execution':receipt})
     def persist(self,event):return encode(run_store.append_event(self.project,self.run_id,event))
 
 async def execute(req,project,prepare):
@@ -111,7 +111,8 @@ async def execute(req,project,prepare):
             ctx.reason=ctx.reason or 'client_disconnected';raise
         finally:
             with suppress(asyncio.CancelledError,Exception):await iterator.aclose()
-            ctx.finish();current.reset(token)
+            terminal=ctx.finish();current.reset(token)
+        yield encode(terminal)
     return StreamingResponse(stream(),media_type='text/event-stream',headers={'Cache-Control':'no-cache','X-Accel-Buffering':'no','X-Agent-Run-Id':ctx.run_id})
 
 async def operation(req,project,sid,kind,execute_operation):

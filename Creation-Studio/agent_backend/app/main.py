@@ -10,7 +10,7 @@ from fastapi import FastAPI, HTTPException, Header
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from langchain.agents import create_agent
-from app.models.factory import create_chat_model, model_options, resolve_model, with_retry
+from app.models.factory import create_chat_model, model_options, resolve_model
 from app.chat_policy import selected_topic, system_prompt
 from app.configs.settings import get_active_model_name, get_provider_config
 from app import store
@@ -48,10 +48,10 @@ class ChatRequest(BaseModel):
     reasoning_effort:Literal['none','low','high','max']|None=None
     file_ids:list[str]=Field(default_factory=list,max_length=10)
 @app.get('/agent/health')
-def health():
+def health(project=Depends(project_id)):
     name=get_active_model_name()
     cfg=get_provider_config(name)
-    return {'status':'ok','model':cfg.get('model'),'provider':name,'business_tools':False,'workspace_search':True,'planning':True,'mcp_runtime':False,'project_context':True}
+    return {'status':'ok','model':cfg.get('model'),'provider':name,'business_tools':False,'workspace_search':True,'planning':True,'mcp_runtime':False,'project_context':True,'harness_runtime':runtime.enabled(project),'engine_version':'harness/2.0' if runtime.enabled(project) else 'legacy'}
 @app.get('/agent/models')
 def models(project=Depends(project_id)):
     data=model_options()
@@ -95,7 +95,7 @@ async def _chat(req,project,authorization):
     attachments=[file_record(project,file_id,req.session_id) for file_id in req.file_ids]
     try:
         provider,cfg=resolve_model(req.model_id,req.reasoning_effort)
-        model=with_retry(create_chat_model(req.model_id,req.reasoning_effort) if req.model_id or req.reasoning_effort else create_chat_model(), attempts=5)
+        model=create_chat_model(req.model_id,req.reasoning_effort) if req.model_id or req.reasoning_effort else create_chat_model()
 
     except ValueError as exc:
         raise HTTPException(400,str(exc))
@@ -254,7 +254,12 @@ async def _chat(req,project,authorization):
         except Exception as exc:
             import logging
             logging.getLogger(__name__).error('Model request failed: %s: %s',type(exc).__name__,str(exc)[:300])
-            failure=('任务达到预算或被停止：'+exc.reason) if isinstance(exc,runtime.RunStopped) else '模型密钥无效或已失效（401），请更新模型连接配置。' if 'Authentication' in type(exc).__name__ or getattr(exc,'status_code',None)==401 else ('模型渠道拒绝请求（403：账号未验证/无权限/内容审核）：' + str(exc)[:200] + '。已尝试 5 次（间隔 1–5 秒），请手动切换模型后重试。') if ('PermissionDenied' in type(exc).__name__ or getattr(exc,'status_code',None)==403) else ('模型请求失败，已尝试 5 次（间隔 1–5 秒）：' + type(exc).__name__ + (' / HTTP ' + str(getattr(exc, 'status_code', '')) if getattr(exc, 'status_code', None) else '') + '。请手动切换模型后重试。')
+            status=getattr(exc,'status_code',None)
+            if isinstance(exc,runtime.RunStopped):failure='任务已停止：'+exc.reason
+            elif status==401 or 'Authentication' in type(exc).__name__:failure='模型密钥无效或已失效（401），请更新模型连接配置。'
+            elif status==403 or 'PermissionDenied' in type(exc).__name__:failure='模型渠道拒绝请求（403），请检查渠道账号验证、权限或内容限制。'
+            elif 'Timeout' in type(exc).__name__:failure='模型响应超时，请稍后重试或切换模型。'
+            else:failure='模型请求失败：'+type(exc).__name__+(' / HTTP '+str(status) if status else '')+'，请检查渠道或切换模型后重试。'
             receipt['status']='failed';receipt['error']=failure
             trajectory('assistant',failure,kind='error',tool_calls=[])
             yield event({'type':'error','message':failure})
