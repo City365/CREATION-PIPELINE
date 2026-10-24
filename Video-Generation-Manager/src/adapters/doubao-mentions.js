@@ -24,8 +24,9 @@ async function bindReferences(page,editor,text,files,signal){
  const bindings=[];
  for(const part of parts){
   signal.throwIfAborted();
+  await editor.press('Control+End');
   if(part.text!==undefined){await page.keyboard.insertText(part.text);continue;}
-  await editor.pressSequentially('@');
+  await page.keyboard.type('@');
   const option=page.getByRole('option').filter({hasText:part.name});
   await option.first().waitFor({state:'visible',timeout:10000});
   if(await option.count()!==1)throw new Error('豆包素材候选不唯一：'+part.name);
@@ -35,6 +36,9 @@ async function bindReferences(page,editor,text,files,signal){
   if(nodes.length!==bindings.length+1||last.name!==part.name||last.src!==cards[part.index].src)throw new Error('豆包原生图片引用未核验通过：'+part.name);
   bindings.push({picture:part.index+1,name:part.name});
  }
- return {text:await editor.innerText(),bindings};
+ const actual=await editor.innerText();
+ const expectedText=parts.map(part=>part.text!==undefined?part.text:part.name).join('');
+ if(actual.replace(/\s+/g,'')!==expectedText.replace(/\s+/g,''))throw new Error('图片引用插入后全文顺序或内容不一致，已停止发送');
+ return {text:actual,bindings};
 }
 module.exports={referenceParts,bindReferences};

@@ -1,0 +1,2 @@
+const {test}=require('node:test');const assert=require('node:assert/strict');const {ensureChatMode}=require('../src/automation-gemini');
+test('Gemini selects Chat and never Task',async()=>{const actions=[];const button={count:async()=>1,first(){return this;},isVisible:async()=>true,click:async()=>actions.push('Chat')};await ensureChatMode({getByRole(role,options){assert.equal(role,'button');assert.equal(options.name,'Chat');return button;}});assert.deepEqual(actions,['Chat']);});

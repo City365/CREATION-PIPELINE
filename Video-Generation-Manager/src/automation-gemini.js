@@ -72,7 +72,13 @@ async function closeOverlays(page) {
   }
 }
 
+async function ensureChatMode(page) {
+  const chat=page.getByRole('button',{name:'Chat',exact:true});
+  if(await chat.count() && await chat.first().isVisible()){await chat.first().click();await wait(500);}
+}
+
 async function ensureVideoMode(page, selectors, log, screenshotPath) {
+  await ensureChatMode(page);
   const chip = page.locator(selectors.videoChip || UI.videoChip).first();
   if (await chip.count() && await chip.isVisible().catch(() => false)) return;
   const editor = () => page.locator(selectors.editor || UI.editor).first();
@@ -118,7 +124,7 @@ async function ensureVideoMode(page, selectors, log, screenshotPath) {
   throw new Error('没有找到 Create video 入口（已重试 3 次），日志截图见下载目录 gemini-failure.png');
 }
 
-async function uploadGeminiReferences(page, files, selectors, signal, update) {
+async function uploadGeminiReferences(page, files, selectors, signal, update, requireVideo = true) {
   if (!files.length) return;
   for (const [index, file] of files.entries()) {
     signal.throwIfAborted();
@@ -147,7 +153,7 @@ async function uploadGeminiReferences(page, files, selectors, signal, update) {
   }
   await wait(800);
   // 上传过程中视频模式可能被折叠，确认一次。
-  if (!await page.locator(UI.videoChip).first().count()) throw new Error('上传参考图后视频模式失效，请重试');
+  if (requireVideo && !await page.locator(UI.videoChip).first().count()) throw new Error('上传参考图后视频模式失效，请重试');
 }
 
 async function applyGeminiOptions(page, task, selectors) {
@@ -264,4 +270,4 @@ async function downloadGeminiResult({ page, src, destination, signal, ffprobe, g
   return downloadVideo({ url: src, page, destination, signal, ffprobe, getDispatcher });
 }
 
-module.exports = { createGeminiExecutor, readGeminiState, ensureVideoMode, applyGeminiOptions, UI };
+module.exports = { createGeminiExecutor, readGeminiState, ensureVideoMode, applyGeminiOptions, uploadGeminiReferences, waitForGeminiReady, ensureChatMode, UI };
