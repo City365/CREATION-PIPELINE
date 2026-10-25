@@ -5646,16 +5646,7 @@ function renderLogs() {
     <button type="button" role="tab" id="image-log-tab" aria-controls="generation-log-panel" aria-selected="${tab==='image'}" data-log-tab="image" class="${tab==='image'?'is-active':''}">图像生成日志</button>
   </div>
   <section id="generation-log-panel" role="tabpanel" aria-labelledby="${tab==='video'?'video':'image'}-log-tab">
-  ${tab==='image'?IJ.table(true):jobsWithLogs.length ? `<div class="table-wrap"><table class="jobs">
-    <thead><tr><th>时间</th><th>任务</th><th>状态</th><th>错误</th><th>操作</th></tr></thead>
-    <tbody>${jobsWithLogs.map((job) => `<tr>
-      <td class="small">${fmtTime(job.createdAt)}</td>
-      <td><strong>${esc(job.title)}</strong><div class="hint mono">${esc(job.id)}</div></td>
-      <td>${jobStatusBadge(job)}</td>
-      <td class="small" style="max-width:380px">${job.error ? esc(job.error) : '<span class="muted">—</span>'}</td>
-      <td><button class="btn sm" data-act="detail" data-id="${job.id}">查看日志</button></td>
-    </tr>`).join('')}</tbody>
-  </table></div>` : `<div class="card"><div class="empty"><strong>还没有任务日志</strong><p>提交任务后，这里会记录每一步。</p></div></div>`}
+  ${tab==='image'?IJ.table(true):IJ.logTable(jobsWithLogs.map(job=>({id:job.id,createdAt:job.createdAt,title:job.title,statusHtml:jobStatusBadge(job)+'<div class="hint">'+esc(job.stage||'')+'</div>',error:job.error,actions:'<button class="btn sm" data-act="detail" data-id="'+job.id+'">查看日志</button>'})))}
   </section>
   `;
 }
