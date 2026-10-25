@@ -15,7 +15,7 @@ test('正式 API：生成、另存、移动、历史提示词、隔离、重启�
  const prompt='原始中文提示词\n<Picture 1> '+ '完整记录'.repeat(150);
  const result=await call('/api/images/generate','POST',{projectId:'p',itemId:item.id,channelId:ch.id,prompt,size:'auto',count:1});assert.equal(result.ok,true,JSON.stringify(result));
  const src=result.data.items[0].path;
- await call('/api/workbench/items/'+item.id,'PATCH',{projectId:'p',kind:'image',revision:item.revision,draft:{prompt:'后来修改'}});
+ await call('/api/workbench/items/'+item.id,'PATCH',{projectId:'p',kind:'image',revision:(await call('/api/workbench/items/'+item.id+'?projectId=p&kind=image')).data.revision,draft:{prompt:'后来修改'}});
  const copied=(await call('/api/assets/from-file','POST',{path:src})).data;
  let detail=(await call('/api/media/details?path='+encodeURIComponent(copied.path))).data;assert.equal(detail.snapshot.userPrompt,prompt);assert.equal(detail.itemId,item.id);
  const renamed=(await call('/api/assets/rename','POST',{rel:copied.rel,name:'renamed.png'})).data;

@@ -17,6 +17,7 @@ const jobs = require('./jobs');
 const batch = require('./batch');
 const channels = require('./channels');
 const imagegen = require('./imagegen');
+const imageTasks = require('./image-tasks');
 const genericVideo = require('./generic-video');
 const tts = require('./tts');
 const voices = require('./voices');
@@ -35,6 +36,7 @@ const AGENT_PROJECT = process.env.H3_AGENT_PROJECT || 'h3-studio';
 const STATIC = {
   '/': ['index.html', 'text/html; charset=utf-8'],
   '/index.html': ['index.html', 'text/html; charset=utf-8'],
+  '/image-tasks.js': ['image-tasks.js', 'text/javascript; charset=utf-8'],
   '/workbench-manager.js': ['workbench-manager.js', 'text/javascript; charset=utf-8'],
   '/workbench.css': ['workbench.css', 'text/css; charset=utf-8'],
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
@@ -602,7 +604,7 @@ async function controlService(name, action) {
     }
   }
 
-  if (method === 'GET' && pathname === '/api/health') return ok(res, { status: 'ok', name: 'h3-studio', uptime: process.uptime() });
+  if (method === 'GET' && pathname === '/api/health') return ok(res, { status: 'ok', name: 'h3-studio', uptime: process.uptime(), activeImageTasks:imageTasks.tasks().activeCount() });
 
   if (method === 'GET' && pathname === '/api/studio/state') {
     const q = new URL(req.url, 'http://127.0.0.1');
@@ -878,36 +880,23 @@ function rememberImageBatch(entry) {
     return ok(res, { items: readImageHistory() });
   }
 
+  if (method === 'GET' && pathname === '/api/images/tasks') {
+    return ok(res,{tasks:imageTasks.tasks().list(url.searchParams.get('projectId')||undefined)});
+  }
+  const imageAction=/^\/api\/images\/tasks\/([^/]+)(?:\/(pause|resume|retry))?$/.exec(pathname);
+  if(imageAction){
+    const worker=imageTasks.tasks();
+    if(method==='GET')return ok(res,worker.get(imageAction[1]));
+    if(method==='POST'&&imageAction[2])return ok(res,worker[imageAction[2]](imageAction[1]));
+    return bad(res,'method not allowed',405);
+  }
   if (method === 'POST' && pathname === '/api/images/generate') {
-    const body = await readBody(req);
-    const channel = body.channelId ? channels.get('image', body.channelId) : channels.active('image');
-    if (!channel) return bad(res, '没有启用的图像渠道，请先在设置里新增');
-    const stylePrefix = body.styleId && body.applyStyle !== false
-      ? styles.promptFor(body.styleId, { layer: body.styleLayer || 'auto', text: body.prompt })
-      : '';
-    const promptWithStyle = stylePrefix ? stylePrefix + '\n\n' + String(body.prompt || '') : body.prompt;
-    const runId = workbenchStore.store().begin({...body, kind:'image', userPrompt:String(body.prompt||''), prompt:promptWithStyle, channelName:channel.name, model:channel.model});
-    let buffers;
-    try { buffers = await imagegen.generate(channel, {
-      prompt: promptWithStyle,
-      count: body.count,
-      size: body.size,
-      quality: body.quality,
-      refs: body.refs || [],
-    }); } catch(e) { workbenchStore.store().finish(runId,'failed',[],e.message);throw e; }
-    const saved = imagegen.saveImages(buffers);
-    workbenchStore.store().finish(runId,'success',saved.items);
-    rememberImageBatch({
-      id: saved.id,
-      items: saved.items,
-      prompt: String(body.prompt || ''),
-      styleId: body.styleId || '',
-      channelId: channel.id,
-      channelName: channel.name,
-      kind: 'generate',
-      createdAt: Date.now(),
-    });
-    return ok(res, { id: saved.id, runId, items: saved.items });
+    const body=await readBody(req),worker=imageTasks.tasks();
+    const task=worker.enqueue(body);
+    if(body.background)return ok(res,{taskId:task.id,runId:task.id,status:task.status});
+    const result=await worker.wait(task.id);
+    if(result.status!=='success')return bad(res,result.error||'图像任务未完成');
+    return ok(res,result.result);
   }
 
   if (method === 'POST' && pathname === '/api/images/save-copy') {
@@ -1395,6 +1384,8 @@ function start() {
   internalAuth.token();
   config.storage();
   jobs.loadState();
+  imageTasks.tasks().initialize();
+  imageTasks.tasks().pump();
   const port = Number(process.env.H3_PORT || cfg.port || 17821);
   server.listen(port, '127.0.0.1', () => {
     const url = `http://127.0.0.1:${port}`;
@@ -1412,14 +1403,15 @@ function start() {
   });
 }
 
-process.on('SIGINT', () => {
+let shuttingDown=false;
+async function shutdown(){
+  if(shuttingDown)return;shuttingDown=true;
   jobs.flushState();
+  await imageTasks.tasks().close();
   process.exit(0);
-});
-process.on('SIGTERM', () => {
-  jobs.flushState();
-  process.exit(0);
-});
+}
+process.on('SIGINT',shutdown);
+process.on('SIGTERM',shutdown);
 
 if (require.main === module) start();
 

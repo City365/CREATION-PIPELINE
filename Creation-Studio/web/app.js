@@ -560,7 +560,7 @@ function render() {
   const view = $('#view');
   let html = '';
   if (state.route === 'studio') html = renderStudio();
-  else if (state.route === 'image') html = renderImage();
+  else if (state.route === 'image') html = IJ.panel() + renderImage();
   else if (state.route === 'script') html = renderScript();
   else if (state.route === 'batch') html = '<div class="page-scroll">' + renderBatch() + '</div>';
   else if (state.route === 'jobs') html = '<div class="page-scroll">' + renderJobs() + '</div>';
@@ -586,8 +586,8 @@ function render() {
 function updateStatus() {
   const cfg = state.config;
   if (!cfg) return;
-  const queued = state.jobs.filter((j) => j.status === 'queued').length;
-  const running = state.jobs.filter((j) => j.status === 'running').length;
+  const queued = state.jobs.filter((j) => j.status === 'queued').length + (state.imageTasks||[]).filter(t=>['queued','paused'].includes(t.status)).length;
+  const running = state.jobs.filter((j) => j.status === 'running').length + (state.imageTasks||[]).filter(t=>t.status==='running').length;
   const qc = $('#queue-count');
   if (qc) qc.textContent = String(queued + running);
   const jc = $('#job-count');
@@ -1997,7 +1997,7 @@ function renderJobs() {
   const jobs = state.jobs.filter((j) => (!filter.status || j.status === filter.status) && (!filter.provider || j.provider === filter.provider));
   const counts = { queued: 0, running: 0, success: 0, failed: 0 };
   state.jobs.forEach((j) => { if (counts[j.status] !== undefined) counts[j.status]++; });
-  return `
+  return IJ.table() + `
   <div class="page-head">
     <div><h1>任务</h1><p>排队 ${counts.queued} · 生成中 ${counts.running} · 完成 ${counts.success} · 失败 ${counts.failed}</p></div>
     <div class="page-actions"><button class="btn" data-act="go-studio">去创作台</button></div>
@@ -2485,7 +2485,7 @@ function imagePanelHtml(tab, ch) {
         </div>
       </div>
       <div class="zs-panel-foot">
-        <button type="button" class="zs-btn zs-btn-primary zs-btn-lg zs-generate-btn" data-act="image-reverse" ${im.busy ? 'disabled' : ''}>${im.busy ? '反推中…' : '反推提示词'}</button>
+        <button type="button" class="zs-btn zs-btn-primary zs-btn-lg zs-generate-btn" data-act="image-reverse" ${im.busy || IJ.active(WB.context('image').itemId) ? 'disabled' : ''}>${im.busy ? '反推中…' : '反推提示词'}</button>
         <p class="h3-field-hint">使用当前语言渠道，需要模型支持图片输入。</p>
       </div>`;
   }
@@ -2508,7 +2508,7 @@ function imagePanelHtml(tab, ch) {
           <span class="zs-prompt-count" id="img-prompt-count">${im.prompt.length}字</span>
           <span class="zs-prompt-spacer"></span>
           <button type="button" class="zs-iconbtn" data-act="image-clear-prompt" title="清空">${ICON.trash}</button>
-          <button type="button" class="zs-magic" data-act="image-optimize" ${im.busy ? 'disabled' : ''} title="用当前语言渠道扩写提示词">
+          <button type="button" class="zs-magic" data-act="image-optimize" ${im.busy || IJ.active(WB.context('image').itemId) ? 'disabled' : ''} title="用当前语言渠道扩写提示词">
             <span>${im.busy ? '优化中…' : '优化提示词'}</span>
           </button>
         </div>
@@ -2530,7 +2530,7 @@ function imagePanelHtml(tab, ch) {
       </div>
     </div>
     <div class="zs-panel-foot">
-      <button type="button" class="zs-btn zs-btn-primary zs-btn-lg zs-generate-btn" data-act="image-generate" ${im.busy ? 'disabled' : ''} title="每点一次发送一个任务">${im.busy ? '生成中…' : (tab === 'edit' ? '编辑图像' : '图像生成')}</button>
+      <button type="button" class="zs-btn zs-btn-primary zs-btn-lg zs-generate-btn" data-act="image-generate" ${im.busy || IJ.active(WB.context('image').itemId) ? 'disabled' : ''} title="每点一次发送一个任务">${im.busy || IJ.active(WB.context('image').itemId) ? '生成中…' : (tab === 'edit' ? '编辑图像' : '图像生成')}</button>
     </div>`;
 }
 
@@ -3133,44 +3133,18 @@ function bindImage(root) {
         return;
       }
       if (act === 'image-generate') {
-        const ch = imageChannel();
-        if (!ch) return toast('请选择图像渠道', true);
-        if (!im.prompt.trim()) return toast('先写提示词', true);
-        if ((im.tab || 'generate') === 'edit' && !im.source) return toast('先选源图', true);
-        await WB.flush("image");
-        im.busy = true;
-        render();
-        try {
-          const refs = (im.tab || 'generate') === 'edit' && im.source
-            ? [{ path: im.source.path, name: im.source.name }]
-            : [];
-          const data = await api('/api/images/generate', {
-            method: 'POST',
-            body: {
-              ...workbenchContext,
-              channelId: ch.id,
-              prompt: im.prompt,
-              size: im.size,
-              count: im.count,
-              styleId: state.project && state.project.styleId,
-              refs,
-            },
-          });
-          if (state.image === im && !(im.history || []).length) imagePushHistory();
-          im.results = data.items;
-          im.previewIndex = 0;
-          im.selection = null;
-          im.zoom = 'fit';
-          if (state.image === im) imagePushHistory();
-          state.imageHistory = await api('/api/images/history').then((d) => d.items || []).catch(() => state.imageHistory || []);
-          toast(`已生成 ${data.items.length} 张`);
-        } catch (err) {
-          toast(err.message, true);
-        } finally {
-          im.busy = false;
-          await WB.complete("image",workbenchContext,im);
-          render();
-        }
+        const ch=imageChannel();
+        if(!ch)return toast('请选择图像渠道',true);
+        if(!im.prompt.trim())return toast('先写提示词',true);
+        if(IJ.active(workbenchContext.itemId))return toast('当前画面已有未结束的图像任务，请查看任务日志',true);
+        if((im.tab||'generate')==='edit'&&!im.source)return toast('先选源图',true);
+        await WB.flush('image');
+        const body={...workbenchContext,background:true,requestId:crypto.randomUUID(),channelId:ch.id,prompt:im.prompt,size:im.size,count:im.count,styleId:state.project?.styleId,refs:(im.tab||'generate')==='edit'&&im.source?[{path:im.source.path,name:im.source.name}]:(im.refs||[])};
+        im.busy=true;render();
+        try{
+          await api('/api/images/generate',{method:'POST',body});
+          await IJ.refresh();toast('图像任务已加入后台，切换菜单不会中断');
+        }catch(e){toast(e.message,true);}finally{im.busy=false;render();}
       }
     } catch (err) {
       toast(err.message, true);
@@ -5661,7 +5635,7 @@ function bindBatch(root) {
 
 function renderLogs() {
   const jobsWithLogs = state.jobs.slice(0, 50);
-  return `
+  return IJ.table() + `
   <div class="page-head"><div><h1>任务日志</h1><p>每条任务从提交、轮询到下载的全过程都会记录在这里。</p></div>
     <div class="page-actions"><button class="btn" data-act="go-studio">去创作台</button></div></div>
   ${jobsWithLogs.length ? `<div class="table-wrap"><table class="jobs">
@@ -6857,6 +6831,7 @@ async function init() {
     } catch { /* ignore */ }
     render();
     connectEvents();
+    IJ.init();
     refreshServices();
     setInterval(refreshServices, 20000);
     const projectBtn = $('#project-btn');

@@ -8,7 +8,7 @@ const WB = (() => {
   const current=k=>books[k]?.items.find(i=>i.id===books[k].activeId);
   const context=k=>({projectId:books[k]?.projectId||studioProjectId(),kind:k,itemId:books[k]?.activeId||null});
   function snapshot(k,source=runtime(k)) {
-    const keys=k==='video'?['workflowId','channelId','prompt','promptMode','images','audios','aspectRatio','resolution','megapixels','megapixels2','duration','seed','count','panelWidth']:['channelId','tab','prompt','size','count','refs','source','reverseText','results','previewIndex','zoom','panelWidth'];
+    const keys=k==='video'?['workflowId','channelId','prompt','promptMode','images','audios','aspectRatio','resolution','megapixels','megapixels2','duration','seed','count','panelWidth']:['channelId','tab','prompt','size','count','refs','source','reverseText','results','previewIndex','zoom','panelWidth','_imageRunId'];
     const out={};for(const key of keys)if(source[key]!==undefined)out[key]=clone(source[key]);return out;
   }
   function adopt(k,item) {
@@ -91,8 +91,8 @@ const WB = (() => {
       const d=item.id===b.activeId?snapshot(k):item.draft;
       const thumb=k==='image'?(d.results||[])[0]:(d.images||[]).find(Boolean);
       const jobs=(state.jobs||[]).filter(j=>j.itemId===item.id);
-      const status=jobs.find(j=>j.status==='running'||j.status==='queued');
-      return '<div class="wb-row '+(item.id===b.activeId?'is-selected':'')+'" draggable="true" data-wb-id="'+esc(item.id)+'"><button type="button" class="wb-select" data-wb="select" data-id="'+esc(item.id)+'" aria-current="'+(item.id===b.activeId?'true':'false')+'">'+(thumb?.path?'<img alt="" src="/api/file?path='+enc(thumb.path)+'">':'<span class="wb-number">'+String(n+1).padStart(2,'0')+'</span>')+'<span><b>'+esc(item.title)+'</b><small>'+esc(status?STATUS_LABEL[status.status]:d.prompt?String(d.prompt).slice(0,30):'待编辑')+'</small></span></button><button type="button" class="wb-more" data-wb="menu" data-id="'+item.id+'" aria-label="管理 '+esc(item.title)+'">⋯</button></div>';
+      const status=jobs.find(j=>j.status==='running'||j.status==='queued') || (k==='image'?(state.imageTasks||[]).find(t=>t.itemId===item.id&&['running','queued','paused'].includes(t.status)):null);
+      return '<div class="wb-row '+(item.id===b.activeId?'is-selected':'')+'" draggable="true" data-wb-id="'+esc(item.id)+'"><button type="button" class="wb-select" data-wb="select" data-id="'+esc(item.id)+'" aria-current="'+(item.id===b.activeId?'true':'false')+'">'+(thumb?.path?'<img alt="" src="/api/file?path='+enc(thumb.path)+'">':'<span class="wb-number">'+String(n+1).padStart(2,'0')+'</span>')+'<span><b>'+esc(item.title)+'</b><small>'+esc(status?(status.status==='paused'?'已暂停':STATUS_LABEL[status.status]):d.prompt?String(d.prompt).slice(0,30):'待编辑')+'</small></span></button><button type="button" class="wb-more" data-wb="menu" data-id="'+item.id+'" aria-label="管理 '+esc(item.title)+'">⋯</button></div>';
     }).join('');
     const sidebar='<aside class="wb-directory '+(collapsed?'is-collapsed':'')+'" aria-label="'+(k==='video'?'视频分镜':'图像画面')+'目录"><header><b>'+(k==='video'?'分镜目录':'画面目录')+'</b><button type="button" data-wb="collapse" title="收起 / 展开目录">'+(collapsed?'›':'‹')+'</button></header><div class="wb-tools"><button type="button" data-wb="new">＋ 新建</button><button type="button" data-wb="trash">回收站</button><button type="button" data-wb="migration">迁移报告</button></div><div class="wb-list">'+(rows||'<p class="wb-empty">还没有条目，点击新建开始。</p>')+'</div><footer><span data-wb-status="'+k+'">'+(i?.error?'保存失败 · 本地已保留':'已自动保存')+'</span><button type="button" data-wb="save">保存</button></footer></aside>';
     return '<div class="wb-layout" data-workbench="'+k+'">'+sidebar+'<div class="wb-content">'+(b.activeId?html:'<div class="wb-blank"><h2>新建'+(k==='video'?'分镜':'画面')+'</h2><p>每个条目独立保存提示词、参考图和生成记录。</p><button type="button" class="btn primary" data-wb="new">＋ 新建</button></div>')+'</div></div>';
@@ -184,6 +184,18 @@ const WB = (() => {
     const item=await api('/api/workbench/items/'+ctx.itemId+'?projectId='+enc(ctx.projectId)+'&kind='+k);
     await saveItem({projectId:ctx.projectId},item,snapshot(k,obj));
   }
+  async function reconcileImageTask(task){
+    const b=books.image;if(!b||b.projectId!==task.projectId||!task.itemId)return;
+    const item=b.items.find(i=>i.id===task.itemId);if(!item||item.runtime?._imageRunId===task.id)return;
+    await (queues.get(item.id)||Promise.resolve()).catch(()=>{});
+    const row=await api('/api/workbench/items/'+item.id+'?projectId='+enc(b.projectId)+'&kind=image');
+    if(books.image!==b||row.draft._imageRunId!==task.id)return;
+    const strip=d=>{const v=clone(d||{});for(const key of ['results','previewIndex','zoom','_imageRunId'])delete v[key];return JSON.stringify(v);};
+    const saved=item.saved?JSON.parse(item.saved):item.draft;
+    if(row.revision!==item.revision&&strip(row.draft)!==strip(saved)){item.error='后台结果已保存，但草稿在其他页面更新，请保留本地内容后重新打开';return;}
+    item.revision=row.revision;item.draft=row.draft;item.saved=JSON.stringify(row.draft);item.error='';
+    if(item.runtime){item.runtime.results=row.draft.results;item.runtime.previewIndex=0;item.runtime.zoom='fit';item.runtime._imageRunId=task.id;}
+  }
   function beacon(){for(const k of ['image','video']){const b=books[k],i=current(k);if(!i)continue;const draft=snapshot(k);localStorage.setItem(cacheKey(b.projectId,k,i.id),JSON.stringify({draft,revision:i.revision}));}}
   window.addEventListener('beforeunload',beacon);
   async function mediaDetails(item){
@@ -197,5 +209,5 @@ const WB = (() => {
       const origin=host.querySelector('#wb-open-origin');if(origin)origin.onclick=async()=>{try{await flushAll();if(d.projectId!==studioProjectId()){await setActiveProject(d.projectId,{silent:true});if(d.projectId!==studioProjectId())throw Error('原项目不存在');}await selectItem(d.kind,d.itemId);closeModal();location.hash=d.kind==='video'?'#studio':'#image';}catch(e){toast(e.message,true);}};
     }catch(e){host.textContent='生成资料读取失败：'+e.message;}
   }
-  return {layout,bind,load,flush,flushAll,schedule,context,complete,mediaDetails,current,snapshot};
+  return {reconcileImageTask,layout,bind,load,flush,flushAll,schedule,context,complete,mediaDetails,current,snapshot};
 })();
