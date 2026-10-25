@@ -195,6 +195,7 @@ async function studioLoadForProject(project) {
   } catch { /* offline: use local */ }
   let local = null;
   try { local = JSON.parse(localStorage.getItem(studioKey(projectId)) || 'null'); } catch { local = null; }
+  if (projectId !== studioProjectId()) return null;
   const localTime = (local && local.updated) || 0;
   const serverTime = (server && server.updated) || 0;
   const saved = server && serverTime >= localTime ? server.state : (local || (server && server.state));
@@ -545,6 +546,10 @@ function setRoute() {
   if (state.route === 'script' && previousRoute !== 'script' && state.ask?.conversations && !state.ask.loading && !state.ask.generating) {
     askNewConversation();
   }
+  if (state.route === 'media' || state.route === 'assets') {
+    const targetRoute=state.route;
+    api('/api/'+targetRoute).then(data=>{state[targetRoute]=data;if(state.route===targetRoute)render();}).catch(e=>toast(e.message,true));
+  }
   $$('#nav .h3-maintab').forEach((b) => b.classList.toggle('is-active', b.dataset.route === state.route));
   render();
 }
@@ -564,6 +569,7 @@ function render() {
   else if (state.route === 'compare') html = '<div class="page-scroll is-compare">' + renderCompare() + '</div>';
   else if (state.route === 'logs') html = '<div class="page-scroll">' + renderLogs() + '</div>';
   else if (state.route === 'projects') html = renderProjects();
+  if (state.route === 'studio' || state.route === 'image') html = WB.layout(state.route === 'studio' ? 'video' : 'image', html);
   if (state.route === 'studio') studioPersist();
   view.classList.toggle('is-image-route', state.route === 'image');
   // 每次渲染换一个新的宿主节点：旧节点上的事件监听随之销毁，避免同一个 #view 上重复绑定
@@ -572,6 +578,7 @@ function render() {
   host.innerHTML = html;
   view.replaceChildren(host);
   bindRoute(host);
+  if(state.route === "studio" || state.route === "image") WB.bind(host,state.route === "studio" ? "video" : "image");
   applyVolume();
   updateStatus();
 }
@@ -1242,6 +1249,7 @@ function stageEmptyHtml(wf) {
 
 function renderStudio() {
   const s = state.studio;
+  const ownJobs = state.jobs.filter(j => j.itemId === WB.context("video").itemId);
   const wf = currentWorkflow();
   if (!wf) return `<div class="h3-empty"><div class="h3-empty-card"><h2 class="h3-empty-title">没有工作流</h2><p class="h3-empty-desc">在设置里添加一个视频渠道，或恢复默认的官网 API 工作流。</p></div></div>`;
   const isAuto = wf.provider === 'autodl';
@@ -1253,13 +1261,13 @@ function renderStudio() {
   const audios = s.audios || [];
   const nextEmpty = images.findIndex((x) => !x);
   const mode = s.promptMode || 'tags';
-  const lastJob = state.jobs.find((j) => j.id === state.lastJobId) || state.jobs.find((j) => j.status === 'running') || state.jobs.slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).find((j) => (j.outputs || []).length) || null;
+  const lastJob = ownJobs.find((j) => j.id === state.lastJobId) || ownJobs.find((j) => j.status === 'running') || ownJobs.slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).find((j) => (j.outputs || []).length) || null;
   const outputs = lastJob ? (lastJob.outputs || []) : [];
   const video = [...outputs].reverse().find((o) => o.type === 'video');
   const progress = lastJob ? lastJob.progress || 0 : 0;
   const keyCount = (state.config.autodlKeys || []).filter((k) => k.enabled !== false).length;
   const channel = (state.channels.video || []).find((c) => c.id === wf.channelId) || null;
-  const recent = state.jobs.slice(0, 5);
+  const recent = ownJobs.slice(0, 5);
 
   const videoChannels = (state.channels.video || []).filter((c) => c.enabled !== false);
   const defaultVideoChannel = videoChannels.find((c) => c.active) || null;
@@ -1940,6 +1948,8 @@ async function optimizePrompt() {
 
 async function generate() {
   const s = state.studio;
+  const workbenchContext = WB.context("video");
+  await WB.flush("video");
   const wf = currentWorkflow();
   if (!s.prompt.trim()) return toast('提示词不能为空', true);
   if (!s.images.filter(Boolean).length) return toast('至少添加一张参考图', true);
@@ -1947,6 +1957,7 @@ async function generate() {
   render();
   try {
     const body = {
+      ...workbenchContext,
       workflowId: wf.id,
       prompt: s.prompt,
       images: s.images.filter(Boolean).map((img) => ({ path: img.path, name: img.name, subject: img.subject || '' })),
@@ -1962,7 +1973,7 @@ async function generate() {
     };
     const data = await api('/api/jobs', { method: 'POST', body });
     state.jobs = (await api('/api/jobs')).jobs;
-    state.lastJobId = data.jobs[0].id;
+    if (WB.context("video").itemId === workbenchContext.itemId) state.lastJobId = data.jobs[0].id;
     try { localStorage.setItem('h3.lastJobId', state.lastJobId); } catch { /* ignore */ }
     toast(`已加入队列 ${data.jobs.length} 条`);
   } catch (err) {
@@ -2206,6 +2217,8 @@ function openAssetDetail(item) {
       <button class="btn primary" data-save="1">保存</button>
     </div>
   `);
+  $('#modal-panel .modal-body').insertAdjacentHTML('beforeend','<section id="generation-details">正在读取生成资料…</section>');
+  WB.mediaDetails(item);
   const panel = $('#modal-panel');
   panel.querySelector('[data-save]').onclick = async () => {
     try {
@@ -2299,6 +2312,8 @@ function openMediaDetail(item) {
     </div>
     <div class="modal-foot"><button class="btn primary" id="media-preview-edit">加入剪辑</button><button class="btn" data-close="1">关闭</button></div>
   `);
+  $('#modal-panel .modal-body').insertAdjacentHTML('beforeend','<section id="generation-details">正在读取生成资料…</section>');
+  WB.mediaDetails(item);
   $('#media-preview-edit').onclick = () => openVideoEditor(item).catch(e => toast(e.message, true));
 }
 
@@ -2675,7 +2690,8 @@ function imageWorkspaceHtml(tab, ch) {
 }
 
 async function imageSaveDataUrl(dataUrl) {
-  const data = await api('/api/images/save', { method: 'POST', body: { data: dataUrl } });
+  const sourcePath=(imageCurrent()||{}).path;
+  const data = await api('/api/images/save', { method: 'POST', body: { data: dataUrl, sourcePath, ...WB.context('image') } });
   const item = data.item;
   const img = new Image();
   await new Promise((resolve) => { img.onload = resolve; img.onerror = resolve; img.src = item.url; });
@@ -2989,11 +3005,13 @@ function renderImage() {
 }
 
 function bindImage(root) {
-  if (state.image.tab === 'scene') {
-    root.addEventListener('click', e => { const tab=e.target.closest('[data-img-tab]'); if(tab) {sceneCaptureInputs();state.image.tab=tab.dataset.imgTab;render();} });
+  const im = state.image;
+  const workbenchContext = WB.context("image");
+  if (im.tab === 'scene') {
+    root.addEventListener('click', e => { const tab=e.target.closest('[data-img-tab]'); if(tab) {sceneCaptureInputs();im.tab=tab.dataset.imgTab;render();} });
     bindSceneWorkspace(root);return;
   }
-  bindSplitter(root, '.zs-panel', (width) => { state.image.panelWidth = width || 440; });
+  bindSplitter(root, '.zs-panel', (width) => { im.panelWidth = width || 440; });
   bindImageCanvas(root);
   root.addEventListener('keydown', event => {
     const close = event.target.closest('[data-close-document]');
@@ -3003,57 +3021,57 @@ function bindImage(root) {
     }
   });
   const chSel = $('#img-channel', root);
-  if (chSel) chSel.onchange = () => { state.image.channelId = chSel.value; state.image.size = 'auto'; render(); };
+  if (chSel) chSel.onchange = () => { im.channelId = chSel.value; im.size = 'auto'; render(); };
   const sizeSel = $('#img-size', root);
-  if (sizeSel) sizeSel.onchange = () => { state.image.size = sizeSel.value; };
+  if (sizeSel) sizeSel.onchange = () => { im.size = sizeSel.value; };
   const countEl = $('#img-count', root);
-  if (countEl) countEl.onchange = () => { state.image.count = Math.max(1, Math.min(4, Number(countEl.value) || 1)); };
+  if (countEl) countEl.onchange = () => { im.count = Math.max(1, Math.min(4, Number(countEl.value) || 1)); };
   const promptEl = $('#img-prompt', root);
   if (promptEl) {
     promptEl.oninput = () => {
-      state.image.prompt = promptEl.value;
+      im.prompt = promptEl.value;
       const count = $('#img-prompt-count');
-      if (count) count.textContent = state.image.prompt.length + '字';
+      if (count) count.textContent = im.prompt.length + '字';
     };
   }
   const reverseOut = $('#img-reverse-out', root);
-  if (reverseOut) reverseOut.oninput = () => { state.image.reverseText = reverseOut.value; };
+  if (reverseOut) reverseOut.oninput = () => { im.reverseText = reverseOut.value; };
 
   root.addEventListener('click', async (event) => {
     const tabBtn = event.target.closest('[data-img-tab]');
-    if (tabBtn) { state.image.tab = tabBtn.dataset.imgTab; return render(); }
+    if (tabBtn) { im.tab = tabBtn.dataset.imgTab; return render(); }
     const closeDocument = event.target.closest('[data-close-document]');
     if (closeDocument) { event.stopPropagation(); return imageCloseDocument(Number(closeDocument.dataset.closeDocument)); }
     const thumb = event.target.closest('[data-preview]');
-    if (thumb) { state.image.previewIndex = Number(thumb.dataset.preview); return render(); }
+    if (thumb) { im.previewIndex = Number(thumb.dataset.preview); return render(); }
     const clearSource = event.target.closest('[data-clear-source]');
-    if (clearSource) { state.image.source = null; return render(); }
+    if (clearSource) { im.source = null; return render(); }
     const target = event.target.closest('[data-act]');
     if (!target) return;
     const act = target.dataset.act;
-    const selected = () => (state.image.results || [])[state.image.previewIndex || 0] || null;
+    const selected = () => (im.results || [])[im.previewIndex || 0] || null;
     try {
       if (act === 'add-image-channel') return openChannelDialog('image', null);
       if (act === 'manage-image-channels') return openSettings('channels');
-      if (act === 'set-tab-generate') { state.image.tab = 'generate'; return render(); }
-      if (act === 'image-clear-prompt') { state.image.prompt = ''; return render(); }
+      if (act === 'set-tab-generate') { im.tab = 'generate'; return render(); }
+      if (act === 'image-clear-prompt') { im.prompt = ''; return render(); }
       if (act === 'image-clear') {
-        state.image.results = [];
-        state.image.previewIndex = 0;
-        state.image.selection = null;
+        im.results = [];
+        im.previewIndex = 0;
+        im.selection = null;
         imagePushHistory();
         return render();
       }
       if (act === 'pick-result') return openSourcePicker();
       if (act === 'pick-source') return openSourcePicker();
       if (act === 'copy-reverse') {
-        await navigator.clipboard.writeText(state.image.reverseText || '');
+        await navigator.clipboard.writeText(im.reverseText || '');
         toast('已复制');
         return;
       }
       if (act === 'use-reverse') {
-        state.image.prompt = state.image.reverseText || '';
-        state.image.tab = 'generate';
+        im.prompt = im.reverseText || '';
+        im.tab = 'generate';
         return render();
       }
       if (act === 'open-result') {
@@ -3093,61 +3111,64 @@ function bindImage(root) {
         return;
       }
       if (act === 'image-optimize') {
-        if (!state.image.prompt.trim()) return toast('先写一句想法', true);
-        state.image.busy = true; render();
+        if (!im.prompt.trim()) return toast('先写一句想法', true);
+        im.busy = true; render();
         try {
-          const res = await api('/api/images/prompt', { method: 'POST', body: { prompt: state.image.prompt } });
-          state.image.prompt = res.prompt;
+          const res = await api('/api/images/prompt', { method: 'POST', body: { prompt: im.prompt } });
+          im.prompt = res.prompt;
           toast('提示词已优化');
         } catch (err) { toast(err.message, true); }
-        finally { state.image.busy = false; render(); }
+        finally { im.busy = false; await WB.complete("image",workbenchContext,im); render(); }
         return;
       }
       if (act === 'image-reverse') {
-        if (!state.image.source) return toast('先选一张源图', true);
-        state.image.busy = true; render();
+        if (!im.source) return toast('先选一张源图', true);
+        im.busy = true; render();
         try {
-          const res = await api('/api/images/reverse', { method: 'POST', body: { path: state.image.source.path } });
-          state.image.reverseText = res.prompt;
+          const res = await api('/api/images/reverse', { method: 'POST', body: { path: im.source.path } });
+          im.reverseText = res.prompt;
           toast('反推完成');
         } catch (err) { toast(err.message, true); }
-        finally { state.image.busy = false; render(); }
+        finally { im.busy = false; await WB.complete("image",workbenchContext,im); render(); }
         return;
       }
       if (act === 'image-generate') {
         const ch = imageChannel();
         if (!ch) return toast('请选择图像渠道', true);
-        if (!state.image.prompt.trim()) return toast('先写提示词', true);
-        if ((state.image.tab || 'generate') === 'edit' && !state.image.source) return toast('先选源图', true);
-        state.image.busy = true;
+        if (!im.prompt.trim()) return toast('先写提示词', true);
+        if ((im.tab || 'generate') === 'edit' && !im.source) return toast('先选源图', true);
+        await WB.flush("image");
+        im.busy = true;
         render();
         try {
-          const refs = (state.image.tab || 'generate') === 'edit' && state.image.source
-            ? [{ path: state.image.source.path, name: state.image.source.name }]
+          const refs = (im.tab || 'generate') === 'edit' && im.source
+            ? [{ path: im.source.path, name: im.source.name }]
             : [];
           const data = await api('/api/images/generate', {
             method: 'POST',
             body: {
+              ...workbenchContext,
               channelId: ch.id,
-              prompt: state.image.prompt,
-              size: state.image.size,
-              count: state.image.count,
+              prompt: im.prompt,
+              size: im.size,
+              count: im.count,
               styleId: state.project && state.project.styleId,
               refs,
             },
           });
-          if (!(state.image.history || []).length) imagePushHistory();
-          state.image.results = data.items;
-          state.image.previewIndex = 0;
-          state.image.selection = null;
-          state.image.zoom = 'fit';
-          imagePushHistory();
+          if (state.image === im && !(im.history || []).length) imagePushHistory();
+          im.results = data.items;
+          im.previewIndex = 0;
+          im.selection = null;
+          im.zoom = 'fit';
+          if (state.image === im) imagePushHistory();
           state.imageHistory = await api('/api/images/history').then((d) => d.items || []).catch(() => state.imageHistory || []);
           toast(`已生成 ${data.items.length} 张`);
         } catch (err) {
           toast(err.message, true);
         } finally {
-          state.image.busy = false;
+          im.busy = false;
+          await WB.complete("image",workbenchContext,im);
           render();
         }
       }
@@ -6574,7 +6595,7 @@ async function setActiveProject(id, opts = {}) {
   const project = (state.projects || []).find((p) => p.id === id);
   if (!project) return null;
   const previousId = state.projectId;
-  if (previousId && previousId !== id) studioFlush(previousId);
+  if (previousId && previousId !== id) { await WB.flushAll(); studioFlush(previousId); }
   state.projectId = id;
   state.project = project;
   try { localStorage.setItem('h3.projectId', id); } catch { /* ignore */ }
@@ -6585,6 +6606,9 @@ async function setActiveProject(id, opts = {}) {
     body: JSON.stringify({ projectId: id }),
   }).catch(() => {});
   await studioLoadForProject(id);
+  if(state.projectId!==id)return null;
+  await WB.load(id);
+  if(state.projectId!==id)return null;
   applyProjectChip();
   if (!opts.silent) render();
   return project;
@@ -6812,13 +6836,13 @@ async function init() {
     try { storedProject = localStorage.getItem('h3.projectId') || ''; } catch { storedProject = ''; }
     const activeProject = (state.projects || []).find((p) => p.id === storedProject) || (state.projects || [])[0] || null;
     if (activeProject) await setActiveProject(activeProject.id, { silent: true });
-    else await studioLoadForProject('default');
+    else { await studioLoadForProject('default'); await WB.load('default'); }
     applyTheme();
     setRoute();
     state.assets = await api('/api/assets');
     state.media = await api('/api/media');
     state.imageHistory = await api('/api/images/history').then((d) => d.items || []).catch(() => []);
-    if ((state.image.results || []).length === 0 && state.imageHistory[0] && state.imageHistory[0].items) {
+    if (!WB.current('image') && (state.image.results || []).length === 0 && state.imageHistory[0] && state.imageHistory[0].items) {
       state.image.results = state.imageHistory[0].items;
       state.image.previewIndex = 0;
       if (state.imageHistory[0].prompt) state.image.prompt = state.imageHistory[0].prompt;

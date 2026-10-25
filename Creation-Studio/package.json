@@ -8,8 +8,9 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "test": "node --test tests/creative.test.js tests/studio-mentions.test.js tests/agent-lifecycle.test.js tests/prompt.test.js tests/batch.test.js tests/channels.test.js tests/autodl-e2e.test.js tests/optimize-e2e.test.js tests/image-e2e.test.js tests/image-tools-e2e.test.js tests/generic-video-e2e.test.js tests/tts.test.js tests/voice-library.test.js tests/channel-models.test.js tests/manager-video.test.js tests/review-regressions.test.js tests/wallpapers.test.js",
-    "test:creative": "node --test tests/creative.test.js"
+    "test": "node --test tests/workbench.test.js tests/workbench-e2e.test.js tests/creative.test.js tests/studio-mentions.test.js tests/agent-lifecycle.test.js tests/prompt.test.js tests/batch.test.js tests/channels.test.js tests/autodl-e2e.test.js tests/optimize-e2e.test.js tests/image-e2e.test.js tests/image-tools-e2e.test.js tests/generic-video-e2e.test.js tests/tts.test.js tests/voice-library.test.js tests/channel-models.test.js tests/manager-video.test.js tests/review-regressions.test.js tests/wallpapers.test.js",
+    "test:creative": "node --test tests/creative.test.js",
+    "test:workbench-browser": "node tests/workbench-browser.js"
   },
   "engines": {
     "node": ">=22"
