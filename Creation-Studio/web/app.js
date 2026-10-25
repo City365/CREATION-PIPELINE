@@ -1607,8 +1607,8 @@ function bindStudio(root) {
       if (act === 'clear-prompt') { s.prompt = ''; s.warnings = []; s.promptMode = 'code'; return render(); }
       if (act === 'optimize') { s.promptMode = 'code'; return optimizePrompt(); }
       if (act === 'generate') return generate();
-      if (act === 'open-job') { location.hash = '#jobs'; return; }
-      if (act === 'go-jobs') { location.hash = '#jobs'; return; }
+      if (act === 'open-job') { return openJobDetail(target.dataset.id); }
+      if (act === 'go-jobs') { state.logTab='video';localStorage.setItem('h3.logs.tab','video');location.hash = '#logs'; return; }
       if (act === 'open-manager') {
         const ch = (state.channels.video || []).find((c) => c.id === s.channelId);
         await api('/api/open', { method: 'POST', body: { url: (ch && ch.baseUrl) || 'http://127.0.0.1:17778' } });
@@ -1997,10 +1997,10 @@ function renderJobs() {
   const jobs = state.jobs.filter((j) => (!filter.status || j.status === filter.status) && (!filter.provider || j.provider === filter.provider));
   const counts = { queued: 0, running: 0, success: 0, failed: 0 };
   state.jobs.forEach((j) => { if (counts[j.status] !== undefined) counts[j.status]++; });
-  return IJ.table() + `
+  return `
   <div class="page-head">
-    <div><h1>任务</h1><p>排队 ${counts.queued} · 生成中 ${counts.running} · 完成 ${counts.success} · 失败 ${counts.failed}</p></div>
-    <div class="page-actions"><button class="btn" data-act="go-studio">去创作台</button></div>
+    <div><h1>任务管理</h1><p>视频任务 · 排队 ${counts.queued} · 生成中 ${counts.running} · 完成 ${counts.success} · 失败 ${counts.failed}</p></div>
+    <div class="page-actions"><button class="btn" data-act="go-logs">查看执行日志</button><button class="btn" data-act="go-studio">去创作台</button></div>
   </div>
   <div class="filters">
     ${['', 'queued', 'running', 'success', 'failed', 'canceled'].map((s) => `<button class="chip ${filter.status === s ? 'active' : ''}" data-filter-status="${s}">${s ? STATUS_LABEL[s] : '全部状态'}</button>`).join('')}
@@ -2046,6 +2046,7 @@ function bindJobs(root) {
     const act = target.dataset.act;
     const id = target.dataset.id;
     try {
+      if (act === 'go-logs') { state.logTab='video';localStorage.setItem('h3.logs.tab','video');location.hash='#logs';return; }
       if (act === 'go-studio') { location.hash = '#studio'; return; }
       if (act === 'cancel') { await api(`/api/jobs/${id}/cancel`, { method: 'POST' }); toast('已请求取消'); }
       if (act === 'resume') { await api(`/api/jobs/${id}/resume`, { method: 'POST' }); toast('已继续原任务，不会重新生成'); }
