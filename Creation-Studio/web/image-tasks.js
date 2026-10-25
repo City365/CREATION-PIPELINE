@@ -25,8 +25,14 @@ const IJ=(()=>{
   const current=own(),task=current.find(t=>['queued','running','paused'].includes(t.status))||current[0];
   return '<section id="image-task-panel" class="ij-panel"><div><b>图像任务</b><span id="ij-poll-state">'+(task?esc(label[task.status]||task.status)+' · '+esc(task.phase):'任务在后台执行，切换菜单不中断')+'</span></div><div class="ij-actions">'+(task?'<button class="btn sm" data-ij="detail" data-id="'+task.id+'">查看日志</button>'+controls(task):'')+'<button class="btn sm" data-ij="all">全部图像任务 / 日志</button></div></section>';
  }
+ function current(){return own().find(t=>['queued','running','paused'].includes(t.status))||null;}
+ function canvas(){
+  const task=current();if(!task)return '';
+  const paused=task.status==='paused',title=paused?'图像任务已暂停':task.status==='queued'?'图像任务排队中':'正在生成图片…';
+  return '<div id="image-task-canvas" class="img-generating ij-canvas-state" role="status" aria-live="polite"><div class="ij-canvas-card">'+(paused?'<span class="ij-pause-icon">Ⅱ</span>':'<span class="img-spin" aria-hidden="true"></span>')+'<h2>'+title+'</h2><p>'+esc(task.phase)+'</p><small>'+esc(task.snapshot.channelName||'')+' · '+esc(task.snapshot.model||'')+(task.snapshot.count?' · '+task.snapshot.count+' 张':'')+'</small><div class="ij-canvas-actions"><button class="btn" data-ij="detail" data-id="'+task.id+'">查看生成日志</button>'+controls(task)+'</div><small>生成完成后，图片会显示在这里。切换页面不会中断任务。</small></div></div>';
+ }
  function controls(t){return ['queued','running','paused'].includes(t.status)?'<button class="btn sm" data-ij="'+(t.held?'resume':'pause')+'" data-id="'+t.id+'">'+(t.held?'继续':'暂停')+'</button>':t.status==='failed'||t.status==='interrupted'?'<button class="btn sm" data-ij="retry" data-id="'+t.id+'">重新生成</button>':'';}
- function table(){return '<section class="ij-table"><h2>图像任务与日志</h2><p>提交、等待、保存和错误会写入 SQLite，切换菜单和刷新页面不会取消任务。</p>'+ (tasks().length?'<table class="jobs"><thead><tr><th>时间 / 任务</th><th>状态</th><th>提示词</th><th>操作</th></tr></thead><tbody>'+tasks().map(t=>'<tr><td>'+fmtTime(t.createdAt)+'<small class="ij-id">'+t.id+'</small></td><td>'+esc(label[t.status]||t.status)+'<div class="hint">'+esc(t.phase)+'</div></td><td class="cell-prompt">'+esc((t.snapshot.userPrompt||t.snapshot.prompt||'').slice(0,100))+(t.error?'<p class="ij-error">'+esc(t.error)+'</p>':'')+'</td><td><button class="btn sm" data-ij="detail" data-id="'+t.id+'">日志 / 结果</button>'+controls(t)+'</td></tr>').join('')+'</tbody></table>':'<p>还没有图像任务。</p>')+'</section>';}
+ function table(compact=false){return '<section class="ij-table '+(compact?'is-log-tab':'')+'">'+(compact?'':'<h2>图像任务与日志</h2><p>提交、等待、保存和错误会写入 SQLite，切换菜单和刷新页面不会取消任务。</p>')+ (tasks().length?'<table class="jobs"><thead><tr><th>时间 / 任务</th><th>状态</th><th>提示词</th><th>操作</th></tr></thead><tbody>'+tasks().map(t=>'<tr><td>'+fmtTime(t.createdAt)+'<small class="ij-id">'+t.id+'</small></td><td>'+esc(label[t.status]||t.status)+'<div class="hint">'+esc(t.phase)+'</div></td><td class="cell-prompt">'+esc((t.snapshot.userPrompt||t.snapshot.prompt||'').slice(0,100))+(t.error?'<p class="ij-error">'+esc(t.error)+'</p>':'')+'</td><td><button class="btn sm" data-ij="detail" data-id="'+t.id+'">日志 / 结果</button>'+controls(t)+'</td></tr>').join('')+'</tbody></table>':'<p>还没有图像任务。</p>')+'</section>';}
  async function detail(id){
   const task=await api('/api/images/tasks/'+id);modalTask=id;
   openModal('<div class="modal-head"><h2>图像任务日志</h2><button class="btn" data-close="1">关闭</button></div><div class="modal-body"><div id="ij-detail-status"></div><p class="mono">'+esc(id)+'</p><div id="ij-log-lines"></div><details><summary>生成提示词</summary><pre class="wb-prompt">'+esc(task.snapshot.userPrompt||task.snapshot.prompt||'未记录')+'</pre></details><div id="ij-outputs"></div></div><div class="modal-foot">'+controls(task)+'<button class="btn" data-ij="refresh">刷新日志</button></div>');drawDetail(task);
@@ -34,7 +40,7 @@ const IJ=(()=>{
  function drawDetail(t){if(!t)return;const status=document.querySelector('#ij-detail-status'),lines=document.querySelector('#ij-log-lines'),out=document.querySelector('#ij-outputs');if(!lines)return;status.textContent=(label[t.status]||t.status)+' · '+t.phase+(t.error?' · '+t.error:'');lines.innerHTML=t.logs.map(l=>'<div class="ij-log '+esc(l.level)+'"><time>'+new Date(l.time).toLocaleTimeString()+'</time><span>'+esc(l.message)+'</span></div>').join('');out.innerHTML=(t.result?.items||[]).map((item,n)=>'<button type="button" class="ij-result" data-ij="result" data-id="'+t.id+'" data-index="'+n+'"><img src="/api/file?path='+enc(item.path)+'" alt="'+esc(item.name)+'"><span>'+esc(item.name)+'</span></button>').join('');}
  function init(){if(initialized)return;initialized=true;refresh();setInterval(refresh,1800);
   document.addEventListener('click',async e=>{const btn=e.target.closest('[data-ij]');if(!btn)return;e.preventDefault();const action=btn.dataset.ij,id=btn.dataset.id;try{
-    if(action==='all'){location.hash='#logs';return;}
+    if(action==='all'){state.logTab='image';localStorage.setItem('h3.logs.tab','image');if(location.hash==='#logs')render();else location.hash='#logs';return;}
     if(action==='detail'){await detail(id);return;}
     if(action==='refresh'){await refresh();if(modalTask)await detail(modalTask);return;}
     if(action==='result'){const task=tasks().find(t=>t.id===id);const item=task?.result?.items[Number(btn.dataset.index)];if(item)openMediaDetail({...item,kind:'image'});return;}
@@ -43,5 +49,5 @@ const IJ=(()=>{
     toast(action==='pause'?task.phase:action==='resume'?'已继续后台任务':'已新建后台图像任务');if(document.querySelector('#ij-log-lines'))await detail(action==='retry'?task.id:id);
    }catch(err){toast(err.message,true);}});
  }
- return {init,refresh,panel:panelHtml,table,active};
+ return {init,refresh,panel:panelHtml,table,active,current,canvas};
 })();

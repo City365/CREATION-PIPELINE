@@ -2605,7 +2605,9 @@ function imageViewerHtml(item) {
 function imageWorkspaceHtml(tab, ch) {
   const im = state.image;
   const item = imageCurrent();
-  const status = !ch ? '没有图像渠道 · 先在左侧新增一个'
+  const imageTask=IJ.current();
+  const generating=!!imageTask||im.busy;
+  const status = imageTask ? imageTask.phase : !ch ? '没有图像渠道 · 先在左侧新增一个'
     : item ? `${item.name}${item.width ? ` · ${item.width}×${item.height}` : ''}${item.bytes ? ` · ${fmtBytes(item.bytes)}` : ''}${im.selection ? ' · 已选区' : ''}`
     : (tab === 'reverse' ? '选择源图后点「反推提示词」' : '就绪 - 在左侧写提示词，点「图像生成」');
   const thumbs = (tab !== 'reverse' && (im.results || []).length)
@@ -2665,8 +2667,8 @@ function imageWorkspaceHtml(tab, ch) {
     <span class="zd-tabs-spacer"></span>
   </div>
   <div class="zd-canvas-area">
-    ${im.busy ? `<div class="img-generating"><span class="img-spin"></span><b>正在生成图片…</b><small>${esc(ch ? ch.name : '')}${im.count > 1 ? ' · ' + im.count + ' 张' : ''}</small></div>` : ''}
-    ${item ? imageViewerHtml(item) : `<div class="zd-empty">
+    ${IJ.canvas() || (im.busy ? `<div class="img-generating"><span class="img-spin"></span><b>正在生成图片…</b><small>${esc(ch ? ch.name : '')}${im.count > 1 ? ' · ' + im.count + ' 张' : ''}</small></div>` : '')}
+    ${item ? imageViewerHtml(item) : generating ? '' : `<div class="zd-empty">
         <div class="zd-empty-card">
           <div class="zd-empty-frame">${IMG_ICON}</div>
           <div class="zd-empty-title">${ch ? '把图片拖到这里开始' : '先新增一个图像渠道'}</div>
@@ -5635,10 +5637,16 @@ function bindBatch(root) {
 
 function renderLogs() {
   const jobsWithLogs = state.jobs.slice(0, 50);
-  return IJ.table() + `
+  const tab=state.logTab||localStorage.getItem('h3.logs.tab')||'video';
+  return `
   <div class="page-head"><div><h1>任务日志</h1><p>每条任务从提交、轮询到下载的全过程都会记录在这里。</p></div>
     <div class="page-actions"><button class="btn" data-act="go-studio">去创作台</button></div></div>
-  ${jobsWithLogs.length ? `<div class="table-wrap"><table class="jobs">
+  <div class="generation-log-tabs" role="tablist" aria-label="生成日志类型">
+    <button type="button" role="tab" id="video-log-tab" aria-controls="generation-log-panel" aria-selected="${tab==='video'}" data-log-tab="video" class="${tab==='video'?'is-active':''}">视频生成日志</button>
+    <button type="button" role="tab" id="image-log-tab" aria-controls="generation-log-panel" aria-selected="${tab==='image'}" data-log-tab="image" class="${tab==='image'?'is-active':''}">图像生成日志</button>
+  </div>
+  <section id="generation-log-panel" role="tabpanel" aria-labelledby="${tab==='video'?'video':'image'}-log-tab">
+  ${tab==='image'?IJ.table(true):jobsWithLogs.length ? `<div class="table-wrap"><table class="jobs">
     <thead><tr><th>时间</th><th>任务</th><th>状态</th><th>错误</th><th>操作</th></tr></thead>
     <tbody>${jobsWithLogs.map((job) => `<tr>
       <td class="small">${fmtTime(job.createdAt)}</td>
@@ -5648,11 +5656,15 @@ function renderLogs() {
       <td><button class="btn sm" data-act="detail" data-id="${job.id}">查看日志</button></td>
     </tr>`).join('')}</tbody>
   </table></div>` : `<div class="card"><div class="empty"><strong>还没有任务日志</strong><p>提交任务后，这里会记录每一步。</p></div></div>`}
+  </section>
   `;
 }
 
 function bindLogs(root) {
+  root.addEventListener('keydown', event=>{const tab=event.target.closest('[data-log-tab]');if(!tab||!['ArrowLeft','ArrowRight'].includes(event.key))return;event.preventDefault();const next=tab.dataset.logTab==='video'?'image':'video';state.logTab=next;localStorage.setItem('h3.logs.tab',next);render();document.querySelector('[data-log-tab="'+next+'"]').focus();});
   root.addEventListener('click', (event) => {
+    const tab=event.target.closest('[data-log-tab]');
+    if(tab){state.logTab=tab.dataset.logTab;localStorage.setItem('h3.logs.tab',state.logTab);render();return;}
     const target = event.target.closest('[data-act]');
     if (!target) return;
     if (target.dataset.act === 'go-studio') { location.hash = '#studio'; return; }
