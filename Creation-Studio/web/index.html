@@ -8,6 +8,7 @@
 <link rel="stylesheet" href="/h3.css" />
 <link rel="stylesheet" href="/styles.css" />
 <link rel="stylesheet" href="/skins.css?v=daylight-1" />
+<link rel="stylesheet" href="/creative.css?v=1">
 </head>
 <body>
 <div id="root">
@@ -33,7 +34,7 @@
       </nav>
       <span class="h3-topbar-spacer"></span>
       <div class="h3-topbar-right">
-        <span class="h3-svc" id="svc-lights" title="服务状态"><button type="button" class="h3-svc-item" data-svc="agent" aria-label="智能体服务" title="点击启动/停止智能体"><i></i><span>智能体</span><em class="h3-svc-act">启动</em></button><button type="button" class="h3-svc-item" data-svc="manager" aria-label="管理器服务" title="点击启动/停止管理器"><i></i><span>管理器</span><em class="h3-svc-act">启动</em></button></span>
+        <span class="h3-svc" id="svc-lights" title="服务状态"><button type="button" class="h3-svc-item" data-svc="agent" aria-label="智能体服务" title="点击启动/停止智能体"><i></i><span>智能体</span><em class="h3-svc-act">启动</em></button><span class="h3-svc-item" data-svc="manager"><i></i><button type="button" class="h3-svc-label" data-open-manager="1" title="打开管理器页面">管理器</button><button type="button" class="h3-svc-power" title="启动/停止管理器">启动</button></span></span>
         <button type="button" class="h3-project-btn" id="project-btn" title="项目">项目</button>
         
         <div class="h3-queue">
@@ -69,6 +70,9 @@
 <div class="toasts" id="toasts"></div>
 <input type="file" id="file-input" hidden multiple accept="image/*,audio/*" />
 <script src="/wallpaper-library.js?v=daylight-1"></script>
+<script src="/edit-math.js?v=1"></script>
+<script src="/creative.js?v=1"></script>
+<script src="/edit-enhancements.js?v=1"></script>
 <script src="/app.js?v=daylight-1"></script>
 </body>
 </html>

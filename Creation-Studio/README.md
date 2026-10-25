@@ -356,3 +356,10 @@ node scripts\gen-style-previews.cjs --force    :: 全部重生成
 每轮执行有 180 秒总时限，模型和工具调用计入统一预算；harness 内不再叠加模型重试。停止按钮提交取消请求后等待后端终态回执，取消失败会显示提示。断流恢复按事件序号分页读取，每页最多 100 条，并去重；未取得结束回执时会明确显示中断。
 
 启动器对自动补启和退出重启统一限流，五分钟内最多五次；达到上限后需检查日志并重新启动启动器。本启动器持有的进程连续三次健康检查失败后会停止并按限流规则恢复；外部进程不会被自动终止。
+
+## 视频创作台数据持久化（SQLite）
+
+- 服务端新增 `src/studio-store.js`：`data/studio.db` 的 `studio_state(project, data, updated)` 表，按项目存整份创作台状态（提示词、参考图/音频路径、画幅、时长、模型等）。
+- API：`GET /api/studio/state?projectId=`、`POST /api/studio/state`（登录态内）。
+- 前端：编辑时 300ms debounce 写服务端，同时写 `localStorage.h3.studio.<projectId>` 作为离线缓存；刷新前用 `sendBeacon` 兜底提交；加载时比较服务端与本地 `updated`，取较新的一份。
+- 切项目会先 flush 当前项目，再读取目标项目状态；目标项目没有记录才清空。

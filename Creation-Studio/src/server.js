@@ -21,6 +21,8 @@ const genericVideo = require('./generic-video');
 const tts = require('./tts');
 const voices = require('./voices');
 const managerVideo = require('./manager-video');
+const studioStore = require('./studio-store');
+const creativeRoutes = require('./creative-routes');
 const [ensureDir, readJson, writeJson, uid] = [require('./util').ensureDir, require('./util').readJson, require('./util').writeJson, require('./util').uid];
 const { sanitizeFilename, kindOf, mimeFor, publicError, formatBytes, estimateTokens, httpJson } = require('./util');
 
@@ -31,6 +33,10 @@ const STATIC = {
   '/': ['index.html', 'text/html; charset=utf-8'],
   '/index.html': ['index.html', 'text/html; charset=utf-8'],
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
+  '/edit-math.js': ['edit-math.js', 'text/javascript; charset=utf-8'],
+  '/edit-enhancements.js': ['edit-enhancements.js', 'text/javascript; charset=utf-8'],
+  '/creative.js': ['creative.js', 'text/javascript; charset=utf-8'],
+  '/creative.css': ['creative.css', 'text/css; charset=utf-8'],
   '/styles.css': ['styles.css', 'text/css; charset=utf-8'],
   '/skins.css': ['skins.css', 'text/css; charset=utf-8'],
   '/wallpaper-library.js': ['wallpaper-library.js', 'text/javascript; charset=utf-8'],
@@ -382,6 +388,14 @@ async function route(req, res) {
   const pathname = decodeURIComponent(url.pathname);
   const method = req.method.toUpperCase();
 
+  if (method === 'GET' && pathname.startsWith('/integrations/')) {
+    const base = path.resolve(WEB, 'integrations');
+    const file = path.resolve(WEB, '.' + pathname);
+    if (!file.startsWith(base + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile()) return bad(res, 'not found', 404);
+    const ext = path.extname(file).toLowerCase();
+    const type = {'.js':'text/javascript; charset=utf-8','.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json','.svg':'image/svg+xml','.woff2':'font/woff2','.woff':'font/woff','.ttf':'font/ttf','.png':'image/png','.jpg':'image/jpeg','.gif':'image/gif','.txt':'text/plain'}[ext] || 'application/octet-stream';
+    res.writeHead(200, {'Content-Type':type,'Cache-Control':'no-store'}); fs.createReadStream(file).pipe(res);return;
+  }
   if (method === 'GET' && STATIC[pathname]) {
     const [file, type] = STATIC[pathname];
     const abs = path.join(WEB, file);
@@ -401,6 +415,8 @@ async function route(req, res) {
     currentUser = auth.userByToken(token);
     if (!currentUser) return json(res, 401, { ok: false, error: '请先登录', auth: true });
   }
+
+  if (await creativeRoutes(req, res, url, {ok, bad, readBody, mediaPath, imageDataUrl, user:currentUser})) return;
 
   if (method === 'GET' && pathname === '/api/auth/me') {
     const user = auth.userByToken(token);
@@ -581,6 +597,17 @@ async function controlService(name, action) {
   }
 
   if (method === 'GET' && pathname === '/api/health') return ok(res, { status: 'ok', name: 'h3-studio', uptime: process.uptime() });
+
+  if (method === 'GET' && pathname === '/api/studio/state') {
+    const q = new URL(req.url, 'http://127.0.0.1');
+    return ok(res, studioStore.get(q.searchParams.get('projectId') || 'default'));
+  }
+
+  if (method === 'POST' && pathname === '/api/studio/state') {
+    const body = await readBody(req);
+    const saved = studioStore.save(body.projectId, body.state);
+    return ok(res, saved);
+  }
 
   if (method === 'GET' && pathname === '/api/state') {
     return ok(res, {

@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -10,7 +10,7 @@ const { TaskQueue } = require('./tasks');
 const {Settings}=require('./settings');
 const { BrowserPool, findChrome } = require('./browser-pool');
 const {readPageState}=require('./adapters/page-state');
-const { createExecutor,applyOptions } = require('./automation');
+const { createExecutor,applyOptions,selectorsFor } = require('./automation');
 const { createGeminiExecutor } = require('./automation-gemini');
 const { parseJsonAccountImport, parseDolaTextCookieImport } = require('../recovered/src/account-import');
 function secureEqual(a,b) {
@@ -121,7 +121,8 @@ async function createService(options={}) {
     Object.assign(prepared,patch);update(patch);
     return (task.platform==='gemini'?geminiExecutor:doubaoExecutor)(prepared,account,signal,p=>{Object.assign(prepared,p);update(p);});
   });
-  const queue=new TaskQueue({directory,store,execute});
+  const concurrency=Math.max(1,Math.min(10,Number(process.env.DBM_CONCURRENCY)||3));
+  const queue=new TaskQueue({directory,store,execute,concurrency});
   const webRoot=path.join(__dirname,'..','web');let dashboard, dashboardPage, dashboardOpening, closePromise;let shuttingDown=false;
   let resolveClosed;const closed=new Promise(resolve=>{resolveClosed=resolve;});
   function authorized(req) {
@@ -182,7 +183,7 @@ async function createService(options={}) {
             if(queue.busy.has(account.id))throw new Error('账号正在执行任务，请先取消任务');
             await pool.closeAccount(account.id);send(res,200,store.remove(account.id));return;
           }
-          if(req.method==='POST' && accountRoute[2]==='prepare-video'){if(queue.busy.has(account.id))throw new Error('账号正在执行任务');await pool.open(account);const context=await pool.context(account);const page=context.pages().filter(p=>!p.isClosed()&&p.url().startsWith(pool.url(account).split('/chat')[0])).at(-1);const input=await body(req);if(input.prompt)await page.locator(account.selectors?.editor||'[contenteditable=true]').fill(String(input.prompt));send(res,200,await applyOptions(page,{...input,platform:account.platform},account.selectors||{},new AbortController().signal));return;}
+          if(req.method==='POST' && accountRoute[2]==='prepare-video'){if(queue.busy.has(account.id))throw new Error('账号正在执行任务');await pool.open(account);const context=await pool.context(account);const page=context.pages().filter(p=>!p.isClosed()&&p.url().startsWith(pool.url(account).split('/chat')[0])).at(-1);const input=await body(req);if(input.prompt)await page.locator(account.selectors?.editor||'[contenteditable=true]').fill(String(input.prompt));send(res,200,await applyOptions(page,{...input,platform:account.platform},selectorsFor(account.platform,account),new AbortController().signal));return;}
           if(req.method==='POST' && accountRoute[2]==='reference-draft'){
             if(queue.busy.has(account.id))throw new Error('账号正在执行任务');
             const input=await body(req);

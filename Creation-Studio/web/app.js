@@ -61,6 +61,7 @@ function showFatal(message) {
     <button type="button" class="h3-btn h3-btn-sm h3-btn-ghost" onclick="this.parentNode.remove()">收起</button>`;
 }
 
+window.addEventListener('beforeunload', () => { try { studioBeacon(); } catch { /* ignore */ } });
 window.addEventListener('error', (event) => {
   if (!event || !event.message) return;
   if (event.message === 'Script error.') return;
@@ -128,6 +129,98 @@ const state = {
   },
 };
 
+
+let studioSaveTimer = null;
+function studioProjectId() { return state.projectId || 'default'; }
+function studioKey(project) { return 'h3.studio.' + (project || studioProjectId()); }
+function studioSnapshot() {
+  const s = state.studio;
+  return {
+    workflowId: s.workflowId, prompt: s.prompt, promptMode: s.promptMode,
+    images: s.images || [], audios: s.audios || [],
+    aspectRatio: s.aspectRatio, resolution: s.resolution,
+    megapixels: s.megapixels, megapixels2: s.megapixels2,
+    duration: s.duration, seed: s.seed, count: s.count,
+    updated: Date.now(),
+  };
+}
+function studioApply(saved) {
+  const s = state.studio;
+  if (!saved || typeof saved !== 'object') return;
+  if (saved.workflowId && workflowById(saved.workflowId)) {
+    s.workflowId = saved.workflowId;
+    s.channelId = (workflowById(saved.workflowId) || {}).channelId || s.channelId;
+  }
+  if (typeof saved.prompt === 'string') s.prompt = saved.prompt;
+  if (saved.promptMode === 'tags' || saved.promptMode === 'code') s.promptMode = saved.promptMode;
+  if (Array.isArray(saved.images)) s.images = saved.images.filter(Boolean);
+  if (Array.isArray(saved.audios)) s.audios = saved.audios.filter(Boolean);
+  for (const key of ['aspectRatio', 'resolution', 'seed']) if (saved[key] !== undefined) s[key] = saved[key];
+  for (const key of ['megapixels', 'megapixels2', 'duration', 'count']) if (Number.isFinite(saved[key])) s[key] = saved[key];
+  s._restored = true;
+}
+function studioBeacon() {
+  try {
+    const projectId = studioProjectId();
+    const blob = new Blob([JSON.stringify({ projectId, state: studioSnapshot() })], { type: 'text/plain' });
+    navigator.sendBeacon('/api/studio/state', blob);
+  } catch { /* ignore */ }
+}
+function studioFlush(project) {
+  const projectId = project || studioProjectId();
+  const snapshot = studioSnapshot();
+  try { localStorage.setItem(studioKey(projectId), JSON.stringify(snapshot)); } catch { /* ignore */ }
+  fetch('/api/studio/state', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ projectId, state: snapshot }),
+    keepalive: true,
+  }).catch(() => {});
+}
+function studioPersist() {
+  if (!state.studio || !state.studio._restored) return;
+  clearTimeout(studioSaveTimer);
+  studioSaveTimer = setTimeout(() => studioFlush(), 300);
+}
+async function studioLoadForProject(project) {
+  const projectId = project || 'default';
+  const s = state.studio;
+  let server = null;
+  try {
+    const res = await fetch('/api/studio/state?projectId=' + encodeURIComponent(projectId));
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.ok && data.data && data.data.state) server = data.data;
+    }
+  } catch { /* offline: use local */ }
+  let local = null;
+  try { local = JSON.parse(localStorage.getItem(studioKey(projectId)) || 'null'); } catch { local = null; }
+  const localTime = (local && local.updated) || 0;
+  const serverTime = (server && server.updated) || 0;
+  const saved = server && serverTime >= localTime ? server.state : (local || (server && server.state));
+  if (saved) {
+    studioApply(saved);
+  } else {
+    let legacy = null;
+    try { legacy = JSON.parse(localStorage.getItem('h3.studio') || 'null'); } catch { legacy = null; }
+    if (legacy && (legacy.prompt || (legacy.images || []).length)) {
+      studioApply(legacy);
+      studioFlush(projectId);
+      try { localStorage.removeItem('h3.studio'); } catch { /* ignore */ }
+      return legacy;
+    }
+    s.prompt = '';
+    s.promptMode = 'tags';
+    s.images = [];
+    s.audios = [];
+    s.seed = '';
+    s._restored = true;
+  }
+  if (local && localTime > serverTime) studioFlush(projectId);
+  return saved;
+}
+function studioRestore() { /* 兼容旧调用：不再直接读全局 key */ state.studio._restored = true; }
+
 async function api(path, { method = 'GET', body } = {}) {
   const res = await fetch(path, {
     method,
@@ -152,7 +245,7 @@ function workflowById(id) {
 function openModal(html) {
   const panel = $('#modal-panel');
   // 清掉上一个弹窗留下来的尺寸类（比如设置页固定 820 高），换弹窗时不串味
-  panel.classList.remove('modal-settings', 'modal-channel', 'modal-wide');
+  panel.classList.remove('modal-settings', 'modal-channel', 'modal-wide', 'ce-full');
   panel.innerHTML = html;
   $('#modal').hidden = false;
   document.body.style.overflow = 'hidden';
@@ -160,6 +253,9 @@ function openModal(html) {
 }
 
 function closeModal() {
+  if (typeof creativeModalGuard === 'function' && creativeModalGuard() === false) return;
+  const previousPanel = $('#modal-panel');
+  if (previousPanel) previousPanel.onclick = null;
   $('#modal').hidden = true;
   const panel = $('#modal-panel');
   panel.innerHTML = '';
@@ -468,6 +564,7 @@ function render() {
   else if (state.route === 'compare') html = '<div class="page-scroll is-compare">' + renderCompare() + '</div>';
   else if (state.route === 'logs') html = '<div class="page-scroll">' + renderLogs() + '</div>';
   else if (state.route === 'projects') html = renderProjects();
+  if (state.route === 'studio') studioPersist();
   view.classList.toggle('is-image-route', state.route === 'image');
   // 每次渲染换一个新的宿主节点：旧节点上的事件监听随之销毁，避免同一个 #view 上重复绑定
   const host = document.createElement('div');
@@ -881,6 +978,249 @@ function promptPreviewHtml(text) {
   return html;
 }
 
+
+function promptRichHtml(text) {
+  const s = state.studio;
+  const source = String(text || '');
+  const langLabel = { Chinese: '中文对白', English: '英语对白', Korean: '韩语对白', Japanese: '日语对白' };
+  let html = '';
+  let cursor = 0;
+  const re = /\(S(?<speaker>\d+)\)|<Picture\s+(?<picture>\d+)>|<Subject\s+(?<subject>\d+)>|<Audio\s+(?<audio>\d+)>|<d>\[(?<lang>[A-Za-z]+)\](?<dialogue>[\s\S]*?)<\/d>|\[Shot\s+(?<shot>\d+)\]/gi;
+  let m;
+  const pushText = (raw) => {
+    const parts = esc(raw).split(/(主体定义|摘要|保留分析|详细描述|环境音|非剧情配乐|镜头设计|参考生成)/g);
+    for (let i = 0; i < parts.length; i += 1) {
+      if (i % 2 === 1) html += `<span class="h3-chip is-section" contenteditable="false" data-token="${parts[i]}"><span>${parts[i]}</span></span>`;
+      else html += parts[i].replace(/\n/g, '<br>');
+    }
+  };
+  while ((m = re.exec(source))) {
+    pushText(source.slice(cursor, m.index));
+    const g = m.groups || {};
+    if (g.speaker) {
+      html += `<span class="h3-chip is-spec is-clickable" contenteditable="false" data-token="(S${g.speaker})"><span>说话人${g.speaker}</span></span>`;
+    } else if (g.picture) {
+      const img = s.images[Number(g.picture) - 1];
+      html += `<span class="h3-chip is-media" contenteditable="false" data-token="&lt;Picture ${g.picture}&gt;">${img ? `<img class="h3-chip-media" src="/api/file?path=${enc(img.path)}" alt="" />` : ''}<span>图${g.picture}</span></span>`;
+    } else if (g.subject) {
+      const img = s.images[Number(g.subject) - 1];
+      const label = img && img.subject ? img.subject : '主体' + g.subject;
+      html += `<span class="h3-chip is-subject" contenteditable="false" data-token="&lt;Subject ${g.subject}&gt;">${img ? `<img class="h3-chip-media" src="/api/file?path=${enc(img.path)}" alt="" />` : ''}<span>${esc(label)}</span></span>`;
+    } else if (g.audio) {
+      const aud = s.audios[Number(g.audio) - 1];
+      html += `<span class="h3-chip is-spec" contenteditable="false" data-token="&lt;Audio ${g.audio}&gt;"><span>音频${g.audio}${aud ? ' · ' + esc(aud.name) : ''}</span></span>`;
+    } else if (g.lang) {
+      const lang = g.lang;
+      let body = g.dialogue || '';
+      let voice = '';
+      if (body.startsWith('（男声画外音）')) { voice = 'male'; body = body.slice('（男声画外音）'.length); }
+      else if (body.startsWith('（女声画外音）')) { voice = 'female'; body = body.slice('（女声画外音）'.length); }
+      const prefix = voice === 'male' ? '男声画外音：' : voice === 'female' ? '女声画外音：' : (langLabel[lang] || lang) + '：';
+      html += `<span class="h3-chip is-dialogue" contenteditable="false" data-dialogue="1" data-dialogue-lang="${esc(lang)}"${voice ? ' data-dialogue-voice="' + voice + '"' : ''}><span contenteditable="false" class="h3-dialogue-prefix">${prefix}</span><span contenteditable="true" data-dialogue-body="1">${esc(body)}</span></span>`;
+    } else if (g.shot) {
+      html += `<span class="h3-chip is-spec is-clickable" contenteditable="false" data-token="[Shot ${g.shot}]"><span>镜头${g.shot}</span></span>`;
+    }
+    cursor = m.index + m[0].length;
+  }
+  pushText(source.slice(cursor));
+  return html;
+}
+
+function richPromptText(root) {
+  let out = '';
+  const walk = (node) => {
+    if (node.nodeType === 3) { out += node.nodeValue || ''; return; }
+    if (node.nodeType !== 1) return;
+    const el = node;
+    if (el.dataset && el.dataset.dialogue) {
+      const lang = el.dataset.dialogueLang || 'Chinese';
+      const voice = el.dataset.dialogueVoice;
+      const body = el.querySelector('[data-dialogue-body]');
+      const text = body ? body.textContent : '';
+      out += '<d>[' + lang + ']' + (voice === 'male' ? '（男声画外音）' : voice === 'female' ? '（女声画外音）' : '') + text + '</d>';
+      return;
+    }
+    if (el.dataset && el.dataset.token) { out += el.dataset.token; return; }
+    if (el.tagName === 'BR') { out += '\n'; return; }
+    const block = /^(DIV|P)$/.test(el.tagName);
+    if (block && out && !out.endsWith('\n')) out += '\n';
+    for (const child of el.childNodes) walk(child);
+    if (block && out && !out.endsWith('\n')) out += '\n';
+  };
+  for (const child of root.childNodes) walk(child);
+  return out.replace(/\n+$/, '');
+}
+
+function studioMentionItems() {
+  const s = state.studio;
+  const images = (s.images || []).filter((img) => img && img.path);
+  const shots = Math.max(4, images.length, 1);
+  const items = [];
+  images.forEach((img, i) => items.push({ group: '图像', label: '图' + (i + 1), token: '<Picture ' + (i + 1) + '>', thumb: '/api/file?path=' + encodeURIComponent(img.path) }));
+  images.forEach((img, i) => items.push({ group: '主体', label: img.subject || ('主体' + (i + 1)), token: '<Subject ' + (i + 1) + '>', thumb: '/api/file?path=' + encodeURIComponent(img.path) }));
+  images.forEach((img, i) => items.push({ group: '说话人', label: '说话人' + (i + 1), token: '(S' + (i + 1) + ')', thumb: '/api/file?path=' + encodeURIComponent(img.path) }));
+  items.push({ group: '说话人', label: '新建说话人' + (images.length + 1), token: '(S' + (images.length + 1) + ')', icon: '👤' });
+  for (const [label, lang] of [['中文对白', 'Chinese'], ['英语对白', 'English'], ['韩语对白', 'Korean'], ['日语对白', 'Japanese']]) {
+    items.push({ group: '对白', label, dialogue: { lang }, icon: '💬' });
+  }
+  items.push({ group: '对白', label: '男性画外音', dialogue: { lang: 'Chinese', voice: 'male' }, icon: '🔊' });
+  items.push({ group: '对白', label: '女性画外音', dialogue: { lang: 'Chinese', voice: 'female' }, icon: '🔊' });
+  for (let i = 1; i <= shots; i += 1) items.push({ group: '镜头', label: '镜头' + i, token: '[Shot ' + i + ']', icon: '🎬' });
+  items.push({ group: '镜头', label: '新建镜头' + (shots + 1), token: '[Shot ' + (shots + 1) + ']', icon: '🎬' });
+  return items;
+}
+function bindStudioRichEditor(editor) {
+  const host = $('#studio-mention-pop');
+  let savedRange = null;
+  let items = [];
+  let index = 0;
+
+  const close = () => { savedRange = null; items = []; if (host) { host.hidden = true; host.innerHTML = ''; } editor.removeAttribute('aria-expanded'); };
+  const caretPrefix = () => {
+    const sel = window.getSelection();
+    if (!sel || !sel.rangeCount) return null;
+    const range = sel.getRangeAt(0);
+    if (!editor.contains(range.startContainer)) return null;
+    const pre = range.cloneRange();
+    pre.selectNodeContents(editor);
+    pre.setEnd(range.startContainer, range.startOffset);
+    return { text: pre.toString(), range };
+  };
+  const update = () => {
+    const info = caretPrefix();
+    if (!info) return close();
+    const match = info.text.match(/@([^@\s<>]*)$/);
+    if (!match) return close();
+    const query = match[1].toLowerCase();
+    items = studioMentionItems().filter((item) => (item.label + ' ' + item.group).toLowerCase().includes(query));
+    index = Math.min(index, Math.max(0, items.length - 1));
+    savedRange = info.range.cloneRange();
+    if (!host) return;
+    host.hidden = false;
+    editor.setAttribute('aria-expanded', 'true');
+    const rect = info.range.getBoundingClientRect();
+    host.style.left = Math.max(8, Math.min(window.innerWidth - 300, rect.left)) + 'px';
+    host.style.top = Math.min(window.innerHeight - 260, rect.bottom + 6) + 'px';
+    const groups = [];
+    for (const item of items) { let g = groups.find((x) => x.name === item.group); if (!g) { g = { name: item.group, items: [] }; groups.push(g); } g.items.push(item); }
+    const colClass = (name) => ({ '图像': 'is-media', '主体': 'is-subject', '说话人': 'is-speaker', '对白': 'is-dialogue', '镜头': 'is-spec' })[name] || 'is-spec';
+    host.innerHTML = items.length ? groups.map((g) => '<div class="h3-mention-col ' + colClass(g.name) + '"><div class="h3-mention-title">' + esc(g.name) + '</div>' + g.items.map((item) => '<button type="button" class="h3-mention-item' + (items.indexOf(item) === index ? ' is-active' : '') + '" data-mi="' + items.indexOf(item) + '">' + (item.thumb ? '<img src="' + esc(item.thumb) + '" alt="" />' : '<span class="h3-mention-ico">' + (item.icon || '·') + '</span>') + '<span class="h3-mention-label">' + esc(item.label) + (item.desc ? '<small>' + esc(item.desc) + '</small>' : '') + '</span></button>').join('') + '</div>').join('') : '<p class="h3-mention-empty">没有匹配素材；先在左侧添加参考图/音频。</p>';
+    host.querySelectorAll('[data-mi]').forEach((btn) => {
+      btn.onmousedown = (event) => event.preventDefault();
+      btn.onclick = () => choose(Number(btn.dataset.mi));
+    });
+    host.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - Math.min(host.offsetWidth || 640, 640) - 12)) + 'px';
+    if (host.offsetHeight) host.style.top = Math.max(8, Math.min(rect.bottom + 6, window.innerHeight - host.offsetHeight - 12)) + 'px';
+  };
+  const choose = (at) => {
+    const item = items[at];
+    if (!item || !savedRange) return close();
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(savedRange);
+    const range = savedRange;
+    const textNode = range.startContainer;
+    if (textNode.nodeType === 3) {
+      const upto = textNode.nodeValue.slice(0, range.startOffset);
+      const m = upto.match(/@([^@\s<>]*)$/);
+      if (m) range.setStart(textNode, range.startOffset - m[0].length);
+    }
+    range.deleteContents();
+    let node;
+    if (item.dialogue) {
+      node = document.createElement('span');
+      node.className = 'h3-chip is-dialogue';
+      node.contentEditable = 'false';
+      node.dataset.dialogue = '1';
+      node.dataset.dialogueLang = item.dialogue.lang || 'Chinese';
+      if (item.dialogue.voice) node.dataset.dialogueVoice = item.dialogue.voice;
+      const prefix = document.createElement('span');
+      prefix.contentEditable = 'false';
+      prefix.className = 'h3-dialogue-prefix';
+      prefix.textContent = item.dialogue.voice === 'male' ? '男声画外音：' : item.dialogue.voice === 'female' ? '女声画外音：' : ({ Chinese: '中文对白', English: '英语对白', Korean: '韩语对白', Japanese: '日语对白' }[item.dialogue.lang] || item.dialogue.lang) + '：';
+      const bodySpan = document.createElement('span');
+      bodySpan.contentEditable = 'true';
+      bodySpan.dataset.dialogueBody = '1';
+      node.appendChild(prefix);
+      node.appendChild(bodySpan);
+      range.insertNode(node);
+      const inside = document.createRange();
+      inside.setStart(bodySpan, 0); inside.collapse(true);
+      sel.removeAllRanges(); sel.addRange(inside);
+      editor.focus();
+      close();
+      state.studio.prompt = richPromptText(editor);
+      const count = $('#prompt-count'); if (count) count.textContent = state.studio.prompt.length + '字';
+      studioPersist(); validatePromptSoon();
+      return;
+    }
+    if (item.token) {
+      node = document.createElement('span');
+      node.contentEditable = 'false';
+      node.dataset.token = item.token;
+      if (item.token.startsWith('<Picture')) node.className = 'h3-chip is-media';
+      else if (item.token.startsWith('<Subject')) node.className = 'h3-chip is-subject';
+      else if (item.token.startsWith('(S')) node.className = 'h3-chip is-spec is-clickable';
+      else node.className = 'h3-chip is-spec is-clickable';
+      if (item.thumb) {
+        const img = document.createElement('img');
+        img.className = 'h3-chip-media';
+        img.src = item.thumb;
+        img.alt = '';
+        node.appendChild(img);
+      }
+      const label = document.createElement('span');
+      label.textContent = item.label || item.token;
+      node.appendChild(label);
+    } else {
+      node = document.createTextNode(item.text || '');
+    }
+    range.insertNode(node);
+    if (item.token) {
+      const space = document.createTextNode(' ');
+      node.after(space);
+      const after = document.createRange();
+      after.setStartAfter(space); after.collapse(true);
+      sel.removeAllRanges(); sel.addRange(after);
+    } else if (item.caret) {
+      const r2 = document.createRange();
+      const pos = Math.max(0, (node.nodeValue || '').length + item.caret);
+      r2.setStart(node, pos); r2.collapse(true);
+      sel.removeAllRanges(); sel.addRange(r2);
+    } else {
+      const r2 = document.createRange(); r2.setStartAfter(node); r2.collapse(true);
+      sel.removeAllRanges(); sel.addRange(r2);
+    }
+    editor.focus();
+    close();
+    state.studio.prompt = richPromptText(editor);
+    const count = $('#prompt-count'); if (count) count.textContent = state.studio.prompt.length + '字';
+    studioPersist();
+    validatePromptSoon();
+  };
+  editor.addEventListener('input', () => {
+    state.studio.prompt = richPromptText(editor);
+    const count = $('#prompt-count'); if (count) count.textContent = state.studio.prompt.length + '字';
+    studioPersist();
+    update();
+  });
+  editor.addEventListener('click', update);
+  editor.addEventListener('keyup', (event) => { if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) update(); });
+  editor.addEventListener('keydown', (event) => {
+    if (event.isComposing || !savedRange) return;
+    if (event.key === 'Escape') { event.preventDefault(); close(); }
+    else if (items.length && ['ArrowDown', 'ArrowUp'].includes(event.key)) { event.preventDefault(); index = (index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length; update(); }
+    else if (items.length && ['Enter', 'Tab'].includes(event.key)) { event.preventDefault(); choose(index); }
+  });
+  editor.addEventListener('blur', () => setTimeout(close, 150));
+  editor.addEventListener('paste', (event) => {
+    const text = event.clipboardData && event.clipboardData.getData('text/plain');
+    if (!text) return;
+    event.preventDefault();
+    document.execCommand('insertText', false, text);
+  });
+}
+
 function stageEmptyHtml(wf) {
   return `<div class="h3-empty">
     <div class="h3-empty-card">
@@ -1024,6 +1364,8 @@ function renderStudio() {
             <span class="h3-slots-count tnum">${audios.filter(Boolean).length}/${wf.audios}</span>
             <span class="h3-slots-spacer"></span>
             <span class="h3-slots-note">空槽不提交，提示词勿引用</span>
+            <button type="button" class="h3-link h3-slots-link" data-act="upload-images" title="从本机选择图片，按原比例完整放入空槽">上传图片</button>
+            <button type="button" class="h3-link h3-slots-link" data-act="upload-audio" title="从本机选择音频放入空音频槽">上传音频</button>
             <button type="button" class="h3-link h3-slots-link" data-act="pick-asset" title="从素材库挑一张图放进下一个空槽">粘贴图片</button>
             <button type="button" class="h3-link h3-slots-link" data-act="clear-assets">清空素材</button>
           </div>
@@ -1032,6 +1374,7 @@ function renderStudio() {
             <span class="h3-strip-split"></span>
             ${Array.from({ length: wf.audios }, (_, i) => audioSlotHtml(audios[i], i)).join('')}
           </div>
+          <input type="file" id="studio-image-file" accept="image/*" multiple hidden />
         </div>
 
         <div class="h3-field h3-field-grow">
@@ -1054,7 +1397,8 @@ function renderStudio() {
             </span>
           </div>
           <div class="h3-prompt-wrap${mode === 'code' ? ' is-editing' : ''}">
-            <div class="h3-prompt ${mode === 'tags' ? '' : 'is-hidden'}" id="prompt-view">${mode === 'tags' ? promptPreviewHtml(s.prompt) : ''}</div>            <textarea class="h3-prompt-code ${mode === 'code' ? '' : 'is-hidden'}" id="prompt-editor" spellcheck="false"
+            <div class="h3-prompt h3-rich-editor ${mode === 'tags' ? '' : 'is-hidden'}" id="prompt-view" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="输入 @ 引用参考图、主体、音频、说话人、对白、画外音或镜头">${mode === 'tags' ? promptRichHtml(s.prompt) : ''}</div>
+            <div class="h3-mention-pop" id="studio-mention-pop" hidden></div>            <textarea class="h3-prompt-code ${mode === 'code' ? '' : 'is-hidden'}" id="prompt-editor" spellcheck="false"
               placeholder="输入 @ 选择已上传的图片或音频。用 <Picture 1> 引用参考图、<Subject 1> 引用主体、<Audio 1> 引用音频，用 <d>[Chinese] 台词</d> 写对白。">${esc(s.prompt)}</textarea>
             <div id="studio-reference-menu" class="studio-reference-menu" role="listbox" aria-label="参考素材" hidden></div>
           </div>
@@ -1168,22 +1512,37 @@ function bindStudio(root) {
       s.prompt = editor.value;
       const count = $('#prompt-count');
       if (count) count.textContent = s.prompt.length + '字';
+      studioPersist();
     };
     editor.onblur = () => { validatePromptSoon(); };
     const menu = $('#studio-reference-menu', root);
     if (menu) bindStudioMentions(editor, menu);
   }
 
-  // 标签视图只读，点一下直接进代码视图（原版是行内富文本编辑，这里用等价的编辑入口）
-  const promptView = $('#prompt-view', root);
-  if (promptView) {
-    promptView.onclick = () => {
-      s.promptMode = 'code';
-      render();
-      const el = $('#prompt-editor');
-      if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+  const uploadInput = $('#studio-image-file', root);
+  if (uploadInput) {
+    uploadInput.onchange = async () => {
+      const files = [...(uploadInput.files || [])];
+      uploadInput.value = '';
+      if (files.length) await studioUploadImages(files);
     };
   }
+  const slotArea = $('.h3-slots', root);
+  if (slotArea) {
+    slotArea.ondragover = (event) => { if (![...(event.dataTransfer.types || [])].includes('Files')) return; event.preventDefault(); slotArea.classList.add('is-drop'); };
+    slotArea.ondragleave = () => slotArea.classList.remove('is-drop');
+    slotArea.ondrop = async (event) => {
+      const files = [...(event.dataTransfer.files || [])].filter((f) => String(f.type || '').startsWith('image/'));
+      if (!files.length) return;
+      event.preventDefault();
+      slotArea.classList.remove('is-drop');
+      await studioUploadImages(files);
+    };
+  }
+
+  const rich = $('#prompt-view', root);
+  if (rich) bindStudioRichEditor(rich);
+
 
   const bindChange = (sel, key, cast = String) => {
     const el = $(sel, root);
@@ -1205,6 +1564,14 @@ function bindStudio(root) {
     if (!target) return;
     const act = target.dataset.act;
     try {
+      if (act === 'upload-images') { const el = $('#studio-image-file'); if (el) el.click(); return; }
+      if (act === 'upload-audio') {
+        const wf = currentWorkflow();
+        const index = state.studio.audios.findIndex((x) => !x);
+        if (!wf.audios) return toast('当前工作流不接收音频参考', true);
+        if (index < 0 || index >= wf.audios) return toast('音频槽已满', true);
+        return openAudioPicker(index);
+      }
       if (act === 'add-image') return openImagePicker(Number(target.dataset.index));
       if (act === 'remove-image') { s.images[Number(target.dataset.index)] = null; return render(); }
       if (act === 'remove-audio') { s.audios[Number(target.dataset.index)] = null; return render(); }
@@ -1314,6 +1681,38 @@ function insertAtCursor(text) {
   const count = $('#prompt-count');
   if (count) count.textContent = state.studio.prompt.length + ' 字';
   editor.focus();
+}
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('读取文件失败'));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function studioUploadImages(files) {
+  const s = state.studio;
+  const wf = currentWorkflow();
+  let index = s.images.findIndex((x) => !x);
+  for (const file of files) {
+    if (!file || !String(file.type || '').startsWith('image/')) { toast(file && file.name ? file.name + ' 不是图片' : '不是图片文件', true); continue; }
+    if (file.size > 10 * 1024 * 1024) { toast(file.name + ' 超过 10MB', true); continue; }
+    if (index < 0) {
+      if ((s.images || []).length >= wf.images) { toast('参考图槽已满（' + wf.images + ' 张）', true); break; }
+      index = s.images.length;
+    }
+    if (index >= wf.images) { toast('参考图槽已满（' + wf.images + ' 张）', true); break; }
+    try {
+      const data = await fileToDataUrl(file);
+      const saved = await api('/api/assets/upload', { method: 'POST', body: { name: file.name, data } });
+      s.images[index] = { path: saved.path, name: saved.name || file.name, subject: '', kind: 'image' };
+      index += 1;
+    } catch (err) { toast(file.name + ' 上传失败：' + err.message, true); }
+  }
+  studioPersist();
+  render();
 }
 
 function studioReferenceTags(studio = state.studio, workflow = currentWorkflow()) {
@@ -1868,6 +2267,7 @@ function renderMedia() {
     <div class="page-actions">
       <button class="btn" data-act="open-media-root">打开目录</button>
       <button class="btn" data-act="refresh-media">刷新</button>
+      <button class="btn primary" data-act="media-edit">剪辑 / 工程</button>
     </div>
   </div>
   <div class="filters">
@@ -1885,6 +2285,23 @@ function renderMedia() {
   `;
 }
 
+function openMediaDetail(item) {
+  const url = esc(item.url || '/api/file?path=' + enc(item.path));
+  openModal(`
+    <div class="modal-head"><h2>${esc(item.name)}</h2><span class="grow"></span><button class="btn ghost sm" data-close="1">关闭</button></div>
+    <div class="modal-body">
+      <div style="background:var(--surface-2);border-radius:10px;display:grid;place-items:center;min-height:240px;overflow:hidden">
+        ${item.kind === 'video'
+          ? `<video src="${url}" controls autoplay playsinline preload="metadata" style="width:100%;max-height:65vh;background:#111"></video>`
+          : `<img src="${url}" alt="${esc(item.name)}" style="max-width:100%;max-height:65vh;object-fit:contain" />`}
+      </div>
+      <div class="kv"><span>大小</span><span>${fmtBytes(item.bytes)}</span></div>
+    </div>
+    <div class="modal-foot"><button class="btn primary" id="media-preview-edit">加入剪辑</button><button class="btn" data-close="1">关闭</button></div>
+  `);
+  $('#media-preview-edit').onclick = () => openVideoEditor(item).catch(e => toast(e.message, true));
+}
+
 function bindMedia(root) {
   root.addEventListener('click', async (event) => {
     const kindBtn = event.target.closest('[data-kind]');
@@ -1895,15 +2312,12 @@ function bindMedia(root) {
       const items = state.media.items.filter((i) => i.kind === kind);
       const item = items[Number(card.dataset.media)];
       if (!item) return;
-      try {
-        await api('/api/media/open', { method: 'POST', body: { path: item.path, player: item.kind === 'video' } });
-        toast('已用系统播放器打开');
-      } catch (err) { toast(err.message, true); }
-      return;
+      return openMediaDetail(item);
     }
     const target = event.target.closest('[data-act]');
     if (!target) return;
     try {
+      if (target.dataset.act === 'media-edit') return await openVideoEditor();
       if (target.dataset.act === 'refresh-media') { state.media = await api('/api/media'); return render(); }
       if (target.dataset.act === 'open-media-root') { await api('/api/reveal', { method: 'POST', body: { path: state.media.root } }); }
     } catch (err) { toast(err.message, true); }
@@ -1972,6 +2386,7 @@ function imageTabsHtml(tab) {
     <button type="button" class="h3-page-tab ${tab === 'edit' ? 'is-on' : ''}" data-img-tab="edit">图像编辑</button>
     <button type="button" class="h3-page-tab ${tab === 'generate' ? 'is-on' : ''}" data-img-tab="generate">图像生成</button>
     <button type="button" class="h3-page-tab ${tab === 'reverse' ? 'is-on' : ''}" data-img-tab="reverse">图像反推</button>
+    <button type="button" class="h3-page-tab ${tab === 'scene' ? 'is-on' : ''}" data-img-tab="scene">场景建模</button>
     <span class="h3-toolbar-spacer"></span>
     <button type="button" class="h3-iconbtn" data-act="manage-image-channels" title="图像渠道">${GEAR}</button>
   </div>`;
@@ -2180,7 +2595,7 @@ function imageWorkspaceHtml(tab, ch) {
     : (tab === 'reverse' ? '选择源图后点「反推提示词」' : '就绪 - 在左侧写提示词，点「图像生成」');
   const thumbs = (tab !== 'reverse' && (im.results || []).length)
     ? im.results.map((it, i) => `<button type="button" class="zd-tab ${i === (im.previewIndex || 0) ? 'zd-tab-active' : ''}" data-preview="${i}" title="${esc(it.name)}">
-        <span class="zd-tab-name">${esc(it.name)}</span><span class="zd-tab-size">${it.width || ''}${it.height ? '×' + it.height : ''}</span>
+        <span class="zd-tab-name">${esc(it.name)}</span><span role="button" tabindex="0" class="zd-tab-close" data-close-document="${i}" aria-label="关闭 ${esc(it.name)}" title="关闭图片（保留原文件）">×</span><span class="zd-tab-size">${it.width || ''}${it.height ? '×' + it.height : ''}</span>
       </button>`).join('')
     : '';
 
@@ -2221,6 +2636,8 @@ function imageWorkspaceHtml(tab, ch) {
       <button type="button" class="zd-tool" data-act="image-fit" title="适应窗口"><span class="zd-tool-label">适应</span></button>
       <button type="button" class="zd-tool" data-act="image-actual" title="实际像素"><span class="zd-tool-label zd-tool-mono">1:1</span></button>
     </div>
+    <button type="button" class="zd-tool" data-act="image-layer-edit">图层编辑</button>
+    <button type="button" class="zd-tool" data-act="image-basic-edit" ${item ? '' : 'disabled'}>基础编辑</button>
     <span class="zd-toolbar-spacer"></span>
     <button type="button" class="zd-tool zd-tool-primary" data-act="image-save" ${item ? '' : 'disabled'} title="保存当前图片"><span class="zd-tool-label">保存</span></button>
     <button type="button" class="zd-tool" data-act="image-save-all" ${(im.results || []).length ? '' : 'disabled'} title="保存全部结果"><span class="zd-tool-label">全部保存</span></button>
@@ -2494,6 +2911,8 @@ function bindImageCanvas(root) {
       if (act === 'image-deselect') { state.image.selection = null; return render(); }
       if (act === 'image-crop') return imageCrop();
       if (act === 'image-size') return imageResizeDialog();
+      if (act === 'image-basic-edit') return await openRasterEditor();
+      if (act === 'image-layer-edit') return await openLayerEditor(imageCurrent());
       if (act === 'image-undo') return imageUndo();
       if (act === 'image-redo') return imageRedo();
       if (act === 'image-paste') return imagePaste();
@@ -2509,7 +2928,7 @@ function bindImageCanvas(root) {
   });
 
   const onKey = (event) => {
-    if (state.route !== 'image') return;
+    if (state.route !== 'image' || !$('#modal').hidden) return;
     const tag = (event.target.tagName || '').toLowerCase();
     if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z' && !event.shiftKey) { event.preventDefault(); imageUndo(); }
@@ -2553,6 +2972,7 @@ function openImageHistory() {
 
 function renderImage() {
   const tab = state.image.tab || 'generate';
+  if (tab === 'scene') return '<div class="h3-image-host">' + imageTabsHtml(tab) + sceneWorkspaceHtml() + '</div>';
   const ch = imageChannel();
   return `<div class="h3-image-host zs-app">
     ${imageTabsHtml(tab)}
@@ -2569,8 +2989,19 @@ function renderImage() {
 }
 
 function bindImage(root) {
+  if (state.image.tab === 'scene') {
+    root.addEventListener('click', e => { const tab=e.target.closest('[data-img-tab]'); if(tab) {sceneCaptureInputs();state.image.tab=tab.dataset.imgTab;render();} });
+    bindSceneWorkspace(root);return;
+  }
   bindSplitter(root, '.zs-panel', (width) => { state.image.panelWidth = width || 440; });
   bindImageCanvas(root);
+  root.addEventListener('keydown', event => {
+    const close = event.target.closest('[data-close-document]');
+    if (close && (event.key === 'Enter' || event.key === ' ')) {
+      event.preventDefault(); event.stopPropagation();
+      imageCloseDocument(Number(close.dataset.closeDocument));
+    }
+  });
   const chSel = $('#img-channel', root);
   if (chSel) chSel.onchange = () => { state.image.channelId = chSel.value; state.image.size = 'auto'; render(); };
   const sizeSel = $('#img-size', root);
@@ -2591,6 +3022,8 @@ function bindImage(root) {
   root.addEventListener('click', async (event) => {
     const tabBtn = event.target.closest('[data-img-tab]');
     if (tabBtn) { state.image.tab = tabBtn.dataset.imgTab; return render(); }
+    const closeDocument = event.target.closest('[data-close-document]');
+    if (closeDocument) { event.stopPropagation(); return imageCloseDocument(Number(closeDocument.dataset.closeDocument)); }
     const thumb = event.target.closest('[data-preview]');
     if (thumb) { state.image.previewIndex = Number(thumb.dataset.preview); return render(); }
     const clearSource = event.target.closest('[data-clear-source]');
@@ -6007,11 +6440,23 @@ function connectEvents() {
   source.onerror = () => { /* browser retries automatically */ };
 }
 
+async function openManagerPage(item) {
+  if (!item) return;
+  if (!item.classList.contains('is-ok')) {
+    await toggleService('manager', item);
+    if (!item.classList.contains('is-ok')) return;
+  }
+  const detail = item.parentElement && item.parentElement.dataset.detail ? JSON.parse(item.parentElement.dataset.detail) : {};
+  const url = (detail.manager && detail.manager.url) || 'http://127.0.0.1:17778/';
+  try { await api('/api/open', { method: 'POST', body: { url } }); }
+  catch (err) { toast('打开管理器失败：' + err.message, true); }
+}
+
 async function toggleService(name, el) {
   if (!el || el.classList.contains('is-busy')) return;
   const action = el.classList.contains('is-ok') ? 'stop' : 'start';
   const label = name === 'agent' ? '智能体' : '管理器';
-  const act = el.querySelector('.h3-svc-act');
+  const act = el.querySelector('.h3-svc-act, .h3-svc-power');
   el.classList.add('is-busy');
   if (act) act.textContent = action === 'start' ? '启动中' : '停止中';
   try {
@@ -6041,7 +6486,7 @@ async function refreshServices() {
     el.classList.toggle('is-ok', !!info.ok);
     el.classList.toggle('is-bad', !info.ok);
     const label = name === 'agent' ? '智能体' : '管理器';
-    const act = el.querySelector('.h3-svc-act');
+    const act = el.querySelector('.h3-svc-act, .h3-svc-power');
     if (act && !el.classList.contains('is-busy')) act.textContent = info.ok ? '停止' : '启动';
     el.title = info.ok
       ? label + '在线' + (info.model ? ' · ' + info.model : '') + (info.accounts != null ? ' · 账号 ' + info.accounts : '')
@@ -6128,6 +6573,8 @@ function styleImageUrl(style) {
 async function setActiveProject(id, opts = {}) {
   const project = (state.projects || []).find((p) => p.id === id);
   if (!project) return null;
+  const previousId = state.projectId;
+  if (previousId && previousId !== id) studioFlush(previousId);
   state.projectId = id;
   state.project = project;
   try { localStorage.setItem('h3.projectId', id); } catch { /* ignore */ }
@@ -6137,6 +6584,7 @@ async function setActiveProject(id, opts = {}) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ projectId: id }),
   }).catch(() => {});
+  await studioLoadForProject(id);
   applyProjectChip();
   if (!opts.silent) render();
   return project;
@@ -6364,6 +6812,7 @@ async function init() {
     try { storedProject = localStorage.getItem('h3.projectId') || ''; } catch { storedProject = ''; }
     const activeProject = (state.projects || []).find((p) => p.id === storedProject) || (state.projects || [])[0] || null;
     if (activeProject) await setActiveProject(activeProject.id, { silent: true });
+    else await studioLoadForProject('default');
     applyTheme();
     setRoute();
     state.assets = await api('/api/assets');
@@ -6389,7 +6838,15 @@ async function init() {
     const projectBtn = $('#project-btn');
     if (projectBtn) projectBtn.onclick = () => { location.hash = '#projects'; };
     applyProjectChip();
-    document.querySelectorAll('.h3-svc-item').forEach((el) => { el.onclick = () => toggleService(el.dataset.svc, el); });
+    const agentItem = document.querySelector('.h3-svc-item[data-svc="agent"]');
+    if (agentItem) agentItem.onclick = () => toggleService('agent', agentItem);
+    const managerItem = document.querySelector('.h3-svc-item[data-svc="manager"]');
+    if (managerItem) {
+      const power = managerItem.querySelector('.h3-svc-power');
+      if (power) power.onclick = (event) => { event.stopPropagation(); toggleService('manager', managerItem); };
+      const label = managerItem.querySelector('.h3-svc-label');
+      if (label) label.onclick = () => openManagerPage(managerItem);
+    }
   } catch (err) {
     if (/请先登录/.test(err.message)) return renderLoginScreen();
     document.body.innerHTML = `<div class="empty" style="height:100vh;justify-content:center"><strong>无法连接 H3 Studio 服务</strong><p>${esc(err.message)}</p></div>`;
@@ -6416,3 +6873,128 @@ init();
 
 
 
+
+/* Local raster editor. Originals are retained; applying creates a new image. */
+function imageCloseDocument(index) {
+  const im = state.image;
+  if (!Number.isInteger(index) || !im.results?.[index]) return;
+  imagePushHistory();
+  im.results = im.results.filter((_, i) => i !== index);
+  const active = im.previewIndex || 0;
+  im.previewIndex = Math.max(0, Math.min(active - (index < active ? 1 : 0), im.results.length - 1));
+  im.selection = null;
+  imagePushHistory();
+  render();
+}
+
+async function openRasterEditor() {
+  const source = imageCurrent();
+  if (!source) return;
+  const image = new Image();
+  image.src = source.url;
+  try { await image.decode(); } catch { return toast('图片加载失败，无法编辑', true); }
+  openModal(`
+    <div class="modal-head"><h2>基础编辑 · ${esc(source.name)}</h2><span class="grow"></span><button class="btn ghost sm" data-close="1">取消</button></div>
+    <div class="modal-body raster-editor">
+      <div class="raster-tools">
+        <label>工具 <select id="raster-tool" class="select"><option value="brush">画笔</option><option value="erase">橡皮擦（透明）</option><option value="rect">矩形框</option><option value="text">文字（点击放置）</option></select></label>
+        <label>颜色 <input id="raster-color" type="color" value="#ff3333"></label>
+        <label>笔宽 <input id="raster-width" type="number" min="1" max="500" value="12"></label>
+        <label>字号 <input id="raster-font" type="number" min="8" max="1000" value="64"></label>
+        <input id="raster-text" class="input" placeholder="输入要添加的文字" aria-label="添加文字内容">
+      </div>
+      <div class="raster-tools">
+        <button class="btn" data-raster="undo">撤销</button><button class="btn" data-raster="redo">重做</button>
+        <button class="btn" data-raster="left">左转90°</button><button class="btn" data-raster="right">右转90°</button>
+        <button class="btn" data-raster="flip-x">水平翻转</button><button class="btn" data-raster="flip-y">垂直翻转</button>
+      </div>
+      <div class="raster-tools">
+        <label>亮度 <input id="raster-bright" type="range" min="0" max="200" value="100"></label>
+        <label>对比度 <input id="raster-contrast" type="range" min="0" max="200" value="100"></label>
+        <label>饱和度 <input id="raster-saturate" type="range" min="0" max="200" value="100"></label>
+        <button class="btn" data-raster="adjust">应用调色</button><button class="btn" data-raster="reset-adjust">重置调色</button>
+      </div>
+      <p class="hint">在图片上拖动绘制，文字工具点击放置；笔宽和字号以原图像素计。调色滑块实时预览，应用后可继续绘制。裁剪、尺寸调整在主画布工具栏。</p>
+      <div class="raster-stage"><canvas id="raster-canvas"></canvas></div>
+      <p class="hint" id="raster-status"></p>
+    </div>
+    <div class="modal-foot"><button class="btn" data-close="1">取消</button><button class="btn primary" id="raster-save">保存为新图片</button></div>`);
+  $('#modal-panel').classList.add('modal-wide');
+  const canvas = $('#raster-canvas');
+  canvas.width = image.naturalWidth; canvas.height = image.naturalHeight;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(image, 0, 0);
+  const history = [canvas.toDataURL('image/png')]; let cursor = 0; let pending = false; let start = null; let before = null;
+  const controls = ['bright', 'contrast', 'saturate'].map(n => $('#raster-' + n));
+  const filter = () => 'brightness(' + controls[0].value + '%) contrast(' + controls[1].value + '%) saturate(' + controls[2].value + '%)';
+  const reset = () => { controls.forEach(c => c.value = 100); canvas.style.filter = ''; };
+  const refresh = () => {
+    $('#raster-status').textContent = canvas.width + ' × ' + canvas.height + ' 像素';
+    $('[data-raster="undo"]').disabled = cursor === 0 || pending;
+    $('[data-raster="redo"]').disabled = cursor === history.length - 1 || pending;
+  };
+  const snapshot = () => { history.splice(cursor + 1); history.push(canvas.toDataURL('image/png')); if (history.length > 20) history.shift(); cursor = history.length - 1; refresh(); };
+  const bake = () => {
+    if (controls.every(c => Number(c.value) === 100)) return;
+    const copy = document.createElement('canvas'); copy.width = canvas.width; copy.height = canvas.height; copy.getContext('2d').drawImage(canvas, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height); ctx.filter = filter(); ctx.drawImage(copy, 0, 0); ctx.filter = 'none'; reset();
+  };
+  controls.forEach(c => c.oninput = () => { canvas.style.filter = filter(); });
+  const point = e => { const r = canvas.getBoundingClientRect(); return {x: Math.max(0, Math.min(canvas.width, (e.clientX - r.left) * canvas.width / r.width)), y: Math.max(0, Math.min(canvas.height, (e.clientY - r.top) * canvas.height / r.height))}; };
+  const brush = (a,b) => {
+    ctx.save(); ctx.globalCompositeOperation = $('#raster-tool').value === 'erase' ? 'destination-out' : 'source-over';
+    ctx.strokeStyle = $('#raster-color').value; ctx.lineWidth = Math.max(1, Math.min(500, Number($('#raster-width').value) || 12)); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x + .001,b.y);ctx.stroke();ctx.restore();
+  };
+  canvas.onpointerdown = e => {
+    if (pending || e.button !== 0) return;
+    e.preventDefault(); bake(); const p = point(e); const tool = $('#raster-tool').value;
+    if (tool === 'text') {
+      const text = $('#raster-text').value; if (!text.trim()) return toast('先输入文字', true);
+      ctx.fillStyle = $('#raster-color').value; ctx.font = Math.max(8, Math.min(1000, Number($('#raster-font').value) || 64)) + 'px sans-serif'; ctx.textBaseline = 'top';
+      ctx.fillText(text, p.x, p.y); snapshot(); return;
+    }
+    canvas.setPointerCapture(e.pointerId); start = p; before = ctx.getImageData(0,0,canvas.width,canvas.height);
+    if (tool !== 'rect') brush(p,p);
+  };
+  canvas.onpointermove = e => {
+    if (!start || pending) return; const p = point(e);
+    if ($('#raster-tool').value === 'rect') { ctx.putImageData(before,0,0);ctx.strokeStyle = $('#raster-color').value;ctx.lineWidth = Math.max(1, Number($('#raster-width').value)||12);ctx.strokeRect(start.x,start.y,p.x-start.x,p.y-start.y); }
+    else { brush(start,p); start = p; }
+  };
+  const finish = () => { if(start) { start = null;before = null;snapshot(); } };
+  canvas.onpointerup = finish; canvas.onpointercancel = finish;
+  const panel = $('#modal-panel');
+  panel.querySelectorAll('[data-raster]').forEach(button => button.onclick = async () => {
+    if (pending || start) return;
+    const action = button.dataset.raster;
+    try {
+      if(action === 'reset-adjust') return reset();
+      if(action === 'undo' || action === 'redo') {
+        const next = cursor + (action === 'undo' ? -1 : 1); if(next < 0 || next >= history.length) return;
+        pending = true;refresh(); const restored = new Image();restored.src = history[next];await restored.decode();
+        canvas.width = restored.naturalWidth;canvas.height = restored.naturalHeight;ctx.drawImage(restored,0,0);cursor = next;reset();
+      } else {
+        bake();
+        if(action !== 'adjust') {
+          const copy = document.createElement('canvas');copy.width = canvas.width;copy.height = canvas.height;copy.getContext('2d').drawImage(canvas,0,0);
+          const rotate = action === 'left' || action === 'right';canvas.width = rotate ? copy.height : copy.width;canvas.height = rotate ? copy.width : copy.height;
+          ctx.save();ctx.translate(canvas.width/2,canvas.height/2);
+          if(rotate) ctx.rotate(action === 'left' ? -Math.PI/2 : Math.PI/2);
+          else ctx.scale(action === 'flip-x' ? -1 : 1,action === 'flip-y' ? -1 : 1);
+          ctx.drawImage(copy,-copy.width/2,-copy.height/2);ctx.restore();
+        }
+        snapshot();
+      }
+    } catch(error) { toast(error.message,true); } finally { pending = false;refresh(); }
+  });
+  $('#raster-save').onclick = async e => {
+    if(pending || start) return; pending = true;e.target.disabled = true;
+    try {
+      bake();const item = await imageSaveDataUrl(canvas.toDataURL('image/png'));
+      imagePushHistory();state.image.results = [...(state.image.results || []),item];state.image.previewIndex = state.image.results.length-1;state.image.selection = null;imagePushHistory();
+      closeModal();render();toast('已保存编辑副本，原图已保留');
+    } catch(error) { toast(error.message,true); } finally { pending = false;e.target.disabled = false; }
+  };
+  refresh();
+}

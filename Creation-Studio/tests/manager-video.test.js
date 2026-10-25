@@ -171,7 +171,7 @@ test('外接管理器：豆包 / Gemini 视频任务跑通', { timeout: 90000 },
 
     const submit = manager.state.submits.at(-1);
     assert.equal(submit.platform, 'doubao');
-    assert.equal(submit.accountId, 'acc-doubao');
+    assert.equal(submit.accountId, undefined, '留空账号应由管理器自动选号');
     assert.equal(submit.duration, 10);
     assert.equal(submit.ratio, '16:9');
     assert.deepEqual(submit.references, [refPath]);
@@ -198,7 +198,7 @@ test('外接管理器：豆包 / Gemini 视频任务跑通', { timeout: 90000 },
     assert.equal(gdone.status, 'success', 'Gemini 任务应成功：' + (gdone.error || ''));
     const gsubmit = manager.state.submits.at(-1);
     assert.equal(gsubmit.platform, 'gemini');
-    assert.equal(gsubmit.accountId, 'acc-gemini');
+    assert.equal(gsubmit.accountId, undefined, 'Gemini 留空账号同样自动选号');
     assert.equal(gsubmit.ratio, '9:16');
     assert.equal(gsubmit.duration, undefined, 'Gemini 不应带时长');
     assert.equal(gsubmit.resolution, undefined, 'Gemini 不应带清晰度');
@@ -208,5 +208,23 @@ test('外接管理器：豆包 / Gemini 视频任务跑通', { timeout: 90000 },
     manager.server.close();
     await sleep(300);
     fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('留空账号时交给管理器自动选号，只有指定账号才钉死', async () => {
+  const manager = await startMockManager();
+  const { submit } = require('../src/manager-video');
+  const base = { baseUrl: `http://127.0.0.1:${MANAGER_PORT}`, apiKey: 'test-token' };
+  const job = (id) => ({ id, prompt: '雪山寺庙', images: [], duration: 10, aspectRatio: '16:9' });
+  try {
+    const auto = await submit({ ...base, options: {} }, job('job-auto'), 'doubao');
+    assert.equal(auto.account.name, '豆包账号1');
+    assert.equal(manager.state.submits[0].accountId, undefined, '留空时不传 accountId，交给管理器换号');
+    const pinned = await submit({ ...base, options: { accountId: 'acc-doubao' } }, job('job-pin'), 'doubao');
+    assert.equal(pinned.account.id, 'acc-doubao');
+    assert.equal(manager.state.submits[1].accountId, 'acc-doubao', '明确指定的账号仍然钉死');
+  } finally {
+    manager.server.close();
+    await sleep(100);
   }
 });

@@ -1795,3 +1795,51 @@ body.is-pane-resizing * { user-select: none !important; }
 .ask-gen-elapsed { margin-left: 4px; font-size: 10px; color: var(--ask-muted); font-variant-numeric: tabular-nums; }
 
 .h3-prompt-wrap{position:relative}.studio-reference-menu{position:absolute;bottom:8px;left:8px;right:8px;z-index:30;max-height:220px;overflow:auto;background:var(--surface,#fff);color:var(--text,#222);border:1px solid var(--border,#aaa);box-shadow:0 4px 16px #0002;padding:6px}.studio-reference-menu[hidden]{display:none}.studio-reference-menu button{display:block;width:100%;padding:9px;text-align:left;background:transparent;color:inherit;border:0;cursor:pointer}.studio-reference-menu button[aria-selected="true"],.studio-reference-menu button:hover{background:var(--surface-2,#e9eef8)}.studio-reference-menu span{display:block;padding:9px}
+
+.h3-svc-label { border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; padding: 0; }
+.h3-svc-label:hover { text-decoration: underline; }
+.h3-svc-power { border: 1px solid var(--h3-border); background: transparent; color: var(--h3-text-3); border-radius: 3px; font-size: 9px; line-height: 1.4; padding: 0 3px; cursor: pointer; }
+.h3-svc-power:hover { border-color: var(--h3-border-hover); color: var(--h3-text); }
+.h3-svc-item.is-ok .h3-svc-power { color: #3ecf8e; border-color: rgba(62, 207, 142, .45); }
+
+/* 视频台标签视图：可编辑富文本 + @ 菜单 */
+.h3-rich-editor { white-space: pre-wrap; overflow-wrap: anywhere; min-height: 220px; outline: none; cursor: text; }
+.h3-rich-editor:empty::before { content: attr(data-placeholder); color: var(--h3-text-3); pointer-events: none; }
+.h3-rich-editor .h3-chip { user-select: none; }
+.h3-mention-pop { position: fixed; z-index: 80; width: 300px; max-height: 280px; overflow: auto; padding: 6px; border: 1px solid var(--h3-border-strong); border-radius: 8px; background: var(--h3-bg-1); box-shadow: 0 12px 30px rgba(0,0,0,.28); }
+.h3-mention-group { padding: 4px 2px 6px; }
+.h3-mention-group b { display: block; font-size: 10px; font-weight: 500; color: var(--h3-text-3); padding: 4px 8px; }
+.h3-mention-group button { display: block; width: 100%; text-align: left; border: 0; background: transparent; color: var(--h3-text); font-size: 12px; padding: 6px 8px; border-radius: 5px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.h3-mention-group button:hover { background: var(--h3-accent-soft); color: var(--h3-accent); }
+.h3-mention-empty { margin: 0; padding: 10px; font-size: 11px; color: var(--h3-text-3); }
+
+/* @ 菜单：原版横向分栏（参考图 / 主体 / 说话人 / 对白 / 镜头 / 结构） */
+.h3-mention-pop { display: flex; align-items: stretch; gap: 0; width: auto; max-width: calc(100vw - 16px); padding: 0; overflow: auto; }
+.h3-mention-col { min-width: 132px; max-width: 210px; padding: 5px; display: flex; flex-direction: column; gap: 1px; flex: none; }
+.h3-mention-col + .h3-mention-col { border-left: 1px solid var(--h3-border); }
+.h3-mention-title { padding: 6px 8px 4px; font-size: 10px; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; color: var(--h3-text-3); white-space: nowrap; }
+.h3-mention-col.is-media .h3-mention-title { color: oklch(.86 .11 205); }
+.h3-mention-col.is-subject .h3-mention-title { color: oklch(.86 .12 158); }
+.h3-mention-col.is-dialogue .h3-mention-title { color: oklch(.84 .11 58); }
+.h3-mention-item { display: flex; align-items: center; gap: 7px; min-height: 30px; padding: 3px 8px; border: 0; border-radius: 4px; background: transparent; color: var(--h3-text); font-size: 12px; text-align: left; cursor: pointer; white-space: nowrap; }
+.h3-mention-item img { width: 18px; height: 18px; border-radius: 3px; object-fit: cover; flex: none; }
+.h3-mention-ico { width: 18px; display: inline-flex; justify-content: center; font-size: 12px; flex: none; }
+.h3-mention-label { overflow: hidden; text-overflow: ellipsis; }
+.h3-mention-label small { display: block; font-size: 9px; color: var(--h3-text-3); overflow: hidden; text-overflow: ellipsis; }
+.h3-mention-item:hover, .h3-mention-item.is-active { background: var(--h3-text); color: var(--h3-bg-0); }
+.h3-mention-item:hover small, .h3-mention-item.is-active small { color: var(--h3-bg-0); opacity: .75; }
+
+.h3-mention-col.is-speaker .h3-mention-title { color: oklch(.84 .10 250); }
+
+.h3-chip.is-dialogue [data-dialogue-body] { min-width: 16px; display: inline-block; outline: none; }
+.h3-chip.is-dialogue [data-dialogue-body]:empty::before { content: "（输入台词）"; opacity: .5; }
+.h3-rich-editor .h3-chip.is-section { background: var(--h3-text); color: var(--h3-bg-0); }
+
+/* 参考图适配：完整显示，不裁切（9:16 / 16:9 / 4:3 / 3:4 都装进槽位） */
+.h3-slot .h3-slot-img { object-fit: contain; background: var(--h3-bg-1); }
+.h3-slot.has-media { background: var(--h3-bg-1); }
+
+/* Local image editing */
+.zd-tab-close{margin-left:10px;padding:0 6px;border-radius:4px;font-size:18px;line-height:24px}.zd-tab-close:hover,.zd-tab-close:focus{background:var(--surface-2);color:#e34d4d}.raster-tools{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:12px}.raster-tools label{display:flex;align-items:center;gap:6px}.raster-tools input[type=number]{width:72px}.raster-tools input[type=range]{width:110px}.raster-tools>.input{max-width:260px}.raster-stage{overflow:auto;max-height:55vh;background:repeating-conic-gradient(#ddd 0 25%,#fff 0 50%) 0 /20px 20px;text-align:center}.raster-stage canvas{display:block;max-width:100%;max-height:55vh;width:auto;height:auto;margin:auto;touch-action:none;cursor:crosshair}.raster-editor{min-width:0}
+
+.raster-tools label{white-space:nowrap}.raster-tools select{min-width:150px}

@@ -7,6 +7,22 @@ const { readAttachmentState } = require('./adapters/attachment-state');
 const { downloadVideo } = require('./download');
 const {resolveFallbackVideo}=require('./adapters/doubao-fallback');
 const resolver = fs.readFileSync(path.join(__dirname,'adapters','doubao-official-resolver.js'),'utf8');
+// 豆包页面的默认选择器：账号没单独配置时也要能跑，不能因为换了账号就报“未配置选择器”。
+// 账号高级设置里的值优先覆盖这里。
+const DOUBAO_DEFAULTS={
+  editor:'[data-testid="chat_input_input"] [contenteditable="true"]',
+  send:'[data-testid="chat_input_send_button"]',
+  newChat:'[role="button"]:has-text("新对话")',
+  upload:'input[data-testid="upload-file-input"]',
+  attachment:'[data-testid="attachment-image-card"]',
+  modeControl:'[data-testid="skill_bar_button_17"]',
+  modelControl:'[data-input-engine-actionbar-control-key="video-model"]',
+  durationControl:'[data-input-engine-actionbar-render-entry-key="video-generation-params-panel"]',
+  ratioControl:'[data-input-engine-actionbar-render-entry-key="video-generation-params-panel"]',
+};
+function selectorsFor(platform, account={}){
+  return {...(platform==='doubao'?DOUBAO_DEFAULTS:{}), ...(account.selectors||{})};
+}
 async function firstVisible(page, selector, timeout=15000) {
   const end=Date.now()+timeout;
   while(Date.now()<end) {
@@ -85,7 +101,7 @@ async function submitText(page, text, selectors, signal, beforeSend, referenceFi
   const binding=referenceFiles ? await require('./adapters/doubao-mentions').bindReferences(page,editor,text,referenceFiles,signal) : null;
   if(!binding)await editor.fill(text);
   signal.throwIfAborted();
-  if(beforeSend)await beforeSend(binding);
+  if(beforeSend && await beforeSend(binding)===false)return binding;
   if(selectors.send) await (await firstVisible(page,selectors.send,5000)).click();
   else {
     const stableSend=page.locator('[data-testid="chat_input_send_button"]');
@@ -95,7 +111,7 @@ async function submitText(page, text, selectors, signal, beforeSend, referenceFi
     else await editor.press('Enter');
   }
 }
-async function uploadReferences(page, files, selectors, signal, platform) {
+async function uploadReferences(page, files, selectors, signal, platform, update = () => {}) {
   if(!files.length) return;
   // Doubao exposes authoritative upload completion in attachmentStates; a separate
   // progress selector is optional there, but remains mandatory for generic pages.
@@ -105,8 +121,11 @@ async function uploadReferences(page, files, selectors, signal, platform) {
     selectors.upload ||= 'input[data-testid="upload-file-input"], input[type="file"]';
   }
   if(!selectors.attachment || (platform !== 'doubao' && !selectors.uploading)) throw new Error('参考图上传需要配置attachment和uploading选择器，避免未上传完成就发送');
-  for(const file of files) {
+  const trace = require('./adapters/upload-trace').uploadTrace(page);
+  try { for(const [fileIndex,file] of files.entries()) {
+    const started=Date.now();let lastChange=started,lastFingerprint='',lastUpdate=0;const history=[];
     signal.throwIfAborted();
+    update({status:'uploading',message:'准备上传参考图 '+(fileIndex+1)+'/'+files.length+'：'+path.basename(file),progress:5+Math.round(fileIndex/files.length*10)});
     const before=await page.locator(selectors.attachment).count();
     const beforeStates=platform==='doubao'?await page.evaluate(readAttachmentState,selectors.attachment):[];
     const uploader=page.locator(selectors.upload || 'input[type="file"]').first();
@@ -123,12 +142,16 @@ async function uploadReferences(page, files, selectors, signal, platform) {
       signal.throwIfAborted();
       const count=await page.locator(selectors.attachment).count();
       const uploading=selectors.uploading ? await page.locator(selectors.uploading).count() : 0;
+      const currentStates=platform==='doubao'?await page.evaluate(readAttachmentState,selectors.attachment):[];
+      const current=currentStates.find(s=>s.fileName===path.basename(file));
+      const fingerprint=JSON.stringify(current||{count});
+      if(fingerprint!==lastFingerprint){lastFingerprint=fingerprint;lastChange=Date.now();history.push({elapsedMs:Date.now()-started,status:current?.status,percent:current?.uploadPercent});if(history.length>20)history.shift();}
+      if(Date.now()-lastUpdate>=2000){lastUpdate=Date.now();const percent=current?.uploadPercent||0;const stalled=Date.now()-lastChange>=30000;update({status:'uploading',message:'上传参考图 '+(fileIndex+1)+'/'+files.length+'：'+path.basename(file)+' · '+percent+'%'+(stalled?'（进度停滞，仍在等待平台确认）':''),progress:5+Math.round((fileIndex+percent/100)/files.length*10),uploadState:{index:fileIndex+1,total:files.length,fileName:path.basename(file),percent,elapsedMs:Date.now()-started,stalled}});}
       if(count===before+1 && uploading===0) {
         if(platform==='doubao'){
-          const states=await page.evaluate(readAttachmentState,selectors.attachment);
           const old=new Set(beforeStates.map(s=>s.fileKey));
-          const added=states.filter(s=>!old.has(s.fileKey));
-          if(states.length===before+1 && states.every(s=>s.status==='Normal'&&s.uploadPercent>=100&&s.fileKey&&s.width>0&&s.height>0)
+          const added=currentStates.filter(s=>!old.has(s.fileKey));
+          if(currentStates.length===before+1 && currentStates.every(s=>s.status==='Normal'&&s.uploadPercent>=100&&s.fileKey&&s.width>0&&s.height>0)
             && added.length===1 && added[0].fileName===path.basename(file)){ready=true;break;}
         }else {ready=true;break;}
       }
@@ -138,10 +161,24 @@ async function uploadReferences(page, files, selectors, signal, platform) {
       const states=platform==='doubao'?await page.evaluate(readAttachmentState,selectors.attachment):[];
       const count=await page.locator(selectors.attachment).count();
       const error=new Error('参考图未确认上传完成，已停止发送：'+path.basename(file));
-      error.uploadDiagnostics={expectedCount:before+1,actualCount:count,attachments:states};
+      error.uploadDiagnostics={expectedCount:before+1,actualCount:count,attachments:states,elapsedMs:Date.now()-started,stalledMs:Date.now()-lastChange,history,network:trace.events.slice()};
       throw error;
     }
+    update({status:'uploading',message:'参考图 '+(fileIndex+1)+'/'+files.length+' 上传完成：'+path.basename(file),progress:5+Math.round((fileIndex+1)/files.length*10)});
   }
+    return {expectedCount:files.length,actualCount:await page.locator(selectors.attachment).count(),attachments:platform==='doubao'?await page.evaluate(readAttachmentState,selectors.attachment):[],network:trace.events.slice()};
+  } finally { trace.stop(); }
+}
+async function prepareInputs(page,task,selectors,signal,platform,update=()=>{}) {
+  signal.throwIfAborted();
+  const editor=await firstVisible(page,selectors.editor||'textarea,[contenteditable=true]');
+  // Upload into a fresh composer. Filling a long prompt before upload can retain
+  // stale attachment props; the verified native binding writes the prompt later.
+  await editor.fill('');
+  update({status:'configuring',message:'设置视频参数',progress:3});
+  const parameters=await applyOptions(page,task,selectors,signal);update({parameters});
+  const uploadDiagnostics=await uploadReferences(page,task.references,selectors,signal,platform,update);
+  return {parameters,uploadDiagnostics};
 }
 // 下载地址解析顺序（豆包）：插件 fallback_api 无水印原片 → 官方节点接口 → 页面明确标记的地址。
 // fallback_api 是实测可用的主路径（evidence/live-no-watermark-probe.md），对 removeWatermark=false 的任务也同样优先，
@@ -174,11 +211,11 @@ async function resolveGeneratedMedia({ page, state, task, anchorKey = '', signal
   }
   return null;
 }
-function createExecutor({ pool, store, downloads, ffprobe, fixture=false, getDispatcher }) {
+function createExecutor({ pool, store, downloads, ffprobe, fixture=false, getDispatcher, prepareOnly=false }) {
   return async function execute(task, account, signal, update) {
     let page;let finished=false;
     try {
-      signal.throwIfAborted();if(task.nextPollAt>Date.now())await wait(task.nextPollAt-Date.now(),undefined,{signal});page=await pool.taskPage(account,task.resume?task.conversationURL:undefined); const selectors={...(account.selectors || {})};
+      signal.throwIfAborted();if(task.nextPollAt>Date.now())await wait(task.nextPollAt-Date.now(),undefined,{signal});page=await pool.taskPage(account,task.resume?task.conversationURL:undefined); const selectors=selectorsFor(account.platform,account);
       await firstVisible(page,selectors.editor || 'textarea,[contenteditable="true"]',30000);
       const abort=()=>{ page?.close().catch(()=>{}); };signal.addEventListener('abort',abort,{once:true});
       try {
@@ -193,15 +230,20 @@ function createExecutor({ pool, store, downloads, ffprobe, fixture=false, getDis
           if(initial.messageCount) throw new Error('新会话未清空历史消息，已停止提交');
         }
         if(task.platform==='doubao') await page.evaluate(resolver);
-        if(!task.resume){await (await firstVisible(page,selectors.editor||'textarea,[contenteditable=true]')).fill(task.prompt);const parameters=await applyOptions(page,task,selectors,signal);update({parameters});await uploadReferences(page,task.references,selectors,signal,account.platform);}
+        let prepared;
+        if(!task.resume)prepared=await prepareInputs(page,task,selectors,signal,account.platform,update);
         if(task.resume){await page.locator('[data-testid="message-list"] .scroller').evaluateAll(es=>es.forEach(e=>{e.scrollTop=0;}));await wait(500,undefined,{signal});}
         const before=task.resume?{keys:[],captcha:false}:await page.evaluate(readPageState,{selectors});
         if(before.captcha) {update({status:'paused',message:'请在账号窗口完成人工验证'});throw new Error('提交前需要人工验证，请完成后重新提交');}
         update({status:'submitting',message:'提交提示词',progress:10});
+        let preparedBinding;
         if(!task.resume)await submitText(page,task.prompt,selectors,signal,(binding)=>{
+          preparedBinding=binding;
+          if(prepareOnly)return false;
           if(binding)update({submittedPrompt:binding.text,referenceBindings:binding.bindings});
           const quota=store.consumeQuota(account.id);update({quotaCharged:true,quotaDate:quota.date});
         },account.platform==='doubao'?task.references:null);
+        if(prepareOnly)return {sent:false,mode:'executor-before-send',text:preparedBinding?.text||task.prompt,bindings:preparedBinding?.bindings||[],parameters:prepared?.parameters,uploadDiagnostics:prepared?.uploadDiagnostics};
         const deadline=Date.now()+task.timeoutSeconds*1000;
         let anchorKey='',submittedDeadline=Date.now()+60000, confirmations=0,lastConfirmation='',lastReply='',stableSince=Date.now();
         let media,ownership;
@@ -209,15 +251,20 @@ function createExecutor({ pool, store, downloads, ffprobe, fixture=false, getDis
           signal.throwIfAborted();
           if(task.nextPollAt>Date.now())await wait(task.nextPollAt-Date.now(),undefined,{signal});
           Object.assign(selectors,store.get(account.id)?.selectors || {});
-          const state=await page.evaluate(readPageState,{selectors,baseline:before.keys,prompt:task.submittedPrompt||task.prompt,anchorKey});
+          const state=await page.evaluate(readPageState,{selectors,baseline:before.keys,prompt:task.submittedPrompt||task.prompt,anchorKey,attachments:(task.references||[]).length});
           if(state.otherUser){
-            update({conversationURL:page.url(), userKey:state.userKey, ownershipDiagnostics:{messageCount:state.messageCount,userId:state.userId}});
-            throw new Error('任务会话出现额外用户消息，已停止操作以避免混用结果');
+            update({conversationURL:page.url(), userKey:state.userKey, ownershipDiagnostics:{messageCount:state.messageCount,userId:state.userId,messages:state.messages||[]}});
+            const seen=(state.messages||[]).filter(m=>m.role==='user'&&m.text).map(m=>m.text.slice(0,80));
+            throw new Error('任务会话出现额外用户消息，已停止操作以避免混用结果'+(seen.length?'；会话中的用户消息：'+seen.join(' / '):''));
           }
           if(state.captcha) {
-            update({status:'paused',message:'请在任务浏览器窗口完成人工验证',progress:20});
+            // 人工验证只能由人在账号窗口里完成；把窗口提到最前，避免看起来“卡住不动”。
+            if(!task.captchaPausedAt)update({captchaPausedAt:new Date().toISOString()});
+            await page.bringToFront().catch(()=>{});
+            update({status:'paused',message:'豆包要求人工验证：请在账号窗口里完成滑块/验证后不要关闭窗口，任务会自动继续',progress:20});
             await wait(1000,undefined,{signal});continue;
           }
+          if(task.captchaPausedAt)update({captchaPausedAt:null});
           anchorKey=state.userKey || anchorKey;
           if(anchorKey && !state.pendingConversation)update({conversationURL:page.url().split('?')[0],submittedAt:task.submittedAt||new Date().toISOString()});
           if(state.failedSend || state.pendingConversation){
@@ -265,6 +312,10 @@ function createExecutor({ pool, store, downloads, ffprobe, fixture=false, getDis
         const result=await downloadVideo({url:media.url,page,destination,signal,ffprobe,allowLocal:fixture,getDispatcher});
         signal.throwIfAborted();finished=true;
         return {...result,file:path.basename(result.path),watermarkMethod:media.method,ownership,downloadedAt:new Date().toISOString()};
+      } catch(error){
+        if(/Target page, context or browser has been closed|has been closed/i.test(String(error?.message||error)))
+          throw new Error('账号浏览器窗口被关闭，任务已中断；遇到人工验证请直接在窗口里完成，不要关闭窗口');
+        throw error;
       } finally {signal.removeEventListener('abort',abort);}
     } finally {
       // Keep failed pages available for diagnosis and manual login/verification.
@@ -272,4 +323,4 @@ function createExecutor({ pool, store, downloads, ffprobe, fixture=false, getDis
     }
   };
 }
-module.exports = { createExecutor, firstVisible, submitText, uploadReferences, applyOptions, resolveGeneratedMedia };
+module.exports = { createExecutor, firstVisible, submitText, uploadReferences, prepareInputs, applyOptions, resolveGeneratedMedia, selectorsFor, DOUBAO_DEFAULTS };

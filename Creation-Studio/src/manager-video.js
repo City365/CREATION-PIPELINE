@@ -70,10 +70,13 @@ function shortAspect(aspectRatio) {
 async function submit(channel, job, platform) {
   const stateData = await state(channel);
   const account = pickAccount(channel, stateData, platform);
+  // 只有渠道里明确指定了账号才钉死它。留空时交给管理器自己挑选：
+  // 管理器会按配额/冷却/占用情况换号，钉死一个号会在它配额满时一直排队。
+  const pinnedAccount = String((channel.options && channel.options.accountId) || (channel && channel.accountId) || '').trim();
   const references = (job.images || []).filter(Boolean).map((img) => img.path).filter(Boolean).slice(0, 9);
   const body = {
     platform,
-    accountId: account.id,
+    ...(pinnedAccount ? { accountId: account.id } : {}),
     prompt: job.prompt,
     references,
     requestId: job.id,

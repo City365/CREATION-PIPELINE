@@ -59,18 +59,28 @@ class TaskQueue extends EventEmitter {
     for (const t of this.tasks) {
       if (this.running.size >= this.concurrency) break;
       if (t.status !== 'queued') continue;
-      const a = this.store.list().find(a => a.enabled && a.platform === t.platform && (!(t.requestedAccountId??t.accountId) || a.id === (t.requestedAccountId??t.accountId))
-        && this.store.canUse(a) && !this.busy.has(a.id) && (!a.cooldownUntil || a.cooldownUntil <= Date.now()));
+      const wanted = t.requestedAccountId || t.accountId || '';
+      const excluded = new Set(t.excludedAccounts || []);
+      const usable = a => a.enabled && a.platform === t.platform && !this.busy.has(a.id) && this.store.canUse(a)
+        && (!a.cooldownUntil || a.cooldownUntil <= Date.now()) && !excluded.has(a.id);
+      const candidates = this.store.list().filter(usable);
+      // 指定的账号优先；其余账号里先挑今日剩余配额最多的，把负载摊开。
+      const remaining = a => Math.max(0, (a.quota?.limit ?? 0) - (a.quota?.used ?? 0));
+      const a = candidates.find(x => x.id === wanted)
+        || candidates.sort((x, y) => remaining(y) - remaining(x))[0];
       if (!a){if(t.message!=='等待可用账号：今日配额、冷却或占用限制')this.update(t,{message:'等待可用账号：今日配额、冷却或占用限制'});continue;}
+      const switched = Boolean(wanted) && a.id !== wanted;
       this.busy.add(a.id); const controller = new AbortController(); this.running.set(t.id, controller);
-      this.update(t, { status: 'starting', accountId: a.id, message: '打开独立账号会话' });
+      this.update(t, { status: 'starting', accountId: a.id, message: switched ? '指定账号当前不可用，改用「'+a.name+'」打开独立账号会话' : '打开独立账号会话' });
       Promise.resolve().then(() => this.execute(t, a, controller.signal, patch => this.update(t, patch))).then(result => {
         if (controller.signal.aborted) return;
         if (!result || !path.isAbsolute(result.path) || !fs.existsSync(result.path)) throw new Error('任务没有返回真实本地文件');
         this.update(t, { status: 'completed', message: '已下载并校验', progress: 100, result });
       }).catch(error => {
-        if(error.code==='ACCOUNT_QUOTA_EXHAUSTED' && !t.requestedAccountId && !controller.signal.aborted){
-          this.update(t,{status:'queued',accountId:'',message:'账号额度不足，等待其他可用账号',quotaCharged:false});return;
+        if(error.code==='ACCOUNT_QUOTA_EXHAUSTED' && !controller.signal.aborted){
+          // 平台判定这个号今日额度用完：拉黑它，把任务放回队列换下一个号。
+          const next=[...new Set([...(t.excludedAccounts||[]),a.id])];
+          this.update(t,{status:'queued',accountId:'',excludedAccounts:next,message:'账号「'+a.name+'」额度不足，换其他可用账号',quotaCharged:false});return;
         }
         if (!controller.signal.aborted) this.update(t, { status: 'failed', error: String(error.message || error), message: String(error.message || error), ...(error.uploadDiagnostics ? { uploadDiagnostics: error.uploadDiagnostics } : {}) });
       }).finally(() => { this.busy.delete(a.id); this.running.delete(t.id); this.kick(); });
