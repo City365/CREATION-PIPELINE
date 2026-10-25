@@ -125,6 +125,8 @@ async function poll(channel, taskId) {
     result: data.result || null,
     accountId: data.accountId || '',
     conversationURL: data.conversationURL || '',
+    submittedPrompt: data.submittedPrompt || '',
+    referenceBindings: data.referenceBindings || [],
   };
 }
 

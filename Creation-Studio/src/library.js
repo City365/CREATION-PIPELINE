@@ -4,6 +4,7 @@ const fsp = require('node:fs/promises');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const config = require('./config');
+const generationStore = require('./generation-store');
 const { readJson, writeJson, ensureDir, sanitizeFilename, safeSegment, kindOf, formatBytes, mimeFor } = require('./util');
 
 const META_FILE = path.join(config.DATA, 'assets.json');
@@ -153,12 +154,13 @@ function setSubject(rel, subject) {
 function renameAsset(rel, newName) {
   const root = assetRoot();
   const abs = path.resolve(root, rel);
-  if (!abs.startsWith(path.resolve(root))) throw new Error('非法路径');
+  if (path.relative(path.resolve(root),abs).startsWith('..') || path.isAbsolute(path.relative(path.resolve(root),abs))) throw new Error('非法路径');
   const clean = sanitizeFilename(newName || '');
   if (!clean) throw new Error('文件名不能为空');
   const target = path.join(path.dirname(abs), clean);
   if (fs.existsSync(target) && target !== abs) throw new Error('同名文件已存在');
   fs.renameSync(abs, target);
+  generationStore.link(abs,target,true);
   const data = meta();
   if (data.subjects && data.subjects[rel]) {
     data.subjects[relOf(root, target)] = data.subjects[rel];
@@ -171,10 +173,11 @@ function renameAsset(rel, newName) {
 function moveAsset(rel, folder) {
   const root = assetRoot();
   const abs = path.resolve(root, rel);
-  if (!abs.startsWith(path.resolve(root))) throw new Error('非法路径');
+  if (path.relative(path.resolve(root),abs).startsWith('..') || path.isAbsolute(path.relative(path.resolve(root),abs))) throw new Error('非法路径');
   const destDir = !folder || folder === '全部' || folder === '未归类' ? root : ensureDir(path.join(root, safeSegment(folder)));
   const target = uniquePath(destDir, path.basename(abs));
   fs.renameSync(abs, target);
+  generationStore.link(abs,target,true);
   const data = meta();
   if (data.subjects && data.subjects[rel]) {
     data.subjects[relOf(root, target)] = data.subjects[rel];
@@ -209,6 +212,7 @@ function listMedia(kind) {
     days = fs.readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
   } catch { days = []; }
   for (const day of days) {
+    if(day === 'images') continue;
     const dayDir = path.join(root, day);
     const jobs = fs.readdirSync(dayDir, { withFileTypes: true }).filter((d) => d.isDirectory());
     for (const jobEntry of jobs) {

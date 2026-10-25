@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { EventEmitter } = require('node:events');
 const config = require('./config');
+const workbenchStore = require('./workbench-store');
 const workflows = require('./workflows');
 const providers = require('./providers');
 const channels = require('./channels');
@@ -52,6 +53,7 @@ function saveState() {
 }
 
 function flushState() {
+  for(const job of state.jobs)if(job.runId&&['success','failed','canceled'].includes(job.status))workbenchStore.store().finish(job.runId,job.status,job.outputs||[],job.error);
   if (saveTimer) {
     clearTimeout(saveTimer);
     saveTimer = null;
@@ -97,6 +99,7 @@ function readLog(id) {
 
 function touch(job, patch = {}) {
   Object.assign(job, patch);
+  if(job.runId) workbenchStore.store().finish(job.runId,job.status,job.outputs||[],job.error);
   saveState();
   emitter.emit('job', publicJob(job));
 }
@@ -205,6 +208,9 @@ function addJobs(input) {
       createdAt: Date.now(),
       startedAt: null,
       finishedAt: null,
+      projectId: input.projectId || 'unassigned',
+      itemId: input.itemId || null,
+      userPrompt: input.userPrompt == null ? prompt : input.userPrompt,
       workflowId: wf.id,
       provider: wf.provider,
       channelId: wf.channelId || null,
@@ -226,6 +232,7 @@ function addJobs(input) {
       error: null,
       logs: [],
     };
+    job.runId = workbenchStore.store().begin({...job,kind:'video',jobId:job.id,channelName:(channels.get('video',job.channelId)||{}).name,model:(channels.get('video',job.channelId)||{}).model});
     state.jobs.push(job);
     created.push(job);
     log(job, 'info', `已加入队列（${i + 1}/${count}），工作流 ${wf.id}`);
@@ -311,6 +318,8 @@ function retry(id) {
   const job = get(id);
   if (!job) throw new Error('任务不存在');
   if (job.status === 'queued' || job.status === 'running') throw new Error('任务仍在队列中');
+  job.runId = workbenchStore.store().begin({...job,kind:'video',jobId:null,status:'queued',createdAt:Date.now()});
+  job.outputVersion = job.runId.slice(0,8);
   job.status = 'queued';
   job.stage = '排队中';
   job.progress = 0;
@@ -413,7 +422,7 @@ async function run(job, slot) {
 
 function jobDir(job) {
   const cfg = config.load();
-  const dir = path.join(ensureDir(cfg.saveFolder), dayFolder(), job.id);
+  const dir = path.join(ensureDir(cfg.saveFolder), dayFolder(), job.id + (job.outputVersion ? '-'+job.outputVersion : ''));
   ensureDir(dir);
   return dir;
 }
@@ -424,6 +433,10 @@ function writeJobMeta(job, dir, extra = {}) {
     id: job.id,
     createdAt: job.createdAt,
     finishedAt: job.finishedAt,
+    prompt: job.prompt,
+    userPrompt: job.userPrompt,
+    projectId: job.projectId,
+    itemId: job.itemId,
     workflowId: job.workflowId,
     provider: job.provider,
     apiUrl: extra.apiUrl || '',
@@ -618,6 +631,7 @@ async function runManagerVideo(job, wf, a, slot) {
     await sleep(5000);
     checkCanceled(job, a);
     result = await managerVideo.poll(channel, submitted.taskId);
+    if(job.runId)workbenchStore.store().execution(job.runId,result);
     if (result.status === 'failed') throw new Error('管理器任务失败：' + (result.message || result.rawStatus));
     if (result.status === 'success') break;
     const byTime = 18 + Math.round((Date.now() - started) / 1000 / 4);

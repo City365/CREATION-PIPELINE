@@ -22,6 +22,9 @@ const tts = require('./tts');
 const voices = require('./voices');
 const managerVideo = require('./manager-video');
 const studioStore = require('./studio-store');
+const workbenchStore = require('./workbench-store');
+const workbenchRoutes = require('./workbench-routes');
+const generationStore = require('./generation-store');
 const creativeRoutes = require('./creative-routes');
 const [ensureDir, readJson, writeJson, uid] = [require('./util').ensureDir, require('./util').readJson, require('./util').writeJson, require('./util').uid];
 const { sanitizeFilename, kindOf, mimeFor, publicError, formatBytes, estimateTokens, httpJson } = require('./util');
@@ -32,6 +35,8 @@ const AGENT_PROJECT = process.env.H3_AGENT_PROJECT || 'h3-studio';
 const STATIC = {
   '/': ['index.html', 'text/html; charset=utf-8'],
   '/index.html': ['index.html', 'text/html; charset=utf-8'],
+  '/workbench-manager.js': ['workbench-manager.js', 'text/javascript; charset=utf-8'],
+  '/workbench.css': ['workbench.css', 'text/css; charset=utf-8'],
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
   '/edit-math.js': ['edit-math.js', 'text/javascript; charset=utf-8'],
   '/edit-enhancements.js': ['edit-enhancements.js', 'text/javascript; charset=utf-8'],
@@ -416,6 +421,7 @@ async function route(req, res) {
     if (!currentUser) return json(res, 401, { ok: false, error: '请先登录', auth: true });
   }
 
+  if (await workbenchRoutes(req,res,url,{ok,readBody,mediaPath:(input)=>{const abs=mediaPath(input);if(!isAllowed(abs)||!allowedRoots().some(root=>{try{const rel=path.relative(fs.realpathSync(root),fs.realpathSync(abs));return rel===''||(!rel.startsWith('..'+path.sep)&&rel!=='..'&&!path.isAbsolute(rel));}catch{return false;}}))throw Error("文件不在素材目录内");return abs;}})) return;
   if (await creativeRoutes(req, res, url, {ok, bad, readBody, mediaPath, imageDataUrl, user:currentUser})) return;
 
   if (method === 'GET' && pathname === '/api/auth/me') {
@@ -880,14 +886,17 @@ function rememberImageBatch(entry) {
       ? styles.promptFor(body.styleId, { layer: body.styleLayer || 'auto', text: body.prompt })
       : '';
     const promptWithStyle = stylePrefix ? stylePrefix + '\n\n' + String(body.prompt || '') : body.prompt;
-    const buffers = await imagegen.generate(channel, {
+    const runId = workbenchStore.store().begin({...body, kind:'image', userPrompt:String(body.prompt||''), prompt:promptWithStyle, channelName:channel.name, model:channel.model});
+    let buffers;
+    try { buffers = await imagegen.generate(channel, {
       prompt: promptWithStyle,
       count: body.count,
       size: body.size,
       quality: body.quality,
       refs: body.refs || [],
-    });
+    }); } catch(e) { workbenchStore.store().finish(runId,'failed',[],e.message);throw e; }
     const saved = imagegen.saveImages(buffers);
+    workbenchStore.store().finish(runId,'success',saved.items);
     rememberImageBatch({
       id: saved.id,
       items: saved.items,
@@ -898,7 +907,7 @@ function rememberImageBatch(entry) {
       kind: 'generate',
       createdAt: Date.now(),
     });
-    return ok(res, { id: saved.id, items: saved.items });
+    return ok(res, { id: saved.id, runId, items: saved.items });
   }
 
   if (method === 'POST' && pathname === '/api/images/save-copy') {
@@ -928,6 +937,7 @@ function rememberImageBatch(entry) {
         index += 1;
       }
       fs.copyFileSync(src, dest);
+      generationStore.link(src,dest);
       saved.push({ name: path.basename(dest), path: dest, bytes: fs.statSync(dest).size, folder: dir });
     }
     return ok(res, { target, folder: dir, items: saved });
@@ -941,6 +951,7 @@ function rememberImageBatch(entry) {
     const buffer = Buffer.from(m[2], 'base64');
     if (!buffer.length) return bad(res, '图片为空');
     const saved = imagegen.saveImages([{ buffer, mime: m[1] }]);
+    if(body.sourcePath&&isAllowed(body.sourcePath)) generationStore.link(body.sourcePath,saved.items[0].path);
     rememberImageBatch({ id: saved.id, items: saved.items, prompt: String(body.prompt || ''), kind: 'edit', createdAt: Date.now() });
     return ok(res, { id: saved.id, item: saved.items[0] });
   }
@@ -949,7 +960,9 @@ function rememberImageBatch(entry) {
     const body = await readBody(req);
     const src = path.resolve(String(body.path || ''));
     if (!fs.existsSync(src) || !fs.statSync(src).isFile()) return bad(res, '文件不存在');
+    if (!isAllowed(src)) return bad(res,'源文件不在素材目录内');
     const saved = library.saveAssetUpload(path.basename(src), fs.readFileSync(src), body.folder || '');
+    generationStore.link(src,saved.path);
     return ok(res, { rel: saved.rel, path: saved.path });
   }
 
@@ -1121,6 +1134,8 @@ function mediaPath(input) {
 
   if (method === 'POST' && pathname === '/api/jobs') {
     const body = await readBody(req);
+    body.userPrompt = String(body.prompt||'');
+    if (body.itemId) workbenchStore.store().get(body.itemId,body.projectId,'video');
     if (body.styleId && body.applyStyle !== false) {
       const stylePrefix = styles.promptFor(body.styleId, { layer: body.styleLayer || 'video', text: body.prompt });
       if (stylePrefix) body.prompt = stylePrefix + '\n\n' + String(body.prompt || '');
@@ -1370,7 +1385,7 @@ const server = http.createServer((req, res) => {
       try { res.end(); } catch { /* ignore */ }
       return;
     }
-    const status = err && err.status === 0 ? 502 : 400;
+    const status = err && err.status === 0 ? 502 : (Number(err?.status) >= 400 && Number(err?.status) <= 599 ? Number(err.status) : 400);
     bad(res, publicError(err), status);
   });
 });
