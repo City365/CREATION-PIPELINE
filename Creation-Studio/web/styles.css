@@ -2234,3 +2234,10 @@ body.is-pane-resizing * { user-select: none !important; }
 @media(max-width:900px){
   .slot-grid{grid-template-columns:repeat(9,86px)}
 }
+.create-table.is-video th:nth-child(5){width:78px}
+.create-table.is-video th:nth-child(6){width:110px}
+.create-table.is-video th:nth-child(7){width:auto}
+.create-table.is-video th:nth-child(8){width:60px}
+.create-table.is-image th:nth-child(5){width:78px}
+.create-table.is-image th:nth-child(6){width:auto}
+.create-table.is-image th:nth-child(7){width:60px}

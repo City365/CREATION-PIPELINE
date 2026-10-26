@@ -43,8 +43,6 @@ H3-Projects/<项目名-编号>/assets/
   "prefixPrompt": "电影感，35mm 胶片，冷色调",
   "duration": 10,
   "ratio": "16:9",
-  "resolution": "",
-  "count": null,
   "images": [
     {
       "path": ".../assets/分镜/镜头01/图一.png",
@@ -55,7 +53,6 @@ H3-Projects/<项目名-编号>/assets/
     }
   ],
   "slots": { "图一": { "...": "..." } },
-  "audios": [],
   "extra": {},
   "source": "shots.json",
   "importedAt": 1760000000000
@@ -71,7 +68,7 @@ H3-Projects/<项目名-编号>/assets/
 在 **任务管理 → 创建任务** 上传分镜 JSON / Excel 并解析成功后：
 
 1. 自动按每条分镜的标题创建 `assets/分镜/<标题>/`；
-2. 把解析出的提示词、时长、画幅、分辨率、张数、扩展字段写进 `shot.json`；
+2. 把分镜名称、视频提示词、视频画幅、视频时长、参考图说明写进 `shot.json`；
 3. 把参考图复制为图一 ~ 图九（最多 9 张），原图仍保留在原路径；
 4. 打开素材库 → 分镜即可看到新分镜和图片。
 

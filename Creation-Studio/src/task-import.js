@@ -3,10 +3,10 @@
  * 任务文件导入：只接受「固定格式」的 JSON 与 XLSX。
  *
  * JSON：
- *   { "version": 1, "items": [{ "title", "prompt", "duration", "ratio", "resolution", "count",
+ *   { "version": 1, "items": [{ "title", "prompt", "duration", "ratio",
  *                               "images": [{ "path", "note" }] }] }
- * XLSX（第一张表，表头必须依次为）：
- *   任务标题 | 提示词 | 参考图路径 | 参考图说明 | 时长（秒） | 画幅 | 分辨率 | 生成张数
+ * XLSX（第一张表，表头按列名识别）：
+ *   分镜名称 | 视频提示词 | 参考图（按顺序） | 参考图说明（按顺序） | 视频画幅 | 视频时长
  *
  * 参考图路径写在文件里（绝对路径，或相对素材库/上传目录）；多个用分号分隔，
  * 说明与路径一一对应。解析只做结构校验和文件存在性检查，渠道限制在创建时再校验。
@@ -18,21 +18,16 @@ const batch = require('./batch');
 
 const RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4'];
 const MAX_IMAGES = 9;
-const MAX_AUDIOS = 3;
 
-const HEADERS = ['任务标题', '提示词', '参考图路径', '参考图说明', '时长（秒）', '画幅', '分辨率', '生成张数', '参考音频路径', '参考音频说明', '视频前置提示词'];
+const HEADERS = ['分镜名称', '视频提示词', '参考图（按顺序）', '参考图说明（按顺序）', '视频画幅', '视频时长'];
 const HEADER_ALIAS = {
-  title: ['任务标题', '标题', '分镜', '分镜名'],
-  prompt: ['提示词', '描述', '内容', '任务详情'],
+  title: ['分镜名称', '任务标题', '标题', '分镜', '分镜名'],
+  prompt: ['视频提示词', '提示词', '描述', '内容', '任务详情'],
   prefixPrompt: ['视频前置提示词', '前置提示词', '前缀提示词'],
-  images: ['参考图路径', '参考图', '图片'],
-  notes: ['参考图说明', '图片说明', '素材说明'],
-  duration: ['时长（秒）', '时长(秒)', '时长'],
-  ratio: ['画幅', '比例', '画面比例'],
-  resolution: ['分辨率'],
-  count: ['生成张数', '张数'],
-  audios: ['参考音频路径', '音频', '参考音频'],
-  audioNotes: ['参考音频说明', '音频说明'],
+  images: ['参考图（按顺序）', '参考图路径', '参考图', '图片'],
+  notes: ['参考图说明（按顺序）', '参考图说明', '图片说明', '素材说明'],
+  duration: ['视频时长', '时长（秒）', '时长(秒)', '时长'],
+  ratio: ['视频画幅', '画幅', '比例', '画面比例'],
 };
 
 function normHeader(value) {
@@ -50,23 +45,20 @@ const JSON_TEMPLATE = {
   version: 1,
   说明: [
     '本文件只支持固定结构：顶层 items 数组，一条任务一个元素；单条任务也只放一行。',
+    '字段：分镜名称 title、视频提示词 prompt、参考图 images（按数组顺序对应图一到图九）、视频画幅 ratio、视频时长 duration。',
     '参考图写在 images 里：path 为绝对路径（或相对素材库的路径），note 说明这张图是什么。',
-    'duration / ratio / resolution / count 可留空，留空时使用创建页所选渠道的默认值。',
-    'prefixPrompt 是视频前置提示词（风格、画质等），生成时会拼在提示词前面，可留空。',
+    'ratio / duration 可留空，留空时使用创建页所选渠道的默认值。',
   ],
   items: [
     {
       title: '镜头 01',
       prompt: '雨夜的旧城街道，霓虹灯倒映在积水里，镜头从远处缓慢推近一名撑透明伞的少女，她回头看向镜头，电影感，浅景深。',
-      prefixPrompt: '电影感，35mm 胶片，冷色调，高动态范围。',
       images: [
         { path: 'D:/素材/ref-01.png', note: '女主正面' },
         { path: 'D:/素材/ref-02.png', note: '女主背影' },
       ],
       duration: 10,
       ratio: '16:9',
-      resolution: '',
-      count: 1,
     },
     {
       title: '镜头 02',
@@ -74,8 +66,6 @@ const JSON_TEMPLATE = {
       images: [],
       duration: 10,
       ratio: '16:9',
-      resolution: '',
-      count: 1,
     },
   ],
 };
@@ -86,25 +76,20 @@ function jsonTemplate() {
 
 const XLSX_ROWS = [
   HEADERS,
-  ['镜头 01', '雨夜的旧城街道，霓虹灯倒映在积水里，镜头缓慢推近一名撑透明伞的少女。', 'D:/素材/ref-01.png;D:/素材/ref-02.png', '女主正面;女主背影', '10', '16:9', '', '1'],
-  ['镜头 02', '清晨的咖啡馆，窗边一束光落在桌面的手账上，镜头缓慢横移。', '', '', '10', '16:9', '', '1'],
+  ['镜头 01', '雨夜的旧城街道，霓虹灯倒映在积水里，镜头缓慢推近一名撑透明伞的少女。', 'D:/素材/ref-01.png;D:/素材/ref-02.png', '女主正面;女主背影', '16:9', '10'],
+  ['镜头 02', '清晨的咖啡馆，窗边一束光落在桌面的手账上，镜头缓慢横移。', '', '', '16:9', '10'],
 ];
 const XLSX_HELP = [
   ['列名', '是否必填', '说明'],
-  ['任务标题', '否', '留空时用提示词开头代替；同时会作为任务列表里的名称'],
-  ['提示词', '是', '一段话描述画面、主体动作、镜头与光线'],
-  ['参考图路径', '否', '绝对路径；也可填相对素材库的文件名。多个用英文分号 ; 分隔'],
-  ['参考图说明', '否', '与参考图路径一一对应，说明这张图是什么（角色 / 首帧 / 场景）'],
-  ['时长（秒）', '否', '1–15 的整数；留空使用渠道默认值。图像任务忽略本列'],
-  ['画幅', '否', '16:9 / 9:16 / 1:1 / 4:3 / 3:4；留空使用渠道默认值'],
-  ['分辨率', '否', '渠道支持的分辨率，如 768p竖；留空使用渠道默认值'],
-  ['生成张数', '否', '图像任务一次生成几张，1–4；视频忽略此列'],
-  ['参考音频路径', '否', '只给接收音频的视频渠道用，多个用分号 ; 分隔，最多 3 段'],
-  ['参考音频说明', '否', '与音频路径一一对应，例如「女主音色」'],
-  ['视频前置提示词', '否', '风格/画质等前置描述，生成时会拼在提示词前面'],
+  ['分镜名称', '否', '这一镜的名字，会作为任务列表名称和素材库分镜目录名'],
+  ['视频提示词', '是', '一段话描述画面、主体动作、镜头与光线'],
+  ['参考图（按顺序）', '否', '绝对路径，或相对素材库的文件名；多个用英文分号 ; 分隔，顺序就是图一到图九'],
+  ['参考图说明（按顺序）', '否', '与参考图一一对应，说明这张图是什么（角色 / 首帧 / 场景）'],
+  ['视频画幅', '否', '16:9 / 9:16 / 1:1 / 4:3 / 3:4；留空使用渠道默认值'],
+  ['视频时长', '否', '1–15 的整数秒；留空使用渠道默认值'],
   [],
   ['注意', '', '表头按列名识别，顺序可以调整；多出来的列会原样保留并在页面上提示'],
-  ['', '', '参考图/音频路径不存在时，解析会在页面上标出具体行号，不会静默忽略'],
+  ['', '', '参考图路径不存在时，解析会在页面上标出具体行号，不会静默忽略'],
 ];
 
 function xlsxTemplate() {
@@ -392,23 +377,6 @@ function normalizeImages(paths, notes, line, errors) {
   return images;
 }
 
-function normalizeAudios(paths, notes, line, errors) {
-  const audios = [];
-  const list = Array.isArray(paths) ? paths : [];
-  const noteList = Array.isArray(notes) ? notes : [];
-  list.forEach((raw, index) => {
-    const original = String(raw || '').trim();
-    if (!original) return;
-    const resolved = normalizePath(original);
-    let exists = false;
-    try { exists = !!resolved && fs.existsSync(resolved) && fs.statSync(resolved).isFile(); } catch { exists = false; }
-    if (!exists) errors.push(`第 ${line} 行 参考音频不存在：${original}`);
-    audios.push({ path: resolved, name: path.basename(resolved || original), note: String(noteList[index] || '').trim(), exists });
-  });
-  if (audios.length > MAX_AUDIOS) errors.push(`第 ${line} 行 参考音频超过 ${MAX_AUDIOS} 段`);
-  return audios;
-}
-
 function normalizeItem(raw, line, errors, warnings) {
   const title = String(raw.title == null ? '' : raw.title).trim().slice(0, 120);
   const prompt = String(raw.prompt == null ? '' : raw.prompt).trim();
@@ -424,18 +392,14 @@ function normalizeItem(raw, line, errors, warnings) {
     ratio = String(raw.ratio).trim();
     if (!RATIOS.includes(ratio)) errors.push(`第 ${line} 行 画幅只能是 ${RATIOS.join(' / ')}`);
   }
-  let count = null;
-  if (raw.count != null && String(raw.count).trim() !== '') {
-    count = Number(raw.count);
-    if (!Number.isInteger(count) || count < 1 || count > 4) { errors.push(`第 ${line} 行 生成张数必须是 1–4 的整数`); count = null; }
-  }
-  const resolution = raw.resolution == null ? '' : String(raw.resolution).trim();
   const prefixPrompt = raw.prefixPrompt == null ? '' : String(raw.prefixPrompt).trim().slice(0, 4000);
   const images = normalizeImages(raw.images || [], raw.notes || [], line, errors);
-  const audios = normalizeAudios(raw.audios || [], raw.audioNotes || [], line, errors);
   const extra = raw.extra && typeof raw.extra === 'object' ? raw.extra : {};
+  for (const key of Object.keys(extra)) {
+    if (['resolution', 'count', 'audios', 'audio', '参考音频', '参考音频路径', '参考音频说明', '分辨率', '生成张数', '张数'].includes(key)) delete extra[key];
+  }
   void warnings;
-  return { line, title, prompt, prefixPrompt, images, audios, duration, ratio, resolution, count, extra };
+  return { line, title, prompt, prefixPrompt, images, duration, ratio, extra };
 }
 
 const JSON_FIELD_ALIAS = {
@@ -444,12 +408,10 @@ const JSON_FIELD_ALIAS = {
   prefixPrompt: ['prefixPrompt', 'prefix', '视频前置提示词', '前置提示词'],
   duration: ['duration', 'seconds', '时长'],
   ratio: ['ratio', 'aspectRatio', 'aspect', '画幅', '比例'],
-  resolution: ['resolution', '分辨率'],
-  count: ['count', '张数', '生成张数'],
   images: ['images', 'refs', '参考图'],
-  audios: ['audios', 'audio', '参考音频'],
 };
 const JSON_KNOWN_KEYS = new Set(Object.values(JSON_FIELD_ALIAS).flat());
+const REMOVED_FIELDS = new Set(['resolution', 'count', 'audios', 'audio', '参考音频', '参考音频路径', '参考音频说明', '分辨率', '生成张数', '张数']);
 
 function pickJsonField(entry, field) {
   for (const key of JSON_FIELD_ALIAS[field]) {
@@ -472,20 +434,16 @@ function parseJson(buffer) {
     const line = index + 1;
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
       errors.push(`第 ${line} 条 item 必须是对象`);
-      return { line, title: '', prompt: '', images: [], audios: [], duration: null, ratio: null, resolution: '', count: null, extra: {} };
+      return { line, title: '', prompt: '', images: [], duration: null, ratio: null, extra: {} };
     }
     const rawImages = pickJsonField(entry, 'images');
     const imageList = Array.isArray(rawImages) ? rawImages : [];
     const paths = imageList.map((image) => (typeof image === 'string' ? image : image && image.path));
     const notes = imageList.map((image) => (typeof image === 'string' ? '' : (image && (image.note || image.subject)) || ''));
-    const rawAudios = pickJsonField(entry, 'audios');
-    const audioList = Array.isArray(rawAudios) ? rawAudios : [];
-    const audioPaths = audioList.map((audio) => (typeof audio === 'string' ? audio : audio && audio.path));
-    const audioNotes = audioList.map((audio) => (typeof audio === 'string' ? '' : (audio && (audio.note || audio.subject)) || ''));
     const extra = {};
     if (entry.extra && typeof entry.extra === 'object' && !Array.isArray(entry.extra)) Object.assign(extra, entry.extra);
     for (const [key, value] of Object.entries(entry)) {
-      if (key === 'extra' || JSON_KNOWN_KEYS.has(key)) continue;
+      if (key === 'extra' || JSON_KNOWN_KEYS.has(key) || REMOVED_FIELDS.has(key)) continue;
       if (value === undefined || value === null || String(value).trim() === '') continue;
       extra[key] = value;
     }
@@ -496,10 +454,7 @@ function parseJson(buffer) {
       prefixPrompt: pickJsonField(entry, 'prefixPrompt'),
       duration: pickJsonField(entry, 'duration'),
       ratio: pickJsonField(entry, 'ratio'),
-      resolution: pickJsonField(entry, 'resolution'),
-      count: pickJsonField(entry, 'count'),
       images: paths, notes,
-      audios: audioPaths, audioNotes,
       extra,
     }, line, errors, warnings);
   });
@@ -522,6 +477,7 @@ function parseXlsx(buffer) {
   const extraHeaders = [];
   headerCells.forEach((cell, index) => {
     if (!cell) return;
+    if (REMOVED_FIELDS.has(cell)) { warnings.push(`已忽略字段：${cell}`); return; }
     const field = HEADER_LOOKUP.get(normHeader(cell));
     if (field) {
       if (mapping[field] == null) mapping[field] = index;
@@ -548,12 +504,8 @@ function parseXlsx(buffer) {
       prefixPrompt: cell('prefixPrompt'),
       images: splitList(cell('images')),
       notes: splitList(cell('notes')),
-      audios: splitList(cell('audios')),
-      audioNotes: splitList(cell('audioNotes')),
       duration: cell('duration'),
       ratio: cell('ratio'),
-      resolution: cell('resolution'),
-      count: cell('count'),
       extra,
     }, line, errors, warnings);
   });
@@ -570,14 +522,13 @@ function parseFile({ name = '', data } = {}) {
   else if (lower.endsWith('.xlsx')) parsed = parseXlsx(buffer);
   else throw new Error('只支持 .json 或 .xlsx；.xls、.csv、一行一条的文本都不接受');
   const images = parsed.items.reduce((sum, item) => sum + item.images.length, 0);
-  const audios = parsed.items.reduce((sum, item) => sum + (item.audios || []).length, 0);
   return {
     name: String(name || '').slice(0, 200),
     format: parsed.format,
     items: parsed.items,
     errors: parsed.errors,
     warnings: parsed.warnings,
-    stats: { items: parsed.items.length, images, audios, ok: parsed.errors.length === 0 },
+    stats: { items: parsed.items.length, images, ok: parsed.errors.length === 0 },
   };
 }
 

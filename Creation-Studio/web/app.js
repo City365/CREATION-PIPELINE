@@ -2247,7 +2247,6 @@ function renderSlotCard(shot, slot) {
 function renderShotFacts(shot) {
   const json = shot.json || {};
   const images = Array.isArray(json.images) ? json.images : [];
-  const audios = Array.isArray(json.audios) ? json.audios : [];
   const extras = Object.entries(json.extra || {}).filter(([, value]) => String(value).trim() !== '');
   const notes = images.filter((image) => image.note).map((image) => `${image.slot || '图'} ${image.note}`);
   const facts = [
@@ -2255,11 +2254,8 @@ function renderShotFacts(shot) {
     ['视频提示词', json.prompt || '—', true],
     ['视频前置提示词', json.prefixPrompt || '无', true],
     ['参考图', `${shot.count} / 9`],
-    ['时长', json.duration ? `${json.duration} 秒` : '渠道默认'],
-    ['画面比例', json.ratio || '渠道默认'],
-    ['分辨率', json.resolution || '渠道默认'],
-    ['生成张数', json.count ? String(json.count) : '—'],
-    ['参考音频', audios.length ? `${audios.length} 段` : '无'],
+    ['视频画幅', json.ratio || '渠道默认'],
+    ['视频时长', json.duration ? `${json.duration} 秒` : '渠道默认'],
     ['来源文件', json.source || '手工创建'],
     ['导入时间', json.importedAt ? new Date(json.importedAt).toLocaleString('zh-CN', { hour12: false }) : '—'],
   ];
