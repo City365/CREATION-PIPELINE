@@ -32,8 +32,8 @@ function loadState() {
   state.jobs = Array.isArray(data.jobs) ? data.jobs : [];
   for (const job of state.jobs) {
     if (job.status === 'running' || job.status === 'queued') {
-      job.status = 'failed';
-      job.stage = '已中断';
+      job.status = 'interrupted';
+      job.stage = '已中断（待对账）';
       job.error = job.provider === 'manager' && job.remotePromptId ? '服务重启，任务已中断；可点「继续查询／下载」恢复原任务' : '服务重启，任务已中断；可点「重试」重新提交';
       job.finishedAt = Date.now();
       job.progress = 0;
@@ -272,6 +272,16 @@ function deriveExcerpt(prompt) {
   return body.replace(/\[Shot\s+\d+\]/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160);
 }
 
+function reconcile(id, patch = {}) {
+  const job = get(id);
+  if (!job) return null;
+  Object.assign(job, patch, { updatedAt: Date.now() });
+  log(job, 'info', '重启对账：' + (patch.stage || patch.status || ''));
+  touch(job);
+  saveState();
+  return job;
+}
+
 function cancel(id) {
   const job = get(id);
   if (!job) throw new Error('任务不存在');
@@ -305,12 +315,12 @@ function cancel(id) {
 async function resume(id) {
   const job = get(id);
   if (!job || job.provider !== 'manager' || !job.remotePromptId) throw new Error('任务没有可继续的管理器编号');
-  if (!['failed', 'canceled'].includes(job.status)) throw new Error('任务尚未结束或已完成');
+  if (!['failed', 'canceled', 'interrupted'].includes(job.status)) throw new Error('任务尚未结束或已完成');
   const channel = channels.get('video', job.channelId);
   if (!channel) throw new Error('管理器渠道已删除');
   // Restore the existing remote task; never call the generation submission endpoint.
   await managerVideo.resume(channel, job.remotePromptId);
-  if (!['failed', 'canceled'].includes(job.status)) return job;
+  if (!['failed', 'canceled', 'interrupted'].includes(job.status)) return job;
   job.resumeRemote = true; job.status = 'queued'; job.stage = '继续查询原任务';
   job.error = null; job.finishedAt = null; job.held = false;
   log(job, 'info', '继续原管理器任务 ' + job.remotePromptId + '，不重新生成');
@@ -697,5 +707,6 @@ module.exports = {
   pump,
   slotStats,
   readLog,
+  reconcile,
   flushState,
 };

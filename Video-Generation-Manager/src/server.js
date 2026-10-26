@@ -256,11 +256,18 @@ async function createService(options={}) {
           const input=await body(req);if(input.platform==='fixture' && !options.testBaseURL)throw new Error('测试平台未启用');
           send(res,201,queue.submit(input));return;
         }
-        const taskRoute=pathname.match(/^\/api\/tasks\/([0-9a-f-]{36})(?:\/(cancel|file|resume|diagnostics|play|open))?$/i);
+        const taskRoute=pathname.match(/^\/api\/tasks\/([0-9a-f-]{36})(?:\/(cancel|file|resume|diagnostics|play|open|stop))?$/i);
         if(taskRoute){
           const t=queue.get(taskRoute[1]);
           if(req.method==='GET'&&taskRoute[2]==='diagnostics'){send(res,200,await pool.diagnoseVideo(store.get(t.accountId),t.submittedPrompt||t.prompt,url=>settings.dispatcher(url)));return;}
-          if(req.method==='GET' && !taskRoute[2]){send(res,200,queue.public(t));return;}
+          if(req.method==='GET' && !taskRoute[2]){
+            const pub=queue.public(t);
+            const remoteState=pub.status==='completed'?'done':pub.status==='failed'?'failed':pub.status==='cancelled'?'canceled':['queued','starting','running','uploading','submitting','generating','downloading','paused'].includes(pub.status)?'running':'unknown';
+            send(res,200,{...pub,remoteState,cancelCapability:'local'});return;
+          }
+          if(req.method==='POST' && taskRoute[2]==='stop'){
+            send(res,501,{error:'当前平台不支持远端停止（取消能力待真机取证）',code:'CAPABILITY_UNSUPPORTED'});return;
+          }
           if(req.method==='POST' && taskRoute[2]==='resume'){
             const input=await body(req);
             if(!t.conversationURL&&input.conversationURL){

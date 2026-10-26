@@ -47,7 +47,7 @@ const Events = (() => {
       const progress = s.total ? Math.round(((s.done || 0) / s.total) * 100) : 0;
       return `<tr>
         <td>${badge(event.status)}</td>
-        <td><div class="evt-title">${esc(event.title)}</div><div class="hint">${esc(event.id)}</div></td>
+        <td><div class="evt-title">${esc(event.title)}</div><div class="hint">${esc(event.id)}${event.status === 'interrupted' ? ' · 待对账' : ''}</div></td>
         <td>${esc(SOURCE[event.source] || event.source)}</td>
         <td><div class="evt-progress"><span style="width:${progress}%"></span></div><div class="hint">${s.done || 0}/${s.total || 0} 完成${s.failed ? ' · ' + s.failed + ' 失败' : ''}${s.running ? ' · ' + s.running + ' 执行中' : ''}</div></td>
         <td class="tnum">${duration(event)}</td>
@@ -111,7 +111,7 @@ const Events = (() => {
       <td>${badge(item.status === 'success' ? 'completed' : item.status)}</td>
       <td>${esc(item.title || item.refId)}<div class="hint">${esc(item.refType)} · ${esc(item.refId)}</div></td>
       <td class="hint">${esc(item.error || '—')}</td>
-      <td class="evt-actions"><button class="btn sm ghost" data-event-item-log="${esc(item.id)}">日志</button>${['failed','canceled','skipped','unknown'].includes(item.status) ? `<button class="btn sm" data-event-item-action="retry" data-item="${esc(item.id)}">重试</button>` : ''}${['queued','paused'].includes(item.status) ? `<button class="btn sm ghost" data-event-item-action="skip" data-item="${esc(item.id)}">跳过</button>` : ''}</td>
+      <td class="evt-actions"><button class="btn sm ghost" data-event-item-log="${esc(item.id)}">日志</button><button class="btn sm ghost" data-event-item-probe="${esc(item.refId)}" data-ref-type="${esc(item.refType)}">探针</button>${['failed','canceled','skipped','unknown'].includes(item.status) ? `<button class="btn sm" data-event-item-action="retry" data-item="${esc(item.id)}">重试</button>` : ''}${['queued','paused'].includes(item.status) ? `<button class="btn sm ghost" data-event-item-action="skip" data-item="${esc(item.id)}">跳过</button>` : ''}</td>
     </tr>`).join('');
     const panel = openModal(`<div class="modal-head"><h2>${esc(event.title)}</h2><button class="btn" data-close="1">关闭</button></div>
       <div class="modal-body">
@@ -135,6 +135,16 @@ const Events = (() => {
       <div class="modal-foot"><span class="grow"></span><button class="btn" data-close="1">关闭</button></div>`);
     panel.classList.add('modal-wide');
     const logBox = document.querySelector('#evt-item-log');
+    document.querySelectorAll('[data-event-item-probe]').forEach((button) => {
+      button.onclick = async () => {
+        try {
+          const result = await api('/api/tasks/' + encodeURIComponent(button.dataset.eventItemProbe) + '/probe', { method: 'POST', body: {} });
+          logBox.innerHTML = '<h3 style="margin:12px 0 6px">探针结果</h3><pre class="evt-log">' + esc(JSON.stringify(result, null, 2)) + '</pre>';
+        } catch (err) {
+          toast(err.message, true);
+        }
+      };
+    });
     document.querySelectorAll('[data-event-item-action]').forEach((button) => {
       button.onclick = () => runItemAction(button.dataset.eventItemAction, button.dataset.item).catch((err) => toast(err.message, true));
     });

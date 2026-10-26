@@ -67,7 +67,7 @@ function itemStatus(source) {
   if (status === 'canceled' || status === 'cancelled') return 'canceled';
   if (status === 'running') return 'running';
   if (status === 'paused' || status === 'held') return 'paused';
-  if (status === 'interrupted') return 'failed';
+  if (status === 'interrupted') return 'unknown';
   if (status === 'queued') return 'queued';
   return 'queued';
 }
@@ -93,6 +93,7 @@ function hydrate(event, context = {}) {
     return {
       ...item,
       status: itemStatus(source.status),
+      reconcile: source.status === 'interrupted',
       error: source.error || null,
       progress: Number(source.progress || 0),
       startedAt: source.startedAt || null,
@@ -124,6 +125,7 @@ function hydrate(event, context = {}) {
     if (stats.done === stats.total) status = stats.canceled === stats.total ? 'canceled' : 'completed';
     else if (stats.failed === 0 && stats.canceled > 0) status = 'canceled';
     else if (stats.failed > 0 && stats.done > 0) status = 'partial';
+    else if (stats.unknown > 0 && stats.failed === 0 && items.some((item) => item.reconcile)) status = 'interrupted';
     else status = 'failed';
   }
   if (event.canceled && !['running', 'queued'].includes(status)) status = 'canceled';

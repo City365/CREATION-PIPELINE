@@ -16,6 +16,7 @@ const styles = require('./styles');
 const jobs = require('./jobs');
 const batch = require('./batch');
 const events = require('./events');
+const probe = require('./probe');
 const channels = require('./channels');
 const imagegen = require('./imagegen');
 const imageTasks = require('./image-tasks');
@@ -1143,6 +1144,23 @@ function mediaPath(input) {
     return ok(res, { jobs: created.map((j) => ({ id: j.id })), eventId, warnings: check.warnings });
   }
 
+  if (method === 'GET' && pathname === '/api/capabilities') {
+    return ok(res, probe.capabilities());
+  }
+
+  const taskProbe = /^\/api\/tasks\/([^/]+)\/probe$/.exec(pathname);
+  if (method === 'POST' && taskProbe) {
+    const id = taskProbe[1];
+    const job = jobs.list().find((item) => item.id === id);
+    if (job) return ok(res, await probe.probeJob(job));
+    try {
+      const worker = require('./image-tasks').tasks();
+      return ok(res, probe.probeImageTask(worker.get(id)));
+    } catch {
+      const missing = new Error('任务不存在'); missing.status = 404; throw missing;
+    }
+  }
+
   if (method === 'GET' && pathname === '/api/events') {
     return ok(res, events.list({ status: url.searchParams.get('status') || '', source: url.searchParams.get('source') || '', limit: url.searchParams.get('limit') }));
   }
@@ -1433,6 +1451,7 @@ function start() {
   internalAuth.token();
   config.storage();
   jobs.loadState();
+  events.start();
   imageTasks.tasks().initialize();
   imageTasks.tasks().pump();
   const port = Number(process.env.H3_PORT || cfg.port || 17821);
@@ -1441,6 +1460,19 @@ function start() {
     console.log(`H3 Studio → ${url}`);
     console.log(`数据目录 ${config.DATA}`);
     jobs.pump();
+    // 重启对账：能确认的才改状态，确认不了就保持“待对账”
+    setImmediate(async () => {
+      try {
+        for (const job of jobs.list()) {
+          if (job.status !== 'interrupted') continue;
+          const result = await probe.probeJob(job);
+          if (result.remote === 'done') jobs.reconcile(job.id, { status: 'failed', stage: '平台已完成（待继续查询）', error: '重启后探针发现平台已完成，可点「继续查询/下载」取回原任务' });
+          else if (result.remote === 'failed') jobs.reconcile(job.id, { status: 'failed', stage: '平台失败', error: '重启后探针确认平台任务失败：' + String(result.evidence && result.evidence.detail || '').slice(0, 200) });
+          else if (result.remote === 'canceled') jobs.reconcile(job.id, { status: 'canceled', stage: '平台已取消' });
+          else jobs.reconcile(job.id, { stage: result.remote === 'running' ? '重启待对账：平台仍在生成' : '重启待对账：无法确认平台状态' });
+        }
+      } catch { /* 对账失败不影响启动 */ }
+    });
   });
   server.on('error', (err) => {
     if (err && err.code === 'EADDRINUSE') {

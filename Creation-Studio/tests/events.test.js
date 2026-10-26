@@ -75,6 +75,14 @@ test('没有条目的事件保持 draft，不会误判完成', () => {
   assert.equal(result.stats.total, 0);
 });
 
+test('重启中断的任务计为 unknown，事件为 interrupted', () => {
+  const jobMap = new Map([['a', job('a', 'interrupted')]]);
+  const result = events.hydrate(fakeEvent([{ id: 'i1', refType: 'job', refId: 'a', status: 'queued' }]), { jobMap, worker: null });
+  assert.equal(result.items[0].status, 'unknown');
+  assert.equal(result.status, 'interrupted');
+  assert.equal(result.stats.unknown, 1);
+});
+
 test('创建后可查询，存在临时数据目录', () => {
   const event = events.create({ title: '测试事件', source: 'batch', items: [{ prompt: 'p1' }] });
   assert.ok(event.id.startsWith('evt_'));

@@ -2000,7 +2000,7 @@ async function generate() {
 
 /* ------------------------------------------------------------------ jobs */
 
-const STATUS_LABEL = { queued: '排队', running: '生成中', success: '完成', failed: '失败', canceled: '已取消' };
+const STATUS_LABEL = { queued: '排队', running: '生成中', success: '完成', failed: '失败', canceled: '已取消', interrupted: '已中断' };
 
 function jobStatusBadge(job) {
   return `<span class="badge ${job.status === 'success' ? 'ok' : job.status === 'failed' ? 'bad' : job.status === 'running' ? 'info' : ''}">${STATUS_LABEL[job.status] || job.status}</span>`;
