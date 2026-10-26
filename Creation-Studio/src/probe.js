@@ -8,7 +8,7 @@ const { httpJson } = require('./util');
 
 const CAPABILITIES = [
   { id: 'local-queue', provider: 'local', kind: 'video', label: '本地队列（未提交）', cancel: 'remote', probe: 'local', billing: 'on-submit', note: '提交前可直接取消，不计费' },
-  { id: 'doubao-video', provider: 'manager', platform: 'doubao', kind: 'video', label: '豆包视频（管理器）', cancel: 'local', probe: 'manager', billing: 'on-submit', note: '页面停止控件待真机取证，取证通过后升级为 remote' },
+  { id: 'doubao-video', provider: 'manager', platform: 'doubao', kind: 'video', label: '豆包视频（管理器）', cancel: 'local', probe: 'manager', billing: 'on-submit', note: '2026-10-26 真机取证：生成全程 44 次控件快照无停止/取消入口，保持 local', evidence: 'docs/doubao-stop-control-evidence.md' },
   { id: 'gemini-video', provider: 'manager', platform: 'gemini', kind: 'video', label: 'Gemini 视频（管理器）', cancel: 'local', probe: 'manager', billing: 'on-submit', note: '已提交不可撤回' },
   { id: 'openai-images', provider: 'openai-images', kind: 'image', label: '图像 API', cancel: 'none', probe: 'local', billing: 'on-submit', note: '同步请求，取消只丢弃结果' },
   { id: 'gemini-image', provider: 'gemini', kind: 'image', label: 'Gemini 生图', cancel: 'none', probe: 'local', billing: 'on-submit', note: '同步请求，取消只丢弃结果' },
