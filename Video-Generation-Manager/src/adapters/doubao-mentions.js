@@ -27,8 +27,13 @@ async function bindReferences(page,editor,text,files,signal){
   await editor.press('Control+End');
   if(part.text!==undefined){await page.keyboard.insertText(part.text);continue;}
   await page.keyboard.type('@');
+  // 豆包只滚出前几张图的候选；第 6 张起必须先输入图片名，候选才会出现。
+  // 统一输入不带扩展名的文件名，前 5 张也走同一条路径，避免两套行为。
+  const query=part.name.replace(/\.[^.]+$/,'')||part.name;
+  await page.keyboard.type(query);
   const option=page.getByRole('option').filter({hasText:part.name});
-  await option.first().waitFor({state:'visible',timeout:10000});
+  try { await option.first().waitFor({state:'visible',timeout:10000}); }
+  catch { throw new Error('豆包素材候选未出现：'+part.name+'（已尝试输入 @'+query+'）'); }
   if(await option.count()!==1)throw new Error('豆包素材候选不唯一：'+part.name);
   await option.click();
   const nodes=await editor.locator('.node-inputEngineMention').evaluateAll(es=>es.map(e=>({name:e.textContent.trim(),src:e.querySelector('img')?.src||''})));
