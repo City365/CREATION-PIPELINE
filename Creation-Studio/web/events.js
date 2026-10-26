@@ -122,22 +122,26 @@ const Events = (() => {
     return list.map((c) => `<option value="${esc(c.id)}"${c.id === draft.channel ? ' selected' : ''}>${esc(c.name)}</option>`).join('');
   }
 
-  function channelHint(draft) {
-    if (draft.kind === 'image') return '图像渠道在 设置 → 图片生成 维护；文件里的画幅、生成张数生效，时长与分辨率忽略。';
+  /** 渠道能力拆成「一句话来源 + 一排标签」，避免长句把表单撑得高低不一。 */
+  function channelInfo(draft) {
+    if (draft.kind === 'image') {
+      return {
+        summary: '图像渠道在 设置 → 图片生成 维护',
+        caps: ['画幅 4 种', '生成张数 1–4', '时长 / 分辨率忽略'],
+      };
+    }
     const workflow = workflowFor(draft.channel);
-    if (!workflow) return '还没有可用的视频渠道，请先到 设置 → 视频生成 添加一条。';
-    const bits = [];
-    if (workflow.providerLabel || workflow.provider) bits.push(String(workflow.providerLabel || workflow.provider));
+    if (!workflow) return { summary: '还没有可用的视频渠道，请先到 设置 → 视频生成 添加一条', caps: [] };
+    const caps = [];
     const options = workflow.durationOptions || [];
-    if (options.length > 1) bits.push(`可跑 ${options[0]}–${options[options.length - 1]} 秒`);
-    else if (options.length === 1) bits.push(`固定 ${options[0]} 秒`);
-    if (workflow.sizeMode === 'ratio' && (workflow.ratios || []).length) bits.push('画幅 ' + workflow.ratios.join(' / '));
-    if (workflow.sizeMode === 'resolution' && (workflow.resolutions || []).length) bits.push(`分辨率 ${workflow.resolutions.length} 档`);
-    if (workflow.images) bits.push(workflow.optionalImages ? `参考图可选，最多 ${workflow.images} 张` : `需要参考图，最多 ${workflow.images} 张`);
-    else bits.push('不需要参考图');
-    if (workflow.audios) bits.push(`音频最多 ${workflow.audios} 段`);
-    bits.push('文件里留空的时长 / 画幅 / 分辨率用这里的默认值');
-    return bits.join(' · ');
+    if (options.length > 1) caps.push(`时长 ${options[0]}–${options[options.length - 1]} 秒`);
+    else if (options.length === 1) caps.push(`时长固定 ${options[0]} 秒`);
+    if (workflow.sizeMode === 'ratio' && (workflow.ratios || []).length) caps.push(`画幅 ${workflow.ratios.length} 种`);
+    if (workflow.sizeMode === 'resolution' && (workflow.resolutions || []).length) caps.push(`分辨率 ${workflow.resolutions.length} 档`);
+    if (workflow.images) caps.push(workflow.optionalImages ? `参考图 ≤${workflow.images} 张（可选）` : `参考图 ≤${workflow.images} 张`);
+    else caps.push('不需要参考图');
+    if (workflow.audios) caps.push(`音频 ≤${workflow.audios} 段`);
+    return { summary: String(workflow.providerLabel || workflow.provider || '已选渠道'), caps };
   }
 
   function fileLabel(file) {
@@ -206,6 +210,7 @@ const Events = (() => {
     const kind = draft.kind;
     const file = draft.file;
     const busy = !!draft.busy;
+    const channel = channelInfo(draft);
     return `<div class="create-page">
       <div class="task-panel-head">
         <div><h2>创建${kind === 'image' ? '图像' : '视频'}任务</h2><p>任务内容全部来自上传的文件：先下载模板，按固定列填好再上传解析。</p></div>
@@ -214,9 +219,11 @@ const Events = (() => {
       <form class="create-form" id="task-create-form" autocomplete="off">
         <section class="create-section">
           <div class="create-section-head"><span class="create-step">1</span><div><h3>任务与渠道</h3><p>任务名称可以留空，列表里会用首条提示词代替；渠道决定用哪条线路执行。</p></div></div>
-          <div class="create-grid">
-            <label class="create-field"><span>任务名称<em>可选</em></span><input class="input" id="tc-title" value="${esc(draft.title)}" placeholder="例如：第 3 集 · 雨夜街头"></label>
-            <label class="create-field"><span>${kind === 'video' ? '视频渠道' : '图像渠道'}</span><select class="select" id="tc-channel">${channelOptions(draft)}</select><small>${esc(channelHint(draft))}</small></label>
+          <div class="create-grid create-grid-top">
+            <label class="create-field"><span>任务名称<em>可选</em></span><input class="input" id="tc-title" value="${esc(draft.title)}" placeholder="例如：第 3 集 · 雨夜街头"><small>留空时用首条提示词代替</small></label>
+            <label class="create-field"><span>${kind === 'video' ? '视频渠道' : '图像渠道'}</span><select class="select" id="tc-channel">${channelOptions(draft)}</select><small>${esc(channel.summary)}</small></label>
+          </div>
+          ${channel.caps.length ? `<div class="create-caps">${channel.caps.map((cap) => `<span class="create-cap">${esc(cap)}</span>`).join('')}<span class="create-cap is-note">文件里留空的参数用这里的默认值</span></div>` : ''}
           </div>
         </section>
         <section class="create-section">
