@@ -1743,14 +1743,15 @@ function planMediaShotNames(projectId) {
       const oldPath = path.resolve(row.item.path);
       const dir = path.dirname(oldPath);
       const ext = path.extname(row.item.name) || '.mp4';
-      const newName = '分镜 ' + (position + 1) + ext;
+      const shotTitle = (row.eventItem && row.eventItem.title) || (row.job && row.job.title) || (row.item && row.item.shotLabel) || ('镜头 ' + (position + 1));
+      const newName = sanitizeFilename(shotTitle, '镜头 ' + (position + 1)) + ext;
       const newPath = path.join(dir, newName);
       if (keyOf(newPath) === keyOf(oldPath)) return;
       plan.push({
         oldPath, newPath, oldName: path.basename(oldPath), newName,
         jobId: row.job ? row.job.id : '',
         taskTitle: group.taskTitle,
-        shotTitle: (row.eventItem && row.eventItem.title) || (row.job && row.job.title) || '',
+        shotTitle,
       });
     });
   }

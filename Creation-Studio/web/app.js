@@ -2597,7 +2597,7 @@ function renderMedia() {
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push({ item, index });
   });
-  groups.forEach((rows) => rows.sort((a, b) => (shotNumber(a.item.outputLabel || a.item.shotLabel) - shotNumber(b.item.outputLabel || b.item.shotLabel)) || (b.item.mtime - a.item.mtime)));
+  groups.forEach((rows) => rows.sort((a, b) => (shotNumber(a.item.shotLabel || a.item.outputLabel) - shotNumber(b.item.shotLabel || b.item.outputLabel)) || (b.item.mtime - a.item.mtime)));
   const projectLabel = data.projectName || data.projectId || '未选择项目';
   const projects = state.projects || [];
   return `
@@ -2606,7 +2606,7 @@ function renderMedia() {
       ${projects.length ? `<label>项目 <select class="select" id="media-project">${projects.map((project) => `<option value="${esc(project.id)}" ${project.id === data.projectId ? 'selected' : ''}>${esc(project.name)}</option>`).join('')}</select></label>` : `<span class="media-project">项目：${esc(projectLabel)}</span>`}
       <span class="mono">${esc(data.root)}</span></p></div>
     <div class="page-actions">
-      ${kind === 'video' ? '<button class="btn" data-act="rename-media-shots">按分镜重命名</button>' : ''}
+      ${kind === 'video' ? '<button class="btn" data-act="rename-media-shots">按镜头名重命名</button>' : ''}
       <button class="btn" data-act="open-media-root">打开目录</button>
       <button class="btn" data-act="refresh-media">刷新</button>
       <button class="btn primary" data-act="media-edit">剪辑 / 工程</button>
@@ -2622,8 +2622,8 @@ function renderMedia() {
       <div class="media-card" data-media="${index}">
         <div class="media-thumb ${item.kind === 'video' ? 'is-video' : ''}">${item.kind === 'image' ? `<img src="${item.url}" loading="lazy" />` : `<video src="${item.url}#t=0.5" preload="metadata" muted></video>`}</div>
         <div class="media-meta">
-          <span class="name">${esc(item.outputLabel || item.shotLabel || item.name)}</span>
-          <span class="sub">${item.shotLabel && item.shotLabel !== item.outputLabel ? esc(item.shotLabel) + ' · ' : ''}${esc(item.name)} · ${esc(item.day)} · ${fmtBytes(item.bytes)}</span>
+          <span class="name">${esc(item.shotLabel || item.outputLabel || item.name)}</span>
+          <span class="sub">${item.name.replace(/\.[^.]+$/, '') !== (item.shotLabel || item.outputLabel) ? esc(item.name) + ' · ' : ''}${esc(item.day)} · ${fmtBytes(item.bytes)}</span>
         </div>
       </div>`).join('')}</div>
   </section>`).join('') : `<div class="card"><div class="empty"><strong>还没有${kind === 'video' ? '视频' : '图片'}</strong><p>生成的成片会自动保存到媒体库目录，按日期 / 任务分文件夹。</p></div></div>`}
@@ -2640,7 +2640,7 @@ async function openMediaRenameModal() {
     groups.get(key).push(row);
   });
   const panel = openModal(`<div class="modal-head">
-      <div><h2>按分镜重命名</h2><div class="hint">同一任务内按原始分镜顺序编号为 分镜 1..N，只改文件名，不动视频内容</div></div>
+      <div><h2>按镜头名重命名</h2><div class="hint">文件名直接用分镜名称（是镜头 01 就叫 镜头 01.mp4），只改文件名，不动视频内容</div></div>
       <button class="btn ghost sm" data-close="1">关闭</button>
     </div>
     <div class="modal-body">
@@ -2648,7 +2648,7 @@ async function openMediaRenameModal() {
         <h3>${esc(taskTitle)}<span class="hint">${rows.length} 条</span></h3>
         ${rows.map((row) => `<div class="rename-media-row"><span class="old">${esc(row.oldName)}</span><span class="arrow">→</span><span class="new">${esc(row.newName)}</span>${row.shotTitle ? `<span class="hint">${esc(row.shotTitle)}</span>` : ''}</div>`).join('')}
       </section>`).join('')}</div>
-      <p class="hint">共 ${preview.plan.length} 个文件。确认后立即改名；已经叫「分镜 N」的文件会跳过。</p>
+      <p class="hint">共 ${preview.plan.length} 个文件。确认后立即改名；文件名已经和分镜名称一致的文件会跳过。</p>
     </div>
     <div class="modal-foot"><span class="grow"></span><button class="btn ghost" data-close="1">取消</button><button class="btn primary" id="media-rename-ok">确认重命名</button></div>`);
   panel.classList.add('modal-wide');
@@ -2671,7 +2671,7 @@ async function openMediaRenameModal() {
 function openMediaDetail(item) {
   const url = esc(item.url || '/api/file?path=' + enc(item.path));
   openModal(`
-    <div class="modal-head"><h2>${esc(item.outputLabel || item.name)}</h2><span class="grow"></span><button class="btn ghost sm" data-close="1">关闭</button></div>
+    <div class="modal-head"><h2>${esc(item.shotLabel || item.name)}</h2><span class="grow"></span><button class="btn ghost sm" data-close="1">关闭</button></div>
     <div class="modal-body">
       <div style="background:var(--surface-2);border-radius:10px;display:grid;place-items:center;min-height:240px;overflow:hidden">
         ${item.kind === 'video'
