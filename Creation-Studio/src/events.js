@@ -498,6 +498,10 @@ function retryItem(id, itemId) {
   if (!['failed', 'canceled', 'skipped', 'success'].includes(status)) {
     const error = new Error('条目还没结束，不能重试'); error.status = 409; error.code = 'EVENT_STATE_INVALID'; throw error;
   }
+  const itemIndex = event.items.indexOf(item);
+  if (item.refType === 'job' && item.refId && typeof jobs.setShotMeta === 'function') {
+    jobs.setShotMeta(item.refId, { shotLabel: item.shotLabel || ('分镜 ' + (itemIndex + 1)), taskTitle: event.title });
+  }
   capture(event,item,map);
   if (item.refType === 'imageTask') {
     const task=imageTasks().retry(item.refId,{paused:true}); item.refId=task.id;
@@ -569,7 +573,7 @@ function scheduleEvent(id, input={}) {
   return get(id);
 }
 function lookupRef(refId){load();for(const event of state.events){const item=event.items?.find(i=>i.refId===refId);if(item)return {event,item};}const row=repository.open().prepare("SELECT event_id,item_id FROM task_attempts WHERE json_extract(payload,'$.refId')=? LIMIT 1").get(refId);if(row){const event=repository.get(row.event_id),item=event?.items.find(i=>i.id===row.item_id);if(item)return {event,item};}return null;}
-async function resumeOriginal(id,itemId){const event=rawEvent(id),item=event.items.find(i=>i.id===itemId);if(!item||item.refType!=='job')throw Object.assign(new Error('该任务不支持远端续查'),{status:409});const job=jobs.get(item.refId);if(job?.provider!=='manager'||!job.remotePromptId)throw Object.assign(new Error('没有可恢复的远端任务编号'),{status:409});capture(event,item,jobMapNow());event.legacy=false;event.status='queued';event.finishedAt=null;event.paused=false;event.canceled=false;save();await jobs.resume(item.refId);jobs.setHeld(item.refId,true);setTimeout(safeTick,50);return get(id);}
+async function resumeOriginal(id,itemId){const event=rawEvent(id),item=event.items.find(i=>i.id===itemId);if(!item||item.refType!=='job')throw Object.assign(new Error('该任务不支持远端续查'),{status:409});const job=jobs.get(item.refId);if(job?.provider!=='manager'||!job.remotePromptId)throw Object.assign(new Error('没有可恢复的远端任务编号'),{status:409});if(typeof jobs.setShotMeta==='function')jobs.setShotMeta(item.refId,{shotLabel:item.shotLabel||('分镜 '+(event.items.indexOf(item)+1)),taskTitle:event.title});capture(event,item,jobMapNow());event.legacy=false;event.status='queued';event.finishedAt=null;event.paused=false;event.canceled=false;save();await jobs.resume(item.refId);jobs.setHeld(item.refId,true);setTimeout(safeTick,50);return get(id);}
 function updateDraft(id,inputs,meta={}){const event=rawEvent(id);inputs=prepareInputs(inputs,event.kind);event.version=(event.version||1)+1;if(!event.draft&&!event.pendingSchedule)throw Object.assign(new Error('已入队任务不能修改提交快照，请复制为新任务'),{status:409});event.title=meta.title||event.title;event.spec.items=inputs.map(input=>({...input,params:input}));event.items=inputs.flatMap(input=>Array.from({length:event.kind==='video'?Math.max(1,Math.min(20,Number(input.count)||1)):1},()=>({...normalizeRef(event.kind==='image'?'imageTask':'job',''),title:input.title||input.prompt?.slice(0,60)||'生成任务',input:{...input,count:1},dispatchState:'pending'})));event.items.forEach((item,index)=>{const label='分镜 '+(index+1);item.shotLabel=label;item.input={...item.input,shotLabel:label,taskTitle:event.title};});save();return get(id);}
 function queueEvent(id) {const event=rawEvent(id);event.draft=false;event.pendingSchedule=false;event.paused=false;const future=event.schedule?.startAt&&Date.parse(event.schedule.startAt)>Date.now();if(future){event.status='scheduled';audit(event,'queue','按计划时间等待执行');save();return get(id);}event.status='queued';audit(event,'queue','加入队列');save();materialize(event);save();setTimeout(safeTick,50);return get(id);}
 /** 保存任务但先不调度：出现在调度页的「未分配」里。 */

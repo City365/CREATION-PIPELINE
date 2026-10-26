@@ -426,6 +426,17 @@ function revisePrompt(id, patch = {}) {
   return publicJob(job);
 }
 
+/** 给旧任务补分镜名/任务名，保证重试出来的成片不再叫 01-video。 */
+function setShotMeta(id, patch = {}) {
+  const job = get(id);
+  if (!job) return null;
+  if (patch.shotLabel != null) job.shotLabel = String(patch.shotLabel);
+  if (patch.taskTitle != null) job.taskTitle = String(patch.taskTitle);
+  saveState();
+  emitter.emit('job', publicJob(job));
+  return publicJob(job);
+}
+
 function remove(id) {
   const idx = state.jobs.findIndex((j) => j.id === id);
   if (idx < 0) throw new Error('任务不存在');
@@ -860,6 +871,7 @@ module.exports = {
   retry,
   revisePrompt,
   renameOutputs,
+  setShotMeta,
   resume,
   remove,
   setHeld,

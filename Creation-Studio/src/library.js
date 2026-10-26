@@ -415,7 +415,8 @@ function listMedia(kind, projectId) {
         const abs = path.join(jobDir, entry.name);
         const st = fs.statSync(abs);
         const job = jobByPath.get(keyOf(abs));
-        const event = resolveEvent(job && job.eventId);
+        const needsMeta = !params || !params.taskTitle || !params.shotLabel;
+        const event = needsMeta ? resolveEvent(job && job.eventId) : null;
         const eventItem = event ? (event.items || []).find((row) => row.id === job.eventItemId) : null;
         items.push({
           day,
