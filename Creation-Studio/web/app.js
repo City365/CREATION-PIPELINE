@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 
 /* ------------------------------------------------------------------ utils */
 
@@ -586,7 +586,7 @@ function render() {
   else if (state.route === 'batch') html = '<div class="page-scroll">' + renderBatch() + '</div>';
   else if (state.route === 'jobs') html = '<div class="page-scroll">' + renderJobs() + '</div>';
   else if (state.route === 'tasks') html = '<div class="page-scroll tasks-page">' + renderTasks() + '</div>';
-  else if (state.route === 'assets') html = '<div class="page-scroll">' + renderAssets() + '</div>';
+  else if (state.route === 'assets') html = '<div class="page-scroll assets-page" style="background:var(--h3-bg-1) !important">' + renderAssets() + '</div>';
   else if (state.route === 'media') html = '<div class="page-scroll">' + renderMedia() + '</div>';
   else if (state.route === 'compare') html = '<div class="page-scroll is-compare">' + renderCompare() + '</div>';
   else if (state.route === 'logs') html = '<div class="page-scroll">' + renderLogs() + '</div>';
@@ -2148,236 +2148,297 @@ async function openJobDetail(id) {
 
 /* ------------------------------------------------------------------ assets */
 
+const ASSET_MATERIALS = [
+  { id: 'character', label: '人物' },
+  { id: 'scene', label: '场景' },
+  { id: 'prop', label: '道具' },
+];
+
 function assetTypeMeta(id) {
-  const list = (state.assets && state.assets.types) || [];
-  return list.find((t) => t.id === id) || { id, label: id || '其他', count: 0 };
+  return ASSET_MATERIALS.find((item) => item.id === id) || { id, label: id || '其他' };
 }
 
-function assetQueryMatch(item) {
+function assetMatch(item) {
   const query = (state.assetQuery || '').toLowerCase();
-  return !query || item.name.toLowerCase().includes(query) || (item.subject || '').toLowerCase().includes(query)
-    || String(item.group || '').toLowerCase().includes(query) || String(item.typeLabel || '').toLowerCase().includes(query);
+  return !query || String(item.name || '').toLowerCase().includes(query) || String(item.note || '').toLowerCase().includes(query);
 }
 
-/** 当前视图里的素材：分镜组内只看该组图片；其它视图只看根目录下的单个素材。 */
-function visibleAssetItems() {
-  const group = state.assetGroup || '';
-  const type = state.assetType || 'all';
-  return ((state.assets && state.assets.items) || []).filter((item) => {
-    if (!assetQueryMatch(item)) return false;
-    if (group) return item.group === group;
-    if (item.group) return false;
-    return type === 'all' || item.type === type;
-  });
+function currentAssetView() {
+  const data = state.assetLibrary;
+  const view = state.assetView || { kind: 'material', type: 'character' };
+  if (view.kind === 'material' && !ASSET_MATERIALS.some((item) => item.id === view.type)) view.type = 'character';
+  if (view.kind === 'shot' && !(data && (data.shots || []).some((shot) => shot.name === view.name))) {
+    return { kind: 'material', type: 'character' };
+  }
+  return view;
 }
 
-function visibleAssetGroups() {
-  const query = (state.assetQuery || '').toLowerCase();
-  return ((state.assets && state.assets.groups) || []).filter((group) => !query || group.name.toLowerCase().includes(query));
+async function loadAssetLibrary() {
+  state.assetLibrary = await api('/api/assets/library');
+  return state.assetLibrary;
+}
+
+function assetLibraryEmpty(text, hint) {
+  return `<div class="card"><div class="empty"><strong>${esc(text)}</strong><p>${esc(hint)}</p></div></div>`;
+}
+
+function renderAssetSidebar(data, view) {
+  const shots = (data.shots || []).filter((shot) => !state.assetQuery || String(shot.name).toLowerCase().includes(String(state.assetQuery).toLowerCase()));
+  return `<aside class="library-nav">
+    <div class="library-nav-head"><h2>素材库</h2><span class="hint">${(data.shots || []).length} 个分镜</span></div>
+    <div class="library-group">
+      <div class="library-group-title">资产</div>
+      ${ASSET_MATERIALS.map((material) => `<button class="lib-item ${view.kind === 'material' && view.type === material.id ? 'active' : ''}" data-lib-material="${material.id}">
+        <span>${esc(material.label)}</span><em>${(data.materials && data.materials[material.id] || []).length}</em>
+      </button>`).join('')}
+    </div>
+    <div class="library-group">
+      <div class="library-group-title">分镜 <button class="lib-add" data-act="new-shot" title="新建分镜">＋</button></div>
+      ${shots.length ? shots.map((shot) => `<button class="lib-item ${view.kind === 'shot' && view.name === shot.name ? 'active' : ''}" data-lib-shot="${esc(shot.name)}">
+        <span class="lib-item-name">${esc(shot.name)}</span><em>${shot.count}/9</em>
+      </button>`).join('') : '<div class="lib-empty">还没有分镜</div>'}
+    </div>
+    ${(data.other || []).length ? `<div class="library-group">
+      <div class="library-group-title">其他</div>
+      <button class="lib-item ${view.kind === 'other' ? 'active' : ''}" data-lib-other="1"><span>未归类</span><em>${(data.other || []).length}</em></button>
+    </div>` : ''}
+  </aside>`;
+}
+
+function renderAssetGrid(items, emptyText, emptyHint) {
+  if (!items.length) return assetLibraryEmpty(emptyText, emptyHint);
+  return `<div class="grid-cards asset-grid">${items.map((item) => `
+    <div class="asset-card" data-asset-rel="${esc(item.rel)}">
+      <div class="asset-thumb">${item.kind === 'image' ? `<img src="${item.url}" alt="" loading="lazy" />` : '♪'}</div>
+      <div class="asset-meta"><span class="name" title="${esc(item.name)}">${esc(item.name)}</span><span class="sub">${esc(item.kind === 'audio' ? '音频' : (item.typeLabel || ''))}${item.bytes ? ' · ' + fmtBytes(item.bytes) : ''}</span></div>
+    </div>`).join('')}</div>`;
+}
+
+function renderMaterialView(data, view) {
+  const material = ASSET_MATERIALS.find((item) => item.id === view.type) || ASSET_MATERIALS[0];
+  const items = ((data.materials && data.materials[view.type]) || []).filter(assetMatch);
+  return `<div class="library-main-head">
+    <div><h2>${esc(material.label)}</h2><p class="hint">素材 → ${esc(material.label)} · ${items.length} 个文件</p></div>
+    <div class="library-actions">
+      <button class="btn" data-act="upload-material">上传${esc(material.label)}</button>
+    </div>
+  </div>
+  ${renderAssetGrid(items, `还没有${material.label}素材`, `点右上角「上传${material.label}」，文件会放进 assets/素材/${material.label}/`)}`;
+}
+
+function renderOtherView(data) {
+  const items = (data.other || []).filter(assetMatch);
+  return `<div class="library-main-head"><div><h2>其他</h2><p class="hint">没有归类的旧文件 · ${items.length} 个</p></div></div>
+    ${renderAssetGrid(items, '没有其他文件', '旧结构里的文件会显示在这里。')}`;
+}
+
+function renderSlotCard(shot, slot) {
+  return `<div class="slot-card ${slot.rel ? 'has-image' : ''}" data-slot="${slot.slot}">
+    <div class="slot-head"><b>${esc(slot.label)}</b><span class="hint">${slot.slot}/9</span></div>
+    <div class="slot-thumb">${slot.rel ? `<img src="${slot.url}" alt="${esc(slot.label)}" loading="lazy" />` : '<span class="slot-plus">＋</span>'}</div>
+    <div class="slot-actions">
+      <button class="btn sm" data-slot-upload="${slot.slot}">${slot.rel ? '替换' : '上传'}</button>
+      <button class="btn sm ghost" data-slot-pick="${slot.slot}">素材库</button>
+      ${slot.rel ? `<button class="btn sm ghost" data-slot-clear="${slot.slot}">清除</button>` : ''}
+    </div>
+  </div>`;
+}
+
+function renderShotView(data, view) {
+  const shot = (data.shots || []).find((row) => row.name === view.name);
+  if (!shot) return assetLibraryEmpty('分镜不存在', '它可能已经被删除。');
+  const json = shot.json ? JSON.stringify(shot.json, null, 2) : '';
+  return `<div class="library-main-head">
+    <div><h2>${esc(shot.name)}</h2><p class="hint">分镜 / ${esc(shot.name)} · ${shot.count}/9 张参考图 · shot.json${shot.jsonRel ? '' : '（还没生成）'}</p></div>
+    <div class="library-actions">
+      <button class="btn" data-act="save-shot-prompt">保存提示词</button>
+      <button class="btn ghost" data-act="reveal-shot">打开文件夹</button>
+    </div>
+  </div>
+  <label class="shot-prompt"><span>提示词</span><textarea class="textarea" id="shot-prompt" rows="4" placeholder="这个分镜的提示词">${esc(shot.prompt || '')}</textarea></label>
+  <div class="slot-grid">${shot.slots.map((slot) => renderSlotCard(shot, slot)).join('')}</div>
+  <details class="shot-json"><summary>查看解析出的 JSON（shot.json）</summary><pre>${esc(json || '还没有 JSON 文件')}</pre></details>`;
 }
 
 function renderAssets() {
-  const data = state.assets;
-  if (!data) return `<div class="empty"><span class="spinner"></span></div>`;
-  const type = state.assetType || 'all';
-  const group = state.assetGroup || '';
-  const groupView = group ? ((data.groups || []).find((row) => row.name === group) || { name: group, count: 0, cover: '' }) : null;
-  const showGroups = !group && type === 'storyboard';
-  const items = visibleAssetItems();
-  const groups = visibleAssetGroups();
-  const types = data.types || [];
-  const typeTotal = types.reduce((sum, row) => sum + row.count, 0);
-  const chipCount = (row) => row.id === 'storyboard' ? (data.groups || []).length : row.count;
-  const uploadLabel = groupView ? `上传到「${esc(groupView.name)}」` : (type === 'storyboard' ? '上传到分镜' : '上传');
-  const empty = showGroups
-    ? `<div class="card"><div class="empty"><strong>还没有分镜</strong><p>一个分镜一个文件夹，里面放这个分镜的所有参考图；生成时只取该文件夹里的图。</p><button class="btn primary" data-act="new-group">新建分镜</button></div></div>`
-    : `<div class="card"><div class="empty"><strong>没有匹配的素材</strong><p>把参考图放进素材库目录，或点「上传」。</p></div></div>`;
-  return `
-  <div class="page-head">
-    <div><h1>素材库</h1><p class="mono">${esc(data.root)} · ${data.items.length} 个文件 · ${(data.groups || []).length} 个分镜</p></div>
-    <div class="page-actions">
-      <input class="input" id="asset-search" placeholder="搜索文件名 / 主体 / 分镜" value="${esc(state.assetQuery || '')}" style="width:220px" />
-      <button class="btn" data-act="new-group">新建分镜</button>
-      <button class="btn" data-act="upload-asset">${uploadLabel}</button>
-      <button class="btn" data-act="open-assets">打开目录</button>
-      <button class="btn" data-act="refresh-assets">重新扫描</button>
-    </div>
-  </div>
-  <div class="asset-filter-row">
-    <div class="asset-type-chips" role="group" aria-label="素材业务类型">
-      <button class="chip ${type === 'all' && !group ? 'active' : ''}" data-asset-type="all">全部类型 ${typeTotal}</button>
-      ${types.map((row) => `<button class="chip ${type === row.id ? 'active' : ''}" data-asset-type="${esc(row.id)}" title="${esc(row.hint || '')}">${esc(row.label)} ${chipCount(row)}</button>`).join('')}
-    </div>
-  </div>
-  <div class="hint" style="margin-bottom:10px">人物 / 场景 / 道具 / 首帧 / 尾帧 / 溶图参考是单个素材，类型可改；只有「分镜参考」用文件夹：一个分镜一个文件夹，里面的图不再分人物道具场景，生成时只取该文件夹的图。</div>
-  ${groupView ? `<div class="asset-group-head"><button class="btn sm" data-asset-back>← 全部分镜</button><b>${esc(groupView.name)}</b><span class="hint">${groupView.count} 张参考图 · 只从这个文件夹取图</span></div>` : ''}
-  ${showGroups
-    ? (groups.length ? `<div class="grid-cards">${groups.map((row, i) => `<div class="asset-card" data-group="${i}">
-        <div class="asset-thumb">${row.cover ? `<img src="${row.cover}" alt="" loading="lazy" />` : '🗂'}</div>
-        <div class="asset-meta"><span class="name">${esc(row.name)}</span><span class="sub"><span class="asset-type-tag">分镜参考</span>${row.count} 张图</span></div>
-      </div>`).join('')}</div>` : empty)
-    : (items.length ? `<div class="grid-cards">${items.map((item, i) => `
-      <div class="asset-card" data-asset="${i}">
-        <div class="asset-thumb">${item.kind === 'image' ? `<img src="${item.url}" alt="" loading="lazy" />` : '♪'}</div>
-        <div class="asset-meta">
-          <span class="name" title="${esc(item.name)}">${esc(item.name)}</span>
-          <span class="sub"><span class="asset-type-tag" title="${esc(assetTypeMeta(item.type).hint || '')}">${esc(item.typeLabel || assetTypeMeta(item.type).label)}</span>${item.group ? esc(item.group) + ' · ' : ''}${item.subject ? esc(item.subject) + ' · ' : ''}${item.width ? item.width + '×' + item.height : (item.kind === 'audio' ? '音频' : '')}</span>
-        </div>
-      </div>`).join('')}</div>` : empty)}
-  `;
+  if (!state.assetLibrary) return `<div class="empty"><span class="spinner"></span></div>`;
+  const data = state.assetLibrary;
+  const view = currentAssetView();
+  const body = view.kind === 'shot' ? renderShotView(data, view)
+    : view.kind === 'other' ? renderOtherView(data)
+    : renderMaterialView(data, view);
+  return `<div class="library-page" style="width:100%">
+    ${renderAssetSidebar(data, view)}
+    <section class="library-main">
+      <div class="library-top">
+        <input class="input" id="asset-search" placeholder="搜索素材 / 分镜" value="${esc(state.assetQuery || '')}" />
+        <button class="btn sm ghost" data-act="refresh-assets">重新扫描</button>
+        <button class="btn sm ghost" data-act="open-assets">打开目录</button>
+      </div>
+      ${body}
+    </section>
+  </div>`;
+}
+
+function assetDetailModal(item) {
+  openModal(`<div class="modal-head"><h2>${esc(item.name)}</h2><span class="grow"></span><button class="btn ghost sm" data-close="1">关闭</button></div>
+    <div class="modal-body"><div class="asset-preview">${item.kind === 'image' ? `<img src="${item.url}" alt="" />` : `<audio src="${item.url}" controls></audio>`}</div>
+    <div class="kv"><span>分类</span><span>${esc(item.typeLabel || item.type || '其他')}</span></div>
+    <div class="kv"><span>路径</span><span class="mono">${esc(item.rel || '')}</span></div></div>
+    <div class="modal-foot"><span class="grow"></span><button class="btn" data-close="1">关闭</button></div>`);
+}
+
+function pickSlotFile(shotName, slot) {
+  const input = $('#file-input');
+  if (!input) return;
+  input.accept = 'image/*';
+  input.onchange = async () => {
+    const file = (input.files || [])[0];
+    input.value = '';
+    if (!file) return;
+    try {
+      const data = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(new Error('读取失败'));
+        reader.readAsDataURL(file);
+      });
+      await api('/api/assets/shot/slot', { method: 'POST', body: { shot: shotName, slot, name: file.name, data } });
+      await loadAssetLibrary();
+      render();
+      toast('已写入图' + ['一', '二', '三', '四', '五', '六', '七', '八', '九'][slot - 1]);
+    } catch (err) { toast(err.message, true); }
+  };
+  input.click();
+}
+
+async function openAssetPicker(shotName, slot) {
+  let type = 'character';
+  const draw = () => {
+    const data = state.assetLibrary || {};
+    const items = (data.materials && data.materials[type]) || [];
+    const grid = items.length
+      ? `<div class="grid-cards asset-grid picker-grid">${items.map((item) => `<div class="asset-card" data-pick-rel="${esc(item.rel)}"><div class="asset-thumb"><img src="${item.url}" alt="" loading="lazy" /></div><div class="asset-meta"><span class="name">${esc(item.name)}</span><span class="sub">${esc(item.typeLabel || '')}</span></div></div>`).join('')}</div>`
+      : '<div class="hint">这个分类还没有素材。</div>';
+    return `<div class="picker-tabs">${ASSET_MATERIALS.map((material) => `<button class="chip ${type === material.id ? 'active' : ''}" data-picker-type="${material.id}">${material.label}</button>`).join('')}</div>${grid}`;
+  };
+  const panel = openModal(`<div class="modal-head"><h2>从素材库选择 · 图${['一', '二', '三', '四', '五', '六', '七', '八', '九'][slot - 1]}</h2><span class="grow"></span><button class="btn ghost sm" data-close="1">关闭</button></div>
+    <div class="modal-body"><div id="asset-picker-body">${draw()}</div></div>`);
+  const body = panel.querySelector('#asset-picker-body');
+  const bind = () => {
+    body.querySelectorAll('[data-picker-type]').forEach((button) => {
+      button.onclick = () => { type = button.dataset.pickerType; body.innerHTML = draw(); bind(); };
+    });
+    body.querySelectorAll('[data-pick-rel]').forEach((card) => {
+      card.onclick = async () => {
+        try {
+          await api('/api/assets/shot/slot', { method: 'POST', body: { shot: shotName, slot, source: card.dataset.pickRel } });
+          closeModal();
+          await loadAssetLibrary();
+          render();
+          toast('已从素材库放入');
+        } catch (err) { toast(err.message, true); }
+      };
+    });
+  };
+  bind();
 }
 
 function bindAssets(root) {
+  if (!state.assetLibrary) {
+    loadAssetLibrary().then(() => { if (state.route === 'assets') render(); }).catch((err) => toast(err.message, true));
+  }
   const search = $('#asset-search');
   if (search) {
     search.oninput = () => {
       state.assetQuery = search.value;
       clearTimeout(state.assetSearchTimer);
-      state.assetSearchTimer = setTimeout(() => { render(); const el = $('#asset-search'); if (el) { el.focus(); el.selectionStart = el.value.length; } }, 250);
+      state.assetSearchTimer = setTimeout(() => {
+        render();
+        const el = $('#asset-search');
+        if (el) { el.focus(); el.selectionStart = el.value.length; }
+      }, 220);
     };
   }
-  const folderFilter = $('#asset-folder-filter');
-  if (folderFilter) folderFilter.onchange = () => { state.assetType = 'storyboard'; state.assetGroup = folderFilter.value === '全部' ? '' : folderFilter.value; render(); };
   root.addEventListener('click', async (event) => {
-    const typeBtn = event.target.closest('[data-asset-type]');
-    if (typeBtn) { state.assetType = typeBtn.dataset.assetType; state.assetGroup = ''; return render(); }
-    const groupCard = event.target.closest('[data-group]');
-    if (groupCard) {
-      const group = visibleAssetGroups()[Number(groupCard.dataset.group)];
-      if (group) { state.assetGroup = group.name; state.assetType = 'storyboard'; return render(); }
-    }
-    if (event.target.closest('[data-asset-back]')) { state.assetGroup = ''; return render(); }
-    const card = event.target.closest('[data-asset]');
+    const material = event.target.closest('[data-lib-material]');
+    if (material) { state.assetView = { kind: 'material', type: material.dataset.libMaterial }; return render(); }
+    const shot = event.target.closest('[data-lib-shot]');
+    if (shot) { state.assetView = { kind: 'shot', name: shot.dataset.libShot }; return render(); }
+    if (event.target.closest('[data-lib-other]')) { state.assetView = { kind: 'other' }; return render(); }
+    const card = event.target.closest('[data-asset-rel]');
     if (card) {
-      const item = visibleAssetItems()[Number(card.dataset.asset)];
-      if (item) return openAssetDetail(item);
+      const item = (state.assetLibrary.items || []).find((row) => row.rel === card.dataset.assetRel);
+      if (item) return assetDetailModal(item);
     }
-    const target = event.target.closest('[data-act]');
-    if (!target) return;
+    const uploadSlot = event.target.closest('[data-slot-upload]');
+    if (uploadSlot) return pickSlotFile(currentAssetView().name, Number(uploadSlot.dataset.slotUpload));
+    const pickSlot = event.target.closest('[data-slot-pick]');
+    if (pickSlot) return openAssetPicker(currentAssetView().name, Number(pickSlot.dataset.slotPick));
+    const clearSlot = event.target.closest('[data-slot-clear]');
+    if (clearSlot) {
+      try {
+        await api('/api/assets/shot/clear', { method: 'POST', body: { shot: currentAssetView().name, slot: Number(clearSlot.dataset.slotClear) } });
+        await loadAssetLibrary(); render(); toast('已清除');
+      } catch (err) { toast(err.message, true); }
+      return;
+    }
+    const action = event.target.closest('[data-act]');
+    if (!action) return;
     try {
-      if (target.dataset.act === 'refresh-assets') { state.assets = await api('/api/assets'); return render(); }
-      if (target.dataset.act === 'open-assets') { await api('/api/reveal', { method: 'POST', body: { path: state.assets.root } }); return; }
-      if (target.dataset.act === 'new-group') {
-        return askText('新建分镜', '', '例如：镜头01 / 第3场-推门', async (name) => {
-          if (!name) return;
-          const group = await api('/api/assets/group', { method: 'POST', body: { name } });
-          state.assets = await api('/api/assets');
-          state.assetType = 'storyboard';
-          state.assetGroup = group.name || name;
-          render();
-          toast('分镜已创建，上传的图片都会归到这个分镜');
-        });
-      }
-      if (target.dataset.act === 'upload-asset') {
-        const group = state.assetGroup || '';
-        if (!group && state.assetType === 'storyboard') { toast('先新建或进入一个分镜文件夹再上传', true); return; }
-        const type = state.assetType && state.assetType !== 'all' ? state.assetType : 'other';
+      if (action.dataset.act === 'refresh-assets') { await loadAssetLibrary(); return render(); }
+      if (action.dataset.act === 'open-assets') { await api('/api/reveal', { method: 'POST', body: { path: state.assetLibrary.root } }); return; }
+      if (action.dataset.act === 'upload-material') {
+        const view = currentAssetView();
         const input = $('#file-input');
-        input.accept = 'image/*,audio/*';
+        input.accept = 'image/*';
         input.onchange = async () => {
-          const files = Array.from(input.files || []);
+          const file = (input.files || [])[0];
           input.value = '';
-          for (const file of files) {
+          if (!file) return;
+          try {
             const data = await new Promise((resolve, reject) => {
               const reader = new FileReader();
               reader.onload = () => resolve(String(reader.result));
               reader.onerror = () => reject(new Error('读取失败'));
               reader.readAsDataURL(file);
             });
-            await api('/api/assets/upload', { method: 'POST', body: { name: file.name, data, group: group || undefined, type: group ? undefined : type } });
-          }
-          state.assets = await api('/api/assets');
-          render();
-          if (files.length) toast(group ? `已上传 ${files.length} 张到分镜「${group}」` : `已上传 ${files.length} 个文件`);
+            await api('/api/assets/material/upload', { method: 'POST', body: { type: view.type, name: file.name, data } });
+            await loadAssetLibrary(); render(); toast('已上传到' + assetTypeMeta(view.type).label);
+          } catch (err) { toast(err.message, true); }
         };
         input.click();
+        return;
+      }
+      if (action.dataset.act === 'new-shot') {
+        return askText('新建分镜', '', '例如：镜头01 / 第3场-推门', async (name) => {
+          if (!name) return;
+          const created = await api('/api/assets/shot', { method: 'POST', body: { name } });
+          await loadAssetLibrary();
+          state.assetView = { kind: 'shot', name: created.name || name };
+          render();
+          toast('分镜已创建');
+        });
+      }
+      if (action.dataset.act === 'save-shot-prompt') {
+        const view = currentAssetView();
+        const prompt = ($('#shot-prompt') || {}).value || '';
+        await api('/api/assets/shot/json', { method: 'POST', body: { shot: view.name, prompt } });
+        await loadAssetLibrary(); render(); toast('提示词已保存');
+        return;
+      }
+      if (action.dataset.act === 'reveal-shot') {
+        const view = currentAssetView();
+        const shot = (state.assetLibrary.shots || []).find((row) => row.name === view.name);
+        const dir = shot ? requirePathJoin(state.assetLibrary.root, shot.rel) : state.assetLibrary.root;
+        await api('/api/reveal', { method: 'POST', body: { path: dir } });
       }
     } catch (err) { toast(err.message, true); }
   });
 }
 
-function openAssetDetail(item) {
-  const groups = ((state.assets && state.assets.groups) || []).map((row) => row.name);
-  const inGroup = !!item.group;
-  const singleTypes = ((state.assets && state.assets.types) || []).filter((row) => row.id !== 'storyboard');
-  openModal(`
-    <div class="modal-head"><h2>${esc(item.name)}</h2><span class="grow"></span><button class="btn ghost sm" data-close="1">关闭</button></div>
-    <div class="modal-body">
-      <div style="display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:14px">
-        <div style="background:var(--surface-2);border-radius:10px;display:grid;place-items:center;min-height:320px;overflow:hidden">
-          ${item.kind === 'image' ? `<img src="${item.url}" style="max-width:100%;max-height:420px" />` : `<audio src="${item.url}" controls style="width:100%;padding:20px"></audio>`}
-        </div>
-        <div class="section">
-          <div class="kv"><span>尺寸</span><span>${item.width ? item.width + ' × ' + item.height : '—'}</span></div>
-          <div class="kv"><span>大小</span><span>${fmtBytes(item.bytes)}</span></div>
-          <div class="kv"><span>分镜</span><span>${inGroup ? esc(item.group) : '素材库根目录'}</span></div>
-          ${inGroup
-            ? '<div class="kv"><span>业务类型</span><span>分镜参考（固定）</span></div>'
-            : `<div class="field"><label>业务类型</label><select class="select" id="asset-type">${singleTypes.map((t) => `<option value="${esc(t.id)}" ${t.id === item.type ? 'selected' : ''}>${esc(t.label)} — ${esc(t.hint || '')}</option>`).join('')}</select></div>`}
-          <div class="field"><label>命名主体（用于 &lt;Subject N&gt;）</label><input class="input" id="asset-subject" value="${esc(item.subject)}" placeholder="例如：护法武僧" /></div>
-          <div class="field"><label>移动到</label><select class="select" id="asset-group"><option value="">素材库根目录</option>${groups.map((name) => `<option value="${esc(name)}" ${name === item.group ? 'selected' : ''}>分镜 · ${esc(name)}</option>`).join('')}</select><small>移进分镜文件夹后，这张图会算作该分镜的参考图；分镜里的图不再区分人物/道具/场景。</small></div>
-        </div>
-      </div>
-    </div>
-    <div class="modal-foot">
-      <button class="btn" data-rename="1">重命名</button>
-      <button class="btn" data-reveal="1">打开文件夹</button>
-      <button class="btn" data-use="1">用作参考图</button>
-      <button class="btn primary" data-save="1">保存</button>
-    </div>
-  `);
-  $('#modal-panel .modal-body').insertAdjacentHTML('beforeend','<section id="generation-details">正在读取生成资料…</section>');
-  WB.mediaDetails(item);
-  const panel = $('#modal-panel');
-  panel.querySelector('[data-save]').onclick = async () => {
-    try {
-      const subject = $('#asset-subject').value.trim();
-      const groupValue = $('#asset-group') ? $('#asset-group').value : (item.group || '');
-      const type = $('#asset-type') ? $('#asset-type').value : item.type;
-      let rel = item.rel;
-      if (!item.group && type && type !== item.type) {
-        await api('/api/assets/type', { method: 'POST', body: { rel, type } });
-      }
-      if (subject !== (item.subject || '')) {
-        await api('/api/assets/subject', { method: 'POST', body: { rel, subject } });
-      }
-      if (groupValue !== (item.group || '')) {
-        const res = await api('/api/assets/move', { method: 'POST', body: { rel, group: groupValue } });
-        rel = res.rel;
-      }
-      closeModal();
-      state.assets = await api('/api/assets');
-      render();
-      toast('已保存');
-    } catch (err) { toast(err.message, true); }
-  };
-  panel.querySelector('[data-rename]').onclick = () => {
-    askText('重命名', item.name, '新文件名', async (name) => {
-      if (!name) return;
-      try {
-        await api('/api/assets/rename', { method: 'POST', body: { rel: item.rel, name } });
-        state.assets = await api('/api/assets');
-        render();
-        toast('已重命名');
-      } catch (err) { toast(err.message, true); }
-    });
-  };
-  panel.querySelector('[data-reveal]').onclick = () => api('/api/reveal', { method: 'POST', body: { path: item.path, select: true } }).catch((e) => toast(e.message, true));
-  panel.querySelector('[data-use]').onclick = () => {
-    const s = state.studio;
-    if (item.kind === 'image') {
-      let slot = s.images.findIndex((x) => !x);
-      if (slot < 0) slot = 0;
-      s.images[slot] = { path: item.path, name: item.name, subject: item.subject || '', kind: 'image' };
-    } else {
-      let slot = s.audios.findIndex((x) => !x);
-      if (slot < 0) slot = 0;
-      s.audios[slot] = { path: item.path, name: item.name, kind: 'audio' };
-    }
-    closeModal();
-    location.hash = '#studio';
-    toast('已加入创作台');
-  };
+function requirePathJoin(root, rel) {
+  return String(root).replace(/[\\/]+$/, '') + '\\' + String(rel || '').replace(/\//g, '\\');
 }
 
 /* ------------------------------------------------------------------ media */

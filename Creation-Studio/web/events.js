@@ -321,6 +321,16 @@ const Events = (() => {
       const target = currentDraft();
       target.file = parsed;
       target.busy = false;
+      if (draft.kind === 'video' && !(parsed.errors || []).length && (parsed.items || []).length) {
+        try {
+          const synced = await api('/api/assets/shots/import', { method: 'POST', body: { items: parsed.items, source: file.name } });
+          state.assetLibrary = await api('/api/assets/library');
+          if (synced.imported) target.msg = `已同步 ${synced.imported} 个分镜到素材库`;
+          if ((synced.warnings || []).length) toast(synced.warnings[0], true);
+        } catch (err) {
+          target.msg = `文件已解析，但同步素材库失败：${err.message}`;
+        }
+      }
     } catch (err) {
       const target = currentDraft();
       target.busy = false;
@@ -386,6 +396,14 @@ const Events = (() => {
     const buttons = root.querySelectorAll('[data-tc-save]');
     buttons.forEach((button) => { button.disabled = true; });
     try {
+      if (payload.kind === 'video') {
+        try {
+          await api('/api/assets/shots/import', { method: 'POST', body: { items: payload.items, source: draft.file?.name || '' } });
+          state.assetLibrary = await api('/api/assets/library');
+        } catch (err) {
+          toast('任务已保存，但素材库同步失败：' + err.message, true);
+        }
+      }
       if (draft.editId) {
         await api('/api/events/' + encodeURIComponent(draft.editId) + '/draft', { method: 'POST', body: { title: payload.title, items: payload.items } });
         await api('/api/events/' + encodeURIComponent(draft.editId) + '/prepare', { method: 'POST', body: {} });

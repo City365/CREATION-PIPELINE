@@ -9,6 +9,7 @@ const workflows = require('./workflows');
 const providers = require('./providers');
 const prompts = require('./prompts');
 const library = require('./library');
+const assetLayout = require('./asset-layout');
 const auth = require('./auth');
 const internalAuth = require('./internal-auth');
 const projects = require('./projects');
@@ -1312,8 +1313,56 @@ function mediaPath(input) {
     return ok(res, jobs.reorder(Array.isArray(body.ids) ? body.ids : []));
   }
 
+  if (method === 'GET' && pathname === '/api/assets/library') {
+    return ok(res, assetLayout.scan(projectId));
+  }
+
   if (method === 'GET' && pathname === '/api/assets') {
     return ok(res, library.scanAssets(projectId));
+  }
+
+  if (method === 'POST' && pathname === '/api/assets/material/upload') {
+    const body = await readBody(req);
+    const buffer = Buffer.from(String(body.data || '').split(',').pop(), 'base64');
+    if (!buffer.length) return bad(res, '图片是空的');
+    return ok(res, assetLayout.saveMaterialBuffer(projectId, body.type, body.name || 'image.png', buffer));
+  }
+
+  if (method === 'POST' && pathname === '/api/assets/shot') {
+    const body = await readBody(req);
+    return ok(res, assetLayout.createShot(projectId, body.name, body.prompt || ''));
+  }
+
+  if (method === 'POST' && pathname === '/api/assets/shot/slot') {
+    const body = await readBody(req);
+    const shot = String(body.shot || '').trim();
+    if (!shot) return bad(res, '缺少分镜名称');
+    if (body.source) return ok(res, assetLayout.copyToSlot(projectId, shot, body.slot, body.source));
+    if (!body.data) return bad(res, '缺少图片数据');
+    const buffer = Buffer.from(String(body.data).split(',').pop(), 'base64');
+    if (!buffer.length) return bad(res, '图片是空的');
+    return ok(res, assetLayout.saveSlotBuffer(assetLayout.rootFor(projectId), shot, body.slot, body.name || 'image.png', buffer));
+  }
+
+  if (method === 'POST' && pathname === '/api/assets/shot/clear') {
+    const body = await readBody(req);
+    return ok(res, assetLayout.clearSlot(projectId, body.shot, body.slot));
+  }
+
+  if (method === 'POST' && pathname === '/api/assets/shot/json') {
+    const body = await readBody(req);
+    return ok(res, assetLayout.updateShot(projectId, body.shot, { prompt: body.prompt, title: body.title, json: body.json }));
+  }
+
+  if (method === 'POST' && pathname === '/api/assets/shots/import') {
+    const body = await readBody(req);
+    if (!Array.isArray(body.items) || !body.items.length) return bad(res, '没有可导入的分镜');
+    return ok(res, assetLayout.importShots(projectId, body.items, body.source || ''));
+  }
+
+  if (method === 'POST' && pathname === '/api/assets/shot/delete') {
+    const body = await readBody(req);
+    return ok(res, assetLayout.deleteShot(projectId, body.name));
   }
 
   if (method === 'POST' && pathname === '/api/assets/upload') {
