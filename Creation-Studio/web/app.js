@@ -39,11 +39,22 @@ function ago(ts) {
 }
 
 function toast(message, isError = false) {
+  const host = $('#toasts');
+  const text = String(message == null ? '' : message).trim();
+  if (!host || !text) return;
+  // 同一句话重复出现时只保留一条，避免连续保存叠出一串相同提示。
+  for (const node of [...host.children]) {
+    if (node.textContent === text) node.remove();
+  }
+  while (host.children.length >= 3) host.firstElementChild.remove();
   const box = document.createElement('div');
   box.className = 'toast' + (isError ? ' err' : '');
-  box.textContent = message;
-  $('#toasts').appendChild(box);
-  setTimeout(() => box.remove(), isError ? 6000 : 3200);
+  box.textContent = text;
+  host.appendChild(box);
+  setTimeout(() => {
+    box.classList.add('is-out');
+    setTimeout(() => box.remove(), 180);
+  }, isError ? 6000 : 3200);
 }
 
 // 脚本出错时不要静默变砖：顶部红条 + 一键刷新，方便一眼看出问题
@@ -6830,7 +6841,7 @@ async function setActiveProject(id, opts = {}) {
     body: JSON.stringify({ projectId: id }),
   }).catch(() => {});
   Events.resetForProject();
-  if (state.route === 'tasks') await Events.load();
+  if (state.route === 'tasks' && $('#view')) await Events.load();
   askResetForProject();
   state.assets = await api('/api/assets').catch(() => state.assets);
   state.media = await api('/api/media').catch(() => state.media);

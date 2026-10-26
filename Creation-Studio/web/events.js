@@ -8,7 +8,13 @@ const Events = (() => {
   const SOURCE = { batch: '批量导入', studio: '创作台', image: '图像台', api: '接口' };
   const ITEM = { queued: '排队', running: '执行中', success: '完成', failed: '失败', canceled: '已取消', skipped: '跳过', unknown: '未知', paused: '暂停' };
 
-  async function load() {
+  function typingInTaskPanel() {
+    const el = document.activeElement;
+    return !!(el && el.closest && el.closest('#task-panel') && ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName));
+  }
+
+  async function load(options = {}) {
+    const pendingRender = !!state.eventRenderPending;
     try {
       const data = await api('/api/events?kind='+encodeURIComponent(taskMedia())+'&status='+encodeURIComponent(state.taskEventStatus||'')+'&query='+encodeURIComponent(state.taskEventQuery||'')+'&page='+((state.taskPages||{}).events||1));
       const events = data.events || [];
@@ -20,12 +26,16 @@ const Events = (() => {
       state.eventPaging = {total:data.total,page:data.page,pageSize:data.pageSize};
       const hadError = Boolean(state.eventError);
       state.eventError = data.schedulerError || null;
-      if (!changed && !hadError) return;
+      if (!changed && !hadError && !pendingRender) return;
     } catch (err) {
       state.events = state.events || [];
       state.eventError = err.message;
     }
-    if (state.route === 'tasks' && ['manage','schedule','monitor','logs'].includes(currentTaskTab())) window.render();
+    if (state.route !== 'tasks' || !['manage','schedule','monitor','logs'].includes(currentTaskTab())) return;
+    // 自动刷新时如果用户正在输入，只更新数据，等下一次（失焦后）再重绘，避免焦点和输入被抢走。
+    if (options.keepFocus && typingInTaskPanel()) { state.eventRenderPending = true; return; }
+    state.eventRenderPending = false;
+    window.render();
   }
 
   const fmtMs = (ms) => ms == null ? '—' : (ms < 1000 ? Math.round(ms) + 'ms' : (ms / 1000).toFixed(1) + 's');
@@ -52,13 +62,13 @@ const Events = (() => {
       const progress = s.total ? Math.round(((s.done || 0) / s.total) * 100) : 0;
       const when = event.schedule?.startAt ? new Date(event.schedule.startAt).toLocaleString('zh-CN', { hour12: false }) : (event.pendingSchedule ? '待调度' : '立即');
       return `<tr>
-        <td>${badge(event.status)}</td>
-        <td><div class="evt-title">${esc(event.title)}</div><div class="hint">${esc(event.id)}${event.status === 'interrupted' ? ' · 待对账' : ''}</div></td>
-        <td class="hint">${esc(when)}</td>
-        <td><div class="evt-progress"><span style="width:${progress}%"></span></div><div class="hint">${s.done || 0}/${s.total || 0} 已处理${s.failed ? ' · ' + s.failed + ' 失败' : ''}${s.running ? ' · ' + s.running + ' 执行中' : ''}</div></td>
-        <td class="tnum">${duration(event)}</td>
-        <td class="hint">${event.createdAt ? new Date(event.createdAt).toLocaleString('zh-CN', { hour12: false }) : '—'}</td>
-        <td class="evt-actions"><button class="btn sm" data-event-detail="${esc(event.id)}">详情</button></td>
+        <td data-label="状态">${badge(event.status)}</td>
+        <td data-label="任务"><div class="evt-title">${esc(event.title)}</div><div class="hint">${esc(event.id)}${event.status === 'interrupted' ? ' · 待对账' : ''}</div></td>
+        <td class="hint" data-label="调度">${esc(when)}</td>
+        <td data-label="条目进度"><div class="evt-progress"><span style="width:${progress}%"></span></div><div class="hint">${s.done || 0}/${s.total || 0} 已处理${s.failed ? ' · ' + s.failed + ' 失败' : ''}${s.running ? ' · ' + s.running + ' 执行中' : ''}</div></td>
+        <td class="tnum" data-label="耗时">${duration(event)}</td>
+        <td class="hint" data-label="创建">${event.createdAt ? new Date(event.createdAt).toLocaleString('zh-CN', { hour12: false }) : '—'}</td>
+        <td class="evt-actions" data-label="操作"><button class="btn sm" data-event-detail="${esc(event.id)}">详情</button></td>
       </tr>`;
     }).join('');
     return `
@@ -509,13 +519,13 @@ const Events = (() => {
       const canCancel = ['draft', 'unscheduled', 'scheduled', 'queued', 'paused'].includes(event.status);
       const canDelete = ['draft', 'unscheduled'].includes(event.status);
       return `<tr>
-        <td><div class="evt-title">${esc(event.title)}</div><div class="hint">${esc(event.id)}</div></td>
-        <td>${event.stats?.total || event.itemCount || 0} 个分镜</td>
-        <td>${esc(when)}</td>
-        <td class="tnum">${Number(event.schedule?.order) || 0}</td>
-        <td>${Number(event.policy?.concurrency) || 1}</td>
-        <td>${event.policy?.onItemFail === 'stop' ? '失败即停' : '继续'}</td>
-        <td class="evt-actions">
+        <td data-label="任务"><div class="evt-title">${esc(event.title)}</div><div class="hint">${esc(event.id)}</div></td>
+        <td data-label="分镜">${event.stats?.total || event.itemCount || 0} 个分镜</td>
+        <td data-label="运行时间">${esc(when)}</td>
+        <td class="tnum" data-label="次序">${Number(event.schedule?.order) || 0}</td>
+        <td data-label="并发">${Number(event.policy?.concurrency) || 1}</td>
+        <td data-label="失败处理">${event.policy?.onItemFail === 'stop' ? '失败即停' : '继续'}</td>
+        <td class="evt-actions" data-label="操作">
           ${running ? '<span class="hint">执行中</span>' : `<button class="btn sm" data-event-schedule="${esc(event.id)}">${assigned ? '修改调度' : '配置调度'}</button>`}
           ${canCancel ? `<button class="btn sm ghost" data-event-action="cancel" data-id="${esc(event.id)}">取消</button>` : ''}
           ${canDelete ? `<button class="btn sm ghost" data-event-delete="${esc(event.id)}">删除</button>` : ''}
@@ -567,14 +577,14 @@ const Events = (() => {
       const when = event.schedule?.startAt ? new Date(event.schedule.startAt).toLocaleString('zh-CN', { hour12: false }) : '立即';
       const error = event.lastError || '';
       return `<tr>
-        <td>${badge(event.status)}</td>
-        <td><div class="evt-title">${esc(event.title)}</div><div class="hint">${esc(event.id)}</div></td>
-        <td><div class="hint">并发 ${Number(event.policy?.concurrency) || 1} · ${event.policy?.onItemFail === 'stop' ? '失败即停' : '失败继续'}</div><div class="hint">${esc(when)}</div></td>
-        <td>${event.startedAt ? new Date(event.startedAt).toLocaleString('zh-CN', { hour12: false }) : '—'}</td>
-        <td class="tnum">${durationText(event)}</td>
-        <td>${event.stats?.done || 0}/${event.stats?.total || 0}${event.stats?.failed ? ` · <span class="is-danger">失败 ${event.stats.failed}</span>` : ''}</td>
-        <td class="hint">${error ? esc((event.errorCount ? event.errorCount + ' 个 · ' : '') + error) : '—'}</td>
-        <td><button class="btn sm" data-event-attempts="${esc(event.id)}">执行记录</button></td>
+        <td data-label="状态">${badge(event.status)}</td>
+        <td data-label="任务"><div class="evt-title">${esc(event.title)}</div><div class="hint">${esc(event.id)}</div></td>
+        <td data-label="调度配置"><div class="hint">并发 ${Number(event.policy?.concurrency) || 1} · ${event.policy?.onItemFail === 'stop' ? '失败即停' : '失败继续'}</div><div class="hint">${esc(when)}</div></td>
+        <td data-label="开始时间">${event.startedAt ? new Date(event.startedAt).toLocaleString('zh-CN', { hour12: false }) : '—'}</td>
+        <td class="tnum" data-label="耗时">${durationText(event)}</td>
+        <td data-label="条目">${event.stats?.done || 0}/${event.stats?.total || 0}${event.stats?.failed ? ` · <span class="is-danger">失败 ${event.stats.failed}</span>` : ''}</td>
+        <td class="hint" data-label="错误 / 警告">${error ? esc((event.errorCount ? event.errorCount + ' 个 · ' : '') + error) : '—'}</td>
+        <td data-label="操作"><button class="btn sm" data-event-attempts="${esc(event.id)}">执行记录</button></td>
       </tr>`;
     }).join('');
     return `${taskErrorBanner()}<div class="table-wrap"><table class="jobs monitor-table"><thead><tr><th>状态</th><th>任务</th><th>调度配置</th><th>开始时间</th><th>耗时</th><th>条目</th><th>错误 / 警告</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>${page.footer}`;
@@ -620,13 +630,13 @@ const Events = (() => {
     const events = page.rows;
     if (!events.length) return `${taskErrorBanner()}<div class="card"><div class="empty"><strong>还没有任务日志</strong><p>任务执行后，每个分镜的状态和结果都会记录在这里。</p></div></div>`;
     const rows = events.map((event) => `<tr>
-      <td><div class="evt-title">${esc(event.title)}</div><div class="hint">${esc(event.id)}</div></td>
-      <td>${badge(event.status)}</td>
-      <td>${event.stats?.done || 0}/${event.stats?.total || 0}</td>
-      <td>${event.stats?.success || 0} 成功 · ${event.stats?.failed || 0} 失败${event.stats?.unknown ? ` · ${event.stats.unknown} 未知` : ''}</td>
-      <td>${event.startedAt ? new Date(event.startedAt).toLocaleString('zh-CN', { hour12: false }) : '—'}</td>
-      <td class="tnum">${durationText(event)}</td>
-      <td><button class="btn sm" data-event-log-view="${esc(event.id)}">查看分镜日志</button></td>
+      <td data-label="任务"><div class="evt-title">${esc(event.title)}</div><div class="hint">${esc(event.id)}</div></td>
+      <td data-label="状态">${badge(event.status)}</td>
+      <td data-label="进度">${event.stats?.done || 0}/${event.stats?.total || 0}</td>
+      <td data-label="结果">${event.stats?.success || 0} 成功 · ${event.stats?.failed || 0} 失败${event.stats?.unknown ? ` · ${event.stats.unknown} 未知` : ''}</td>
+      <td data-label="开始">${event.startedAt ? new Date(event.startedAt).toLocaleString('zh-CN', { hour12: false }) : '—'}</td>
+      <td class="tnum" data-label="耗时">${durationText(event)}</td>
+      <td data-label="操作"><button class="btn sm" data-event-log-view="${esc(event.id)}">查看分镜日志</button></td>
     </tr>`).join('');
     return `${taskErrorBanner()}<div class="table-wrap"><table class="jobs log-table"><thead><tr><th>任务</th><th>状态</th><th>进度</th><th>结果</th><th>开始</th><th>耗时</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>${page.footer}`;
   }
@@ -720,6 +730,7 @@ const Events = (() => {
     state.taskEventStatus = '';
     state.taskEventQuery = '';
     state.taskPages = {};
+    state.eventRenderPending = false;
     createDrafts.video = null;
     createDrafts.image = null;
     lastSignature = '';
@@ -866,7 +877,7 @@ const Events = (() => {
     if (timer) return;
     timer = setInterval(() => {
       if (state.route !== 'tasks' || document.querySelector('#modal:not([hidden])')) return;
-      if (['manage', 'schedule', 'monitor', 'logs'].includes(currentTaskTab())) load();
+      if (['manage', 'schedule', 'monitor', 'logs'].includes(currentTaskTab())) load({ keepFocus: true });
     }, 5000);
   }
 
