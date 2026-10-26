@@ -415,6 +415,7 @@ function importShots(projectId, items, sourceName = '', taskInput = {}) {
       title: name,
       prompt: String(item.prompt || ''),
       prefixPrompt: String(item.prefixPrompt || ''),
+      styleId: String(item.styleId || ''),
       duration: item.duration == null ? null : item.duration,
       ratio: item.ratio || item.aspectRatio || '',
       images: saved,

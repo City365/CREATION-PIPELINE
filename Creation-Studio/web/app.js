@@ -2278,11 +2278,13 @@ function renderShotFacts(shot) {
   const images = Array.isArray(json.images) ? json.images : [];
   const extras = Object.entries(json.extra || {}).filter(([, value]) => String(value).trim() !== '');
   const notes = images.filter((image) => image.note).map((image) => `${image.slot || '图'} ${image.note}`);
+  const styleName = state.styleDetail?.name || state.project?.style?.name || '';
+  const prefixText = json.prefixPrompt || (json.styleId ? `项目风格：${styleName || json.styleId}` : '无');
   const facts = [
     ['任务', `${shot.taskTitle || '—'}${shot.taskId ? ' · ' + shot.taskId : ''}`, true],
     ['分镜名称', shot.name],
     ['视频提示词', json.prompt || '—', true],
-    ['视频前置提示词', json.prefixPrompt || '无', true],
+    ['视频前置提示词', prefixText, true],
     ['参考图', `${shot.count} / 9`],
     ['视频画幅', json.ratio || '渠道默认'],
     ['视频时长', json.duration ? `${json.duration} 秒` : '渠道默认'],

@@ -123,12 +123,17 @@ const Events = (() => {
     return match ? match.id : '';
   }
 
+  function projectPrefix() {
+    return String(state.styleDetail?.video || state.styleDetail?.character || '').trim();
+  }
+
   function newDraft(kind) {
     const channelId = kind === 'video' ? defaultVideoChannel() : (imageChannelList()[0]?.id || '');
     return {
       kind,
       editId: '',
       title: '',
+      prefixPrompt: projectPrefix(),
       channelId,
       workflowId: kind === 'video' ? defaultWorkflowId(channelId) : '',
       file: null,
@@ -257,6 +262,7 @@ const Events = (() => {
           <label class="create-field"><span>${kind === 'video' ? '视频生成渠道' : '图像渠道'}</span><select class="select" id="tc-channel">${channels.map((channel) => `<option value="${esc(channel.id)}" ${channel.id === draft.channelId ? 'selected' : ''}>${esc(channel.name)}</option>`).join('') || '<option value="">没有可用渠道</option>'}</select></label>
           ${kind === 'video' && models.length > 1 ? `<label class="create-field"><span>视频模型</span><select class="select" id="tc-model">${models.map((model) => `<option value="${esc(model.id)}" ${model.id === draft.workflowId ? 'selected' : ''}>${esc(shortWorkflowLabel(model, draft.channelId))}</option>`).join('')}</select></label>` : ''}
         </div>
+        <label class="create-field create-prefix"><span>视频前置提示词<em>默认取项目风格，可改</em></span><textarea class="textarea" id="tc-prefix" rows="2" placeholder="风格、画质等，会拼在每条提示词前面">${esc(draft.prefixPrompt || '')}</textarea></label>
         <section class="create-import" id="tc-import">
           <div class="create-import-head">
             <b>分镜文件</b>
@@ -286,9 +292,11 @@ const Events = (() => {
     const title = root.querySelector('#tc-title');
     const channel = root.querySelector('#tc-channel');
     const model = root.querySelector('#tc-model');
+    const prefix = root.querySelector('#tc-prefix');
     if (title) draft.title = title.value;
     if (channel) draft.channelId = channel.value;
     if (model) draft.workflowId = model.value;
+    if (prefix) draft.prefixPrompt = prefix.value;
     if (!draft.workflowId && draft.channelId) draft.workflowId = defaultWorkflowId(draft.channelId);
     if (draft.msg) { draft.msg = ''; const box = root.querySelector('#tc-msg'); if (box) box.textContent = ''; }
     return draft;
@@ -339,6 +347,7 @@ const Events = (() => {
     const workflow = draft.kind === 'video' ? workflowFor(draft.workflowId) : null;
     const defaultDuration = Number(workflow?.durationDefault) || 10;
     const fallbackRatio = String(workflow?.defaultRatio || (workflow?.ratios || [])[0] || '16:9');
+    const projectStyleId = String(state.project?.styleId || state.project?.style?.id || '').trim();
     const rows = items.map((item, index) => {
       const prompt = String(item.prompt || '').trim();
       if (!prompt) throw new Error(`第 ${index + 1} 个分镜缺提示词`);
@@ -347,10 +356,10 @@ const Events = (() => {
       const title = String(item.title || '').trim() || undefined;
       const ratio = item.ratio || fallbackRatio;
       if (draft.kind === 'image') {
-        return { title, prompt, prefixPrompt: String(item.prefixPrompt || '').trim() || undefined, refs: images, imageRatio: ratio, aspectRatio: ratio, imageLayoutId: 'free', count: 1, channelId: draft.channelId };
+        return { title, prompt, prefixPrompt: String(draft.prefixPrompt || '').trim() || String(item.prefixPrompt || '').trim() || undefined, styleId: projectStyleId || undefined, styleLayer: 'image', refs: images, imageRatio: ratio, aspectRatio: ratio, imageLayoutId: 'free', count: 1, channelId: draft.channelId };
       }
       return {
-        title, prompt, prefixPrompt: String(item.prefixPrompt || '').trim() || undefined, images,
+        title, prompt, prefixPrompt: String(draft.prefixPrompt || '').trim() || String(item.prefixPrompt || '').trim() || undefined, styleId: projectStyleId || undefined, styleLayer: 'video', images,
         duration: Math.max(1, Math.min(15, Number(item.duration) || defaultDuration)),
         ratio,
         aspectRatio: ratio,
@@ -438,7 +447,7 @@ const Events = (() => {
         }
         return;
       }
-      if (target.id === 'tc-title' || target.id === 'tc-channel' || target.id === 'tc-model') readCreateHead(root);
+      if (target.id === 'tc-title' || target.id === 'tc-channel' || target.id === 'tc-model' || target.id === 'tc-prefix') readCreateHead(root);
     });
     form.addEventListener('change', (event) => {
       const target = event.target;
@@ -745,6 +754,7 @@ const Events = (() => {
     draft.editId = event.id;
     draft.title = event.title || '';
     const inputs = (event.items || []).map((item) => item.input || {})?.filter((input) => input && (input.prompt || input.userPrompt)) || [];
+    draft.prefixPrompt = String(inputs[0]?.prefixPrompt || '') || projectPrefix();
     const first = inputs[0] || {};
     const spec = event.spec || {};
     if (kind === 'video') {
