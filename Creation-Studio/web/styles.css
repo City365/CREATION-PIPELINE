@@ -2268,4 +2268,5 @@ body.is-pane-resizing * { user-select: none !important; }
 .lib-task-row .lib-count{font-size:10px;min-width:14px;text-align:right}
 .lib-task-row .lib-op,.lib-shot-row .lib-op{opacity:0}
 .lib-task-row:hover .lib-op,.lib-shot-row:hover .lib-op,.lib-task-row:focus-within .lib-op,.lib-shot-row:focus-within .lib-op{opacity:1}
-@media(max-width:900px){.library-page{grid-template-columns:1fr}.lib-task-row .lib-op,.lib-shot-row .lib-op{opacity:1}}
+@media(max-width:900px){.library-page{grid-template-columns:1fr}.lib-task-row .lib-op,.lib-shot-row .lib-op{opacity:1}}.tasks-page table.create-table th{padding-left:5px;padding-right:5px}
+.tasks-page table.create-table td{padding-left:5px;padding-right:5px}
