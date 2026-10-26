@@ -1458,6 +1458,16 @@ function mediaPath(input) {
     return ok(res, library.listMedia(url.searchParams.get('kind') || '', projectId));
   }
 
+  if (method === 'POST' && pathname === '/api/media/rename-shots') {
+    const body = await readBody(req).catch(() => ({}));
+    if (!projectId) return bad(res, '先选择项目');
+    const plan = planMediaShotNames(projectId);
+    if (body.dryRun !== false) return ok(res, plan);
+    if (!plan.plan.length) return ok(res, { ...plan, moved: [] });
+    const result = jobs.renameOutputs(plan.plan);
+    return ok(res, { ...plan, plan: plan.plan, moved: result.moved });
+  }
+
   if (method === 'GET' && pathname === '/api/media/file') {
     return serveFile(req, res, library.mediaFile(projectId, url.searchParams.get('path') || ''));
   }
@@ -1692,6 +1702,60 @@ if (require.main === module) start();
 
 module.exports = { server, start };
 
+
+/**
+ * 媒体库「按分镜重命名」：同一任务内按原始分镜顺序编号为 分镜 1..N。
+ * 只生成计划，不直接改文件；用户确认后才会调用 jobs.renameOutputs。
+ */
+function planMediaShotNames(projectId) {
+  const data = library.listMedia('video', projectId);
+  const root = path.resolve(data.root);
+  const keyOf = (file) => path.resolve(file).toLowerCase();
+  const jobByPath = new Map();
+  for (const job of jobs.list(projectId)) {
+    for (const out of job.outputs || []) if (out.path) jobByPath.set(keyOf(out.path), job);
+  }
+  const groups = new Map();
+  for (const item of data.items) {
+    if (item.kind !== 'video') continue;
+    const abs = path.resolve(item.path);
+    if (!workspace.isInside(root, abs)) continue;
+    const job = jobByPath.get(keyOf(abs));
+    let event = null;
+    let eventItem = null;
+    let index = 9999;
+    if (job && job.eventId) {
+      try {
+        const found = events.get(job.eventId);
+        const row = (found.items || []).find((entry) => entry.id === job.eventItemId);
+        if (row) { event = found; eventItem = row; index = found.items.indexOf(row); }
+      } catch { /* 旧任务没有事件记录时按任务名分组 */ }
+    }
+    const taskTitle = (event && event.title) || (job && job.taskTitle) || item.taskTitle || '未记录任务';
+    const key = (event && event.id) || ('task:' + taskTitle);
+    if (!groups.has(key)) groups.set(key, { taskTitle, rows: [] });
+    groups.get(key).rows.push({ item, job, eventItem, index });
+  }
+  const plan = [];
+  for (const group of groups.values()) {
+    group.rows.sort((a, b) => (a.index - b.index) || (a.item.mtime - b.item.mtime));
+    group.rows.forEach((row, position) => {
+      const oldPath = path.resolve(row.item.path);
+      const dir = path.dirname(oldPath);
+      const ext = path.extname(row.item.name) || '.mp4';
+      const newName = '分镜 ' + (position + 1) + ext;
+      const newPath = path.join(dir, newName);
+      if (keyOf(newPath) === keyOf(oldPath)) return;
+      plan.push({
+        oldPath, newPath, oldName: path.basename(oldPath), newName,
+        jobId: row.job ? row.job.id : '',
+        taskTitle: group.taskTitle,
+        shotTitle: (row.eventItem && row.eventItem.title) || (row.job && row.job.title) || '',
+      });
+    });
+  }
+  return { root, projectId, projectName: data.projectName || '', total: plan.length, plan };
+}
 
 function prepareEventVideos(inputs) {
   return inputs.map(original => {

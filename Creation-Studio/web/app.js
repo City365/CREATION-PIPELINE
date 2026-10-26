@@ -2587,10 +2587,26 @@ function renderMedia() {
   const data = state.media;
   if (!data) return `<div class="empty"><span class="spinner"></span></div>`;
   const items = data.items.filter((i) => i.kind === kind);
+  const shotNumber = (value) => {
+    const match = /(\d+)/.exec(String(value || ''));
+    return match ? Number(match[1]) : 9999;
+  };
+  const groups = new Map();
+  items.forEach((item, index) => {
+    const key = item.taskTitle || '未记录任务';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push({ item, index });
+  });
+  groups.forEach((rows) => rows.sort((a, b) => (shotNumber(a.item.outputLabel || a.item.shotLabel) - shotNumber(b.item.outputLabel || b.item.shotLabel)) || (b.item.mtime - a.item.mtime)));
+  const projectLabel = data.projectName || data.projectId || '未选择项目';
+  const projects = state.projects || [];
   return `
   <div class="page-head">
-    <div><h1>媒体库</h1><p class="mono">${esc(data.root)}</p></div>
+    <div><h1>媒体库</h1><p class="media-project-bar">
+      ${projects.length ? `<label>项目 <select class="select" id="media-project">${projects.map((project) => `<option value="${esc(project.id)}" ${project.id === data.projectId ? 'selected' : ''}>${esc(project.name)}</option>`).join('')}</select></label>` : `<span class="media-project">项目：${esc(projectLabel)}</span>`}
+      <span class="mono">${esc(data.root)}</span></p></div>
     <div class="page-actions">
+      ${kind === 'video' ? '<button class="btn" data-act="rename-media-shots">按分镜重命名</button>' : ''}
       <button class="btn" data-act="open-media-root">打开目录</button>
       <button class="btn" data-act="refresh-media">刷新</button>
       <button class="btn primary" data-act="media-edit">剪辑 / 工程</button>
@@ -2600,27 +2616,71 @@ function renderMedia() {
     <button class="chip ${kind === 'video' ? 'active' : ''}" data-kind="video">视频 ${data.items.filter((i) => i.kind === 'video').length}</button>
     <button class="chip ${kind === 'image' ? 'active' : ''}" data-kind="image">图像 ${data.items.filter((i) => i.kind === 'image').length}</button>
   </div>
-  ${items.length ? `<div class="grid-cards">${items.map((item, i) => `
-    <div class="media-card" data-media="${i}">
-      <div class="media-thumb ${item.kind === 'video' ? 'is-video' : ''}">${item.kind === 'image' ? `<img src="${item.url}" loading="lazy" />` : `<video src="${item.url}#t=0.5" preload="metadata" muted></video>`}</div>
-      <div class="media-meta">
-        <span class="name">${esc(item.name)}</span>
-        <span class="sub">${esc(item.day)} · ${fmtBytes(item.bytes)}</span>
-      </div>
-    </div>`).join('')}</div>` : `<div class="card"><div class="empty"><strong>还没有${kind === 'video' ? '视频' : '图片'}</strong><p>生成的成片会自动保存到媒体库目录，按日期 / 任务分文件夹。</p></div></div>`}
+  ${items.length ? [...groups.entries()].map(([taskTitle, rows]) => `<section class="media-task-group">
+    <div class="media-task-head"><b>${esc(taskTitle)}</b><span class="hint">${rows.length} 条</span></div>
+    <div class="grid-cards">${rows.map(({ item, index }) => `
+      <div class="media-card" data-media="${index}">
+        <div class="media-thumb ${item.kind === 'video' ? 'is-video' : ''}">${item.kind === 'image' ? `<img src="${item.url}" loading="lazy" />` : `<video src="${item.url}#t=0.5" preload="metadata" muted></video>`}</div>
+        <div class="media-meta">
+          <span class="name">${esc(item.outputLabel || item.shotLabel || item.name)}</span>
+          <span class="sub">${item.shotLabel && item.shotLabel !== item.outputLabel ? esc(item.shotLabel) + ' · ' : ''}${esc(item.name)} · ${esc(item.day)} · ${fmtBytes(item.bytes)}</span>
+        </div>
+      </div>`).join('')}</div>
+  </section>`).join('') : `<div class="card"><div class="empty"><strong>还没有${kind === 'video' ? '视频' : '图片'}</strong><p>生成的成片会自动保存到媒体库目录，按日期 / 任务分文件夹。</p></div></div>`}
   `;
+}
+
+async function openMediaRenameModal() {
+  const preview = await api('/api/media/rename-shots', { method: 'POST', body: { dryRun: true } });
+  if (!preview.plan.length) { toast('当前媒体库没有需要重命名的成片'); return; }
+  const groups = new Map();
+  preview.plan.forEach((row) => {
+    const key = row.taskTitle || '未记录任务';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(row);
+  });
+  const panel = openModal(`<div class="modal-head">
+      <div><h2>按分镜重命名</h2><div class="hint">同一任务内按原始分镜顺序编号为 分镜 1..N，只改文件名，不动视频内容</div></div>
+      <button class="btn ghost sm" data-close="1">关闭</button>
+    </div>
+    <div class="modal-body">
+      <div class="rename-media-list">${[...groups.entries()].map(([taskTitle, rows]) => `<section>
+        <h3>${esc(taskTitle)}<span class="hint">${rows.length} 条</span></h3>
+        ${rows.map((row) => `<div class="rename-media-row"><span class="old">${esc(row.oldName)}</span><span class="arrow">→</span><span class="new">${esc(row.newName)}</span>${row.shotTitle ? `<span class="hint">${esc(row.shotTitle)}</span>` : ''}</div>`).join('')}
+      </section>`).join('')}</div>
+      <p class="hint">共 ${preview.plan.length} 个文件。确认后立即改名；已经叫「分镜 N」的文件会跳过。</p>
+    </div>
+    <div class="modal-foot"><span class="grow"></span><button class="btn ghost" data-close="1">取消</button><button class="btn primary" id="media-rename-ok">确认重命名</button></div>`);
+  panel.classList.add('modal-wide');
+  panel.querySelector('#media-rename-ok').onclick = async () => {
+    const button = panel.querySelector('#media-rename-ok');
+    button.disabled = true;
+    try {
+      const result = await api('/api/media/rename-shots', { method: 'POST', body: { dryRun: false } });
+      state.media = await api('/api/media');
+      closeModal();
+      render();
+      toast(`已重命名 ${result.moved.length} 个成片`);
+    } catch (err) {
+      button.disabled = false;
+      toast(err.message, true);
+    }
+  };
 }
 
 function openMediaDetail(item) {
   const url = esc(item.url || '/api/file?path=' + enc(item.path));
   openModal(`
-    <div class="modal-head"><h2>${esc(item.name)}</h2><span class="grow"></span><button class="btn ghost sm" data-close="1">关闭</button></div>
+    <div class="modal-head"><h2>${esc(item.outputLabel || item.name)}</h2><span class="grow"></span><button class="btn ghost sm" data-close="1">关闭</button></div>
     <div class="modal-body">
       <div style="background:var(--surface-2);border-radius:10px;display:grid;place-items:center;min-height:240px;overflow:hidden">
         ${item.kind === 'video'
           ? `<video src="${url}" controls autoplay playsinline preload="metadata" style="width:100%;max-height:65vh;background:#111"></video>`
           : `<img src="${url}" alt="${esc(item.name)}" style="max-width:100%;max-height:65vh;object-fit:contain" />`}
       </div>
+      ${item.taskTitle ? `<div class="kv"><span>任务</span><span>${esc(item.taskTitle)}</span></div>` : ''}
+      ${item.shotLabel ? `<div class="kv"><span>分镜</span><span>${esc(item.shotLabel)}</span></div>` : ''}
+      <div class="kv"><span>文件</span><span class="mono">${esc(item.name)}</span></div>
       <div class="kv"><span>大小</span><span>${fmtBytes(item.bytes)}</span></div>
     </div>
     <div class="modal-foot"><button class="btn primary" id="media-preview-edit">加入剪辑</button><button class="btn" data-close="1">关闭</button></div>
@@ -2631,6 +2691,10 @@ function openMediaDetail(item) {
 }
 
 function bindMedia(root) {
+  root.querySelector('#media-project')?.addEventListener('change', async (event) => {
+    try { await setActiveProject(event.target.value); }
+    catch (err) { toast(err.message, true); }
+  });
   root.addEventListener('click', async (event) => {
     const kindBtn = event.target.closest('[data-kind]');
     if (kindBtn) { state.mediaKind = kindBtn.dataset.kind; return render(); }
@@ -2646,6 +2710,7 @@ function bindMedia(root) {
     if (!target) return;
     try {
       if (target.dataset.act === 'media-edit') return await openVideoEditor();
+      if (target.dataset.act === 'rename-media-shots') return await openMediaRenameModal();
       if (target.dataset.act === 'refresh-media') { state.media = await api('/api/media'); return render(); }
       if (target.dataset.act === 'open-media-root') { await api('/api/reveal', { method: 'POST', body: { path: state.media.root } }); }
     } catch (err) { toast(err.message, true); }

@@ -381,6 +381,19 @@ function fileForAsset(projectId, rel) {
 function listMedia(kind, projectId) {
   const root = path.resolve(mediaRoot(projectId));
   const items = [];
+  const jobs = require('./jobs');
+  const events = require('./events');
+  const keyOf = (file) => path.resolve(file).toLowerCase();
+  const jobByPath = new Map();
+  for (const job of jobs.list()) for (const out of job.outputs || []) if (out.path) jobByPath.set(keyOf(out.path), job);
+  const eventCache = new Map();
+  const resolveEvent = (eventId) => {
+    if (!eventId) return null;
+    if (!eventCache.has(eventId)) {
+      try { eventCache.set(eventId, events.get(eventId)); } catch { eventCache.set(eventId, null); }
+    }
+    return eventCache.get(eventId);
+  };
   let days = [];
   try {
     days = fs.readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
@@ -401,6 +414,9 @@ function listMedia(kind, projectId) {
         if (kind && kind !== kindOfFile) continue;
         const abs = path.join(jobDir, entry.name);
         const st = fs.statSync(abs);
+        const job = jobByPath.get(keyOf(abs));
+        const event = resolveEvent(job && job.eventId);
+        const eventItem = event ? (event.items || []).find((row) => row.id === job.eventItemId) : null;
         items.push({
           day,
           jobId: jobEntry.name,
@@ -410,6 +426,10 @@ function listMedia(kind, projectId) {
           bytes: st.size,
           mtime: st.mtimeMs,
           title: (params && params.workflow) || '',
+          taskTitle: (params && (params.taskTitle || params.eventTitle)) || (event && event.title) || (job && job.taskTitle) || '',
+          shotLabel: (params && (params.title || params.shotLabel)) || (eventItem && eventItem.title) || (job && job.title) || '',
+          outputLabel: (params && (params.outputLabel || params.shotLabel)) || '',
+          eventId: (params && params.eventId) || (job && job.eventId) || '',
           prompt: params ? String(params.prompt || '').slice(0, 160) : '',
           url: '/api/media/file?path=' + encodeURIComponent(abs),
           rel: path.relative(root, abs).split(path.sep).join('/'),
@@ -446,7 +466,8 @@ function listMedia(kind, projectId) {
     }
   }
   items.sort((a, b) => b.mtime - a.mtime);
-  return { root, projectId: String(projectId || ''), items };
+  const project = projectOrNull(projectId);
+  return { root, projectId: String(projectId || ''), projectName: project ? project.name : '', items };
 }
 
 function mediaFile(projectId, file) {

@@ -267,6 +267,8 @@ function addJobs(input) {
       itemId: input.itemId || null,
       eventId: input.eventId || null,
       eventItemId: input.eventItemId || null,
+      taskTitle: String(input.taskTitle || ''),
+      shotLabel: String(input.shotLabel || ''),
       model:input.model||null,
       userPrompt: input.userPrompt == null ? prompt : input.userPrompt,
       prefixPrompt: input.prefixPrompt,
@@ -521,6 +523,11 @@ function writeJobMeta(job, dir, extra = {}) {
     id: job.id,
     createdAt: job.createdAt,
     finishedAt: job.finishedAt,
+    title: job.title || '',
+    shotLabel: job.shotLabel || '',
+    taskTitle: job.taskTitle || '',
+    eventId: job.eventId || '',
+    eventItemId: job.eventItemId || '',
     prompt: job.prompt,
     userPrompt: job.userPrompt,
     prefixPrompt: job.prefixPrompt,
@@ -549,6 +556,78 @@ function writeJobMeta(job, dir, extra = {}) {
   fs.writeFileSync(path.join(dir, 'prompt.txt'), job.prompt + '\n', 'utf8');
 }
 
+/** 成片按分镜名落盘；没有分镜名的旧任务继续用 01-video 这类编号。 */
+function outputName(job, kind, ext, index = 1) {
+  const label = sanitizeFilename(String(job.shotLabel || ''), '');
+  const suffix = index > 1 ? '-' + index : '';
+  if (label) return label + suffix + ext;
+  return String(index).padStart(2, '0') + '-' + kind + suffix + ext;
+}
+
+/** 批量把已有成片改成目标文件名；同时更新 jobs.json 和落盘 params.json。 */
+function renameOutputs(plan) {
+  if (!Array.isArray(plan) || !plan.length) return { moved: [] };
+  const keyOf = (file) => path.resolve(file).toLowerCase();
+  const rows = plan
+    .map((row) => ({ ...row, from: path.resolve(row.oldPath), to: path.resolve(row.newPath) }))
+    .filter((row) => keyOf(row.from) !== keyOf(row.to));
+  if (!rows.length) return { moved: [] };
+  const oldPaths = new Set(rows.map((row) => keyOf(row.from)));
+  const targets = new Set();
+  for (const row of rows) {
+    if (!fs.existsSync(row.from)) throw new Error('文件不存在：' + row.from);
+    const target = keyOf(row.to);
+    if (targets.has(target)) throw new Error('多个成片要改成同一个文件名：' + row.to);
+    if (fs.existsSync(row.to) && !oldPaths.has(target)) throw new Error('目标文件已存在：' + row.to);
+    targets.add(target);
+  }
+  const prepared = [];
+  try {
+    rows.forEach((row, index) => {
+      const job = state.jobs.find((j) => (j.outputs || []).some((out) => out.path && keyOf(out.path) === keyOf(row.from)));
+      const out = job ? (job.outputs || []).find((item) => item.path && keyOf(item.path) === keyOf(row.from)) : null;
+      const temp = row.from + '.rename-' + process.pid + '-' + index;
+      fs.renameSync(row.from, temp);
+      prepared.push({ ...row, job, out, temp });
+    });
+  } catch (err) {
+    for (const row of prepared) {
+      try { fs.renameSync(row.temp, row.from); } catch { /* 尽力恢复 */ }
+    }
+    throw err;
+  }
+  const moved = [];
+  for (const row of prepared) {
+    fs.renameSync(row.temp, row.to);
+    if (row.job && row.out) {
+      row.out.name = path.basename(row.to);
+      row.out.path = row.to;
+      row.job.outputDir = path.dirname(row.to);
+      try {
+        const file = path.join(path.dirname(row.to), 'params.json');
+        const params = readJson(file, null);
+        if (params) {
+          params.outputs = Array.isArray(params.outputs)
+            ? params.outputs.map((item) => item.file === path.basename(row.from) ? { ...item, file: path.basename(row.to) } : item)
+            : params.outputs;
+          params.outputLabel = path.basename(row.to, path.extname(row.to));
+          params.taskTitle = row.job.taskTitle || row.taskTitle || params.taskTitle || '';
+          params.shotLabel = row.job.shotLabel || row.shotTitle || params.shotLabel || '';
+          params.eventId = row.job.eventId || params.eventId || '';
+          params.eventItemId = row.job.eventItemId || params.eventItemId || '';
+          writeJson(file, params);
+        }
+      } catch { /* 元数据失败不影响文件已经改名 */ }
+    }
+    moved.push({ from: row.from, to: row.to, jobId: row.job ? row.job.id : '' });
+  }
+  if (moved.length) {
+    saveState();
+    emitter.emit('refresh');
+  }
+  return { moved };
+}
+
 async function saveOutputs(job, dir, items, a) {
   let index = 0;
   for (const item of items) {
@@ -558,7 +637,7 @@ async function saveOutputs(job, dir, items, a) {
     let ext = path.extname(item.filename || '') || (kind === 'video' ? '.mp4' : kind === 'audio' ? '.mp3' : '.png');
     const res = await providers.download(item.url);
     if (!ext) ext = kind === 'video' ? '.mp4' : '.png';
-    const name = `${String(index).padStart(2, '0')}-${kind}${ext}`;
+    const name = outputName(job, kind, ext, index);
     const file = path.join(dir, name);
     fs.writeFileSync(file, res.buffer);
     job.outputs.push({ type: kind, name, path: file, bytes: res.buffer.length, url: item.url });
@@ -679,7 +758,7 @@ async function runGenericVideo(job, wf, a, slot) {
     ext = path.extname(new URL(absolute).pathname) || '.mp4';
   } catch { /* keep mp4 */ }
   if (!/^\.(mp4|webm|mov|m4v)$/i.test(ext)) ext = /webm/i.test(res.contentType) ? '.webm' : '.mp4';
-  const name = '01-video' + ext.toLowerCase();
+  const name = outputName(job, 'video', ext.toLowerCase());
   const file = path.join(dir, name);
   fs.writeFileSync(file, res.buffer);
   job.outputs.push({ type: 'video', name, path: file, bytes: res.buffer.length, url: absolute });
@@ -739,7 +818,7 @@ async function runManagerVideo(job, wf, a, slot) {
   job.outputDir = dir;
   const { buffer, contentType } = await managerVideo.download(channel, submitted.taskId);
   const ext = /webm/i.test(contentType) ? '.webm' : '.mp4';
-  const name = '01-video' + ext;
+  const name = outputName(job, 'video', ext);
   const file = path.join(dir, name);
   fs.writeFileSync(file, buffer);
   job.outputs.push({ type: 'video', name, path: file, bytes: buffer.length, url: managerVideo.baseUrl(channel) + '/api/tasks/' + submitted.taskId + '/file' });
@@ -780,6 +859,7 @@ module.exports = {
   cancel,
   retry,
   revisePrompt,
+  renameOutputs,
   resume,
   remove,
   setHeld,
