@@ -806,63 +806,135 @@ const Events = (() => {
   }
 
   async function openDetail(id) {
-    const event = await api('/api/events/' + encodeURIComponent(id)+'?paged=1&page='+((state.taskPages||{}).detail||1));
+    const event = await api('/api/events/' + encodeURIComponent(id) + '?paged=1&page=' + ((state.taskPages || {}).detail || 1));
     modalEventId = id;
     const s = event.stats || {};
-    const detailPage=taskPagination(event.items||[],'detail',event.itemPaging);
-    const items = detailPage.rows.map((item) => `<tr>
-      <td>${itemStatusBadge(item.status)}</td>
-      <td>${esc(item.title || item.refId)}<div class="hint">${esc(item.refType)} · ${esc(item.refId)}</div></td>
-      <td class="hint">${esc(item.error || '—')}</td>
-      <td class="evt-actions">${['queued','paused'].includes(item.status)?`<button class="btn sm" data-event-item-action="up" data-item="${esc(item.id)}">上移</button><button class="btn sm" data-event-item-action="down" data-item="${esc(item.id)}">下移</button>`:''}<button class="btn sm ghost" data-event-item-log="${esc(item.id)}" ${item.refId?'':'disabled'}>日志</button><button class="btn sm ghost" data-event-item-probe="${esc(item.refId)}" ${item.refId?'':'disabled'} data-ref-type="${esc(item.refType)}">探针</button>${item.remoteId&&item.provider==='manager'&&['failed','unknown','canceled'].includes(item.status)?`<button class="btn sm" data-event-item-action="resume-original" data-item="${esc(item.id)}">继续查询／下载</button>`:''}${['failed','canceled','skipped'].includes(item.status) ? `<button class="btn sm" data-event-item-action="retry" data-item="${esc(item.id)}">重试</button>` : ''}${['queued','paused'].includes(item.status) ? `<button class="btn sm ghost" data-event-item-action="skip" data-item="${esc(item.id)}" ${item.refId?'':'disabled'}>跳过</button>` : ''}</td>
-    </tr>`).join('');
-    const panel = openModal(`<div class="modal-head"><h2>${esc(event.title)}</h2><button class="btn" data-close="1">关闭</button></div>
-      <div class="modal-body">
-        <div class="hint">${esc(event.id)} · ${esc(SOURCE[event.source] || event.source)} · 创建 ${new Date(event.createdAt).toLocaleString('zh-CN', { hour12: false })}</div>
-        ${event.status==='draft'?`<button class="btn" data-event-edit="${esc(event.id)}">编辑草稿</button><button class="btn primary" data-event-action="queue" data-id="${esc(event.id)}">加入队列</button><button class="btn ghost" data-event-delete="${esc(event.id)}">删除</button>`:''}
-        ${event.status==='unscheduled'?`<button class="btn" data-event-edit="${esc(event.id)}">编辑任务</button><button class="btn ghost" data-event-action="cancel" data-id="${esc(event.id)}">取消任务</button><button class="btn ghost" data-event-delete="${esc(event.id)}">删除</button>`:''}
-        ${event.status==='canceled'?`<button class="btn ghost" data-event-delete="${esc(event.id)}">删除</button>`:''}
-        <div class="row evt-actions" style="gap:8px;flex-wrap:wrap;margin:8px 0">
-          ${['queued','running'].includes(event.status) ? `<button class="btn sm" data-event-action="pause" data-id="${esc(event.id)}">暂停</button>` : ''}
-          ${event.status === 'paused' ? `<button class="btn sm" data-event-action="resume" data-id="${esc(event.id)}">继续</button>` : ''}
-          ${['queued','running','paused'].includes(event.status) ? `<button class="btn sm ghost" data-event-action="cancel" data-id="${esc(event.id)}">取消</button>` : ''}
-          ${s.failed ? `<button class="btn sm" data-event-action="retry-failed" data-id="${esc(event.id)}">重试失败项</button>` : ''}
-        </div>
-        <div class="row" style="gap:16px;flex-wrap:wrap">
-          <span>状态：${badge(event.status)}</span>
-          <span>条目：${s.done || 0}/${s.total || 0} 完成</span>
-          <span>失败：${s.failed || 0}</span>
-          <span>执行中：${s.running || 0}</span>
-          <span>未知：${s.unknown || 0}</span>
-        </div>
-        ${items ? `<div class="table-wrap"><table class="jobs"><thead><tr><th>状态</th><th>条目</th><th>错误</th><th>操作</th></tr></thead><tbody>${items}</tbody></table></div>` : '<div class="hint">这个事件还没有条目。</div>'}
-        ${detailPage.footer}<div id="evt-report"></div><div id="evt-attempts"></div>
+    const detailPage = taskPagination(event.items || [], 'detail', event.itemPaging);
+    const offset = ((detailPage.page || 1) - 1) * 10;
+    const rows = detailPage.rows.map((item, index) => {
+      const error = String(item.error || '');
+      const errorCell = !error ? '<span class="hint">—</span>'
+        : error.length > 120
+          ? `<details class="evt-error"><summary>${esc(error.slice(0, 110))}…</summary><pre>${esc(error)}</pre></details>`
+          : `<div class="evt-error">${esc(error)}</div>`;
+      const actions = [];
+      if (['queued', 'paused'].includes(item.status)) {
+        actions.push(`<button class="btn sm ghost" data-event-item-action="up" data-item="${esc(item.id)}">上移</button>`);
+        actions.push(`<button class="btn sm ghost" data-event-item-action="down" data-item="${esc(item.id)}">下移</button>`);
+      }
+      if (item.refId) {
+        actions.push(`<button class="btn sm ghost" data-event-item-log="${esc(item.id)}">日志</button>`);
+        actions.push(`<button class="btn sm ghost" data-event-item-probe="${esc(item.refId)}" data-ref-type="${esc(item.refType)}">探针</button>`);
+      }
+      if (item.remoteId && item.provider === 'manager' && ['failed', 'unknown', 'canceled'].includes(item.status)) {
+        actions.push(`<button class="btn sm" data-event-item-action="resume-original" data-item="${esc(item.id)}">继续查询</button>`);
+      }
+      if (['failed', 'canceled', 'skipped'].includes(item.status)) {
+        actions.push(`<button class="btn sm" data-event-item-action="retry" data-item="${esc(item.id)}">重试</button>`);
+      }
+      if (['queued', 'paused'].includes(item.status) && item.refId) {
+        actions.push(`<button class="btn sm ghost" data-event-item-action="skip" data-item="${esc(item.id)}">跳过</button>`);
+      }
+      return `<tr>
+        <td class="tnum">${offset + index + 1}</td>
+        <td><div class="evt-title">${esc(item.title || item.refId || '—')}</div><div class="hint">${esc(item.refType)}${item.provider ? ' · ' + esc(item.provider) : ''}</div></td>
+        <td>${itemStatusBadge(item.status)}</td>
+        <td>${errorCell}</td>
+        <td><div class="evt-row-actions">${actions.join('')}</div></td>
+      </tr>`;
+    }).join('');
+
+    const pct = s.total ? Math.round(((s.done || 0) / s.total) * 100) : 0;
+    const actionButtons = [
+      event.status === 'draft' ? `<button class="btn" data-event-edit="${esc(event.id)}">编辑草稿</button><button class="btn primary" data-event-action="queue" data-id="${esc(event.id)}">加入队列</button>` : '',
+      event.status === 'unscheduled' ? `<button class="btn" data-event-edit="${esc(event.id)}">编辑任务</button><button class="btn ghost" data-event-action="cancel" data-id="${esc(event.id)}">取消任务</button>` : '',
+      ['draft', 'unscheduled', 'canceled'].includes(event.status) ? `<button class="btn ghost" data-event-delete="${esc(event.id)}">删除</button>` : '',
+      ['queued', 'running'].includes(event.status) ? `<button class="btn sm" data-event-action="pause" data-id="${esc(event.id)}">暂停</button>` : '',
+      event.status === 'paused' ? `<button class="btn sm" data-event-action="resume" data-id="${esc(event.id)}">继续</button>` : '',
+      ['queued', 'running', 'paused'].includes(event.status) ? `<button class="btn sm ghost" data-event-action="cancel" data-id="${esc(event.id)}">取消</button>` : '',
+      s.failed ? `<button class="btn sm" data-event-action="retry-failed" data-id="${esc(event.id)}">重试失败项</button>` : '',
+    ].filter(Boolean).join('');
+
+    const panel = openModal(`<div class="modal-head evt-detail-head">
+        <div><h2>${esc(event.title)}</h2><div class="hint">${esc(event.id)} · ${esc(SOURCE[event.source] || event.source)} · 创建 ${new Date(event.createdAt).toLocaleString('zh-CN', { hour12: false })}</div></div>
+        <button class="btn ghost sm" data-close="1">关闭</button>
+      </div>
+      <div class="modal-body evt-detail">
+        <section class="evt-summary">
+          <div class="evt-summary-top">${badge(event.status)}<div class="evt-progress"><span style="width:${pct}%"></span></div><b>${s.done || 0}/${s.total || 0}</b></div>
+          <div class="evt-kpis">
+            <div><span>总条目</span><b>${s.total || 0}</b></div>
+            <div><span>成功</span><b class="is-ok">${s.success || 0}</b></div>
+            <div><span>失败</span><b class="is-bad">${s.failed || 0}</b></div>
+            <div><span>执行中</span><b>${s.running || 0}</b></div>
+            <div><span>未知</span><b>${s.unknown || 0}</b></div>
+            <div><span>耗时</span><b>${duration(event)}</b></div>
+          </div>
+          ${actionButtons ? `<div class="evt-detail-actions">${actionButtons}</div>` : ''}
+        </section>
+        <section class="evt-detail-section">
+          <div class="evt-section-head"><h3>分镜条目</h3><span class="hint">第 ${detailPage.page || 1} / ${Math.max(1, Math.ceil((event.itemPaging?.total || (event.items || []).length) / 10))} 页</span></div>
+          ${rows ? `<div class="table-wrap evt-detail-table"><table class="jobs"><thead><tr><th>#</th><th>分镜</th><th>状态</th><th>错误 / 结果</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table></div>${detailPage.footer}` : '<div class="hint">这个任务还没有条目。</div>'}
+        </section>
+        <section id="evt-report" class="evt-detail-section"></section>
+        <section id="evt-attempts" class="evt-detail-section"></section>
         <div id="evt-item-log"></div>
       </div>
       <div class="modal-foot"><span class="grow"></span><button class="btn" data-close="1">关闭</button></div>`);
     panel.classList.add('modal-wide');
     const logBox = document.querySelector('#evt-item-log');
-    api('/api/events/'+encodeURIComponent(id)+'/attempts?page='+((state.taskPages||{}).attempts||1)).then(data=>{const target=document.querySelector('#evt-attempts');if(!target)return;const attempts=data.items.flatMap(i=>i.attempts.map(a=>({...a,title:i.title})));const page=taskPagination(attempts,'attempts',data);target.innerHTML=attempts.length?'<details><summary>执行历史（'+data.total+'）</summary>'+page.rows.map(a=>'<div class="evt-report-row"><span>'+esc(a.title)+' · '+esc(a.status)+' · '+new Date(a.createdAt).toLocaleString()+'</span><button class="btn sm" data-attempt-log="'+esc(a.id)+'">查看本次日志</button></div>').join('')+page.footer+'</details>':'';}).catch(()=>{});
-    panel.addEventListener('click',async e=>{const page=e.target.closest('[data-task-page]');if(page){state.taskPages={...(state.taskPages||{}),[page.dataset.pageKey]:Number(page.dataset.taskPage)};await openDetail(id);return;}const attempt=e.target.closest('[data-attempt-log]');if(attempt){try{const data=await api('/api/task-attempts/'+encodeURIComponent(attempt.dataset.attemptLog)+'/logs');logBox.innerHTML='<pre class="evt-log">'+esc(data.lines.map(l=>l.text||l.message||'').join('\n'))+'</pre>'+(data.hasMore?'<button class="btn" data-more-attempt="'+esc(data.id)+'" data-after="'+data.next+'">继续加载</button>':'');}catch(err){toast(err.message,true);}}const more=e.target.closest('[data-more-attempt]');if(more){const data=await api('/api/task-attempts/'+encodeURIComponent(more.dataset.moreAttempt)+'/logs?after='+more.dataset.after);logBox.querySelector('pre').textContent+='\n'+data.lines.map(l=>l.text||l.message||'').join('\n');more.dataset.after=data.next;more.hidden=!data.hasMore;}});
+    api('/api/events/' + encodeURIComponent(id) + '/attempts?page=' + ((state.taskPages || {}).attempts || 1)).then((data) => {
+      const target = document.querySelector('#evt-attempts');
+      if (!target) return;
+      const attempts = data.items.flatMap((item) => item.attempts.map((attempt) => ({ ...attempt, title: item.title })));
+      const page = taskPagination(attempts, 'attempts', data);
+      target.innerHTML = attempts.length
+        ? `<details class="evt-history"><summary>执行历史（${data.total}）</summary><div class="evt-history-list">${page.rows.map((attempt) => `<div class="evt-history-row"><span>${esc(attempt.title)} · ${esc(ITEM[attempt.status] || attempt.status)} · ${new Date(attempt.createdAt).toLocaleString('zh-CN', { hour12: false })}</span><button class="btn sm ghost" data-attempt-log="${esc(attempt.id)}">查看本次日志</button></div>`).join('')}</div>${page.footer}</details>`
+        : '';
+    }).catch(() => {});
+
+    panel.addEventListener('click', async (e) => {
+      const page = e.target.closest('[data-task-page]');
+      if (page) {
+        state.taskPages = { ...(state.taskPages || {}), [page.dataset.pageKey]: Number(page.dataset.taskPage) };
+        await openDetail(id);
+        return;
+      }
+      const attempt = e.target.closest('[data-attempt-log]');
+      if (attempt) {
+        try {
+          const data = await api('/api/task-attempts/' + encodeURIComponent(attempt.dataset.attemptLog) + '/logs');
+          logBox.innerHTML = '<div class="evt-section-head"><h3>执行日志</h3></div><pre class="evt-log">' + esc(data.lines.map((line) => line.text || line.message || '').join('\n')) + '</pre>' + (data.hasMore ? '<button class="btn" data-more-attempt="' + esc(data.id) + '" data-after="' + data.next + '">继续加载</button>' : '');
+        } catch (err) { toast(err.message, true); }
+      }
+      const more = e.target.closest('[data-more-attempt]');
+      if (more) {
+        const data = await api('/api/task-attempts/' + encodeURIComponent(more.dataset.moreAttempt) + '/logs?after=' + more.dataset.after);
+        logBox.querySelector('pre').textContent += '\n' + data.lines.map((line) => line.text || line.message || '').join('\n');
+        more.dataset.after = data.next;
+        more.hidden = !data.hasMore;
+      }
+    });
 
     const reportBox = document.querySelector('#evt-report');
     api('/api/events/' + encodeURIComponent(id) + '/report').then((report) => {
-      const failures = (report.failures || []).map((f) => `<li>${esc(f.provider || '未知')} · ${esc(f.channelId || '-')} · ${esc(f.error.slice(0, 120))} ×${f.count}</li>`).join('');
-      reportBox.innerHTML = `<div class="evt-report">
-        <div class="evt-report-row"><b>成功率</b><span>${report.successRate == null ? '—' : report.successRate + '%'}</span><span class="hint">成功 ${report.success} / 失败 ${report.failed} / 取消 ${report.canceled} / 跳过 ${report.skipped} / 未知 ${report.unknown}</span></div>
-        <div class="evt-report-row"><b>耗时</b><span>P50 ${fmtMs(report.durationMs.p50)} · P90 ${fmtMs(report.durationMs.p90)} · 最长 ${fmtMs(report.durationMs.max)}</span></div>
-        ${failures ? `<div class="evt-report-row"><b>失败归因</b><ul class="evt-failures">${failures}</ul></div>` : ''}
-        <div class="evt-report-row"><a class="btn sm" href="/api/events/${encodeURIComponent(id)}/report?format=csv" download>导出 CSV</a></div>
-      </div>`;
+      const failures = (report.failures || []).map((failure) => `<li><div><b>${esc(failure.provider || '未知')}</b><span class="hint">${esc(failure.channelId || '-')}</span></div><p>${esc(String(failure.error || '').slice(0, 300))}</p><em>×${failure.count}</em></li>`).join('');
+      reportBox.innerHTML = `<div class="evt-section-head"><h3>执行报告</h3><a class="btn sm ghost" href="/api/events/${encodeURIComponent(id)}/report?format=csv" download>导出 CSV</a></div>
+        <div class="evt-report-grid">
+          <div><span>成功率</span><b>${report.successRate == null ? '—' : report.successRate + '%'}</b></div>
+          <div><span>成功 / 失败</span><b>${report.success} / ${report.failed}</b></div>
+          <div><span>取消 / 跳过 / 未知</span><b>${report.canceled} / ${report.skipped} / ${report.unknown}</b></div>
+          <div><span>耗时 P50 / P90 / 最长</span><b>${fmtMs(report.durationMs.p50)} / ${fmtMs(report.durationMs.p90)} / ${fmtMs(report.durationMs.max)}</b></div>
+        </div>
+        ${failures ? `<div class="evt-failures-block"><h4>失败归因</h4><ul class="evt-failures">${failures}</ul></div>` : ''}`;
     }).catch(() => { reportBox.innerHTML = ''; });
+
     document.querySelectorAll('[data-event-item-probe]').forEach((button) => {
       button.onclick = async () => {
         try {
           const result = await api('/api/tasks/' + encodeURIComponent(button.dataset.eventItemProbe) + '/probe', { method: 'POST', body: {} });
-          logBox.innerHTML = '<h3 style="margin:12px 0 6px">探针结果</h3><pre class="evt-log">' + esc(JSON.stringify(result, null, 2)) + '</pre>';
-        } catch (err) {
-          toast(err.message, true);
-        }
+          logBox.innerHTML = '<div class="evt-section-head"><h3>探针结果</h3></div><pre class="evt-log">' + esc(JSON.stringify(result, null, 2)) + '</pre>';
+        } catch (err) { toast(err.message, true); }
       };
     });
     document.querySelectorAll('[data-event-item-action]').forEach((button) => {
@@ -871,9 +943,9 @@ const Events = (() => {
     document.querySelectorAll('[data-event-item-log]').forEach((button) => {
       button.onclick = async () => {
         const data = await api('/api/events/' + encodeURIComponent(id) + '/items/' + encodeURIComponent(button.dataset.eventItemLog) + '/log');
-        logBox.innerHTML = '<h3 style="margin:12px 0 6px">条目日志：' + esc(data.item?.title || data.item?.refId || '') + '</h3>' +
+        logBox.innerHTML = '<div class="evt-section-head"><h3>条目日志 · ' + esc(data.item?.title || data.item?.refId || '') + '</h3></div>' +
           ((data.lines || []).length
-            ? '<pre class="evt-log">' + esc(data.lines.map((l) => (l.t ? new Date(l.t).toLocaleTimeString('zh-CN', { hour12: false }) + ' ' : '') + (l.level || 'info') + ' ' + (l.text || '')).join('\n')) + '</pre>'
+            ? '<pre class="evt-log">' + esc(data.lines.map((line) => (line.t ? new Date(line.t).toLocaleTimeString('zh-CN', { hour12: false }) + ' ' : '') + (line.level || 'info') + ' ' + (line.text || '')).join('\n')) + '</pre>'
             : '<div class="hint">没有日志记录。</div>');
       };
     });

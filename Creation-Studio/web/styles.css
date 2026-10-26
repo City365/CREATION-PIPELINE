@@ -2269,4 +2269,55 @@ body.is-pane-resizing * { user-select: none !important; }
 .lib-task-row .lib-op,.lib-shot-row .lib-op{opacity:0}
 .lib-task-row:hover .lib-op,.lib-shot-row:hover .lib-op,.lib-task-row:focus-within .lib-op,.lib-shot-row:focus-within .lib-op{opacity:1}
 @media(max-width:900px){.library-page{grid-template-columns:1fr}.lib-task-row .lib-op,.lib-shot-row .lib-op{opacity:1}}.tasks-page table.create-table th{padding-left:5px;padding-right:5px}
-.tasks-page table.create-table td{padding-left:5px;padding-right:5px}
+.tasks-page table.create-table td{padding-left:5px;padding-right:5px}.create-prefix{display:grid;gap:6px}
+.create-prefix .textarea{min-height:64px;resize:vertical}
+/* 任务详情：可审查的摘要 + 条目 + 报告 */
+.modal.modal-wide{width:min(1100px,calc(100vw - 32px))}
+.evt-detail-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}
+.evt-detail-head h2{line-height:1.35}
+.evt-detail{display:grid;gap:16px;padding:16px 18px}
+.evt-summary{border:1px solid var(--h3-border);border-radius:10px;background:var(--h3-bg-1);padding:14px;display:grid;gap:12px}
+.evt-summary-top{display:flex;align-items:center;gap:12px}
+.evt-summary-top .evt-progress{flex:1;width:auto;height:6px}
+.evt-summary-top b{font-size:12px;min-width:48px;text-align:right}
+.evt-kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}
+.evt-kpis>div{border:1px solid var(--h3-border);border-radius:7px;background:var(--h3-bg-0);padding:8px 10px;min-width:0}
+.evt-kpis span{display:block;font-size:10px;color:var(--h3-text-3);margin-bottom:3px}
+.evt-kpis b{font-size:16px;font-weight:600;font-variant-numeric:tabular-nums}
+.evt-kpis b.is-ok{color:var(--task-green,var(--h3-ok))}
+.evt-kpis b.is-bad{color:var(--task-red,var(--h3-danger))}
+.evt-detail-actions{display:flex;gap:8px;flex-wrap:wrap;padding-top:2px}
+.evt-detail-section{border-top:1px solid var(--h3-border);padding-top:14px;display:grid;gap:10px}
+.evt-section-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.evt-section-head h3{margin:0;font-size:13px;font-weight:650}
+.evt-detail-table{max-height:420px}
+.evt-detail-table table{min-width:780px}
+.evt-detail-table thead th{position:sticky;top:0;z-index:1}
+.evt-detail-table td{vertical-align:top;padding:10px 12px}
+.evt-row-actions{display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end}
+.evt-error{font-size:12px;line-height:1.55;color:var(--h3-text-2);white-space:pre-wrap;word-break:break-word;max-height:4.8em;overflow:auto}
+.evt-error summary{cursor:pointer;color:var(--h3-text-2)}
+.evt-error pre{margin:6px 0 0;max-height:180px;overflow:auto;white-space:pre-wrap;font-size:11px;line-height:1.55;color:var(--h3-text-2)}
+.evt-report-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px}
+.evt-report-grid>div{border:1px solid var(--h3-border);border-radius:7px;background:var(--h3-bg-0);padding:10px 12px;display:grid;gap:3px}
+.evt-report-grid span{font-size:10px;color:var(--h3-text-3)}
+.evt-report-grid b{font-size:13px;font-weight:600;font-variant-numeric:tabular-nums}
+.evt-failures-block h4{margin:2px 0 4px;font-size:12px;font-weight:600;color:var(--h3-text-2)}
+.evt-failures{list-style:none;margin:0;padding:0;display:grid;gap:0}
+.evt-failures li{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 12px;padding:8px 0;border-bottom:1px solid var(--h3-border)}
+.evt-failures li:last-child{border-bottom:0}
+.evt-failures li>div{display:flex;gap:8px;min-width:0}
+.evt-failures li b{font-size:12px;font-weight:600}
+.evt-failures li p{margin:2px 0 0;grid-column:1/-1;font-size:11px;line-height:1.5;color:var(--h3-text-2);word-break:break-word}
+.evt-failures li em{font-style:normal;font-size:11px;color:var(--h3-text-3)}
+.evt-history>summary{cursor:pointer;font-size:12px;color:var(--h3-text-2)}
+.evt-history-list{display:grid;gap:0;margin-top:8px}
+.evt-history-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid var(--h3-border);font-size:11px;color:var(--h3-text-2)}
+.evt-history-row:last-child{border-bottom:0}
+@media(max-width:760px){
+  .evt-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .modal.modal-wide{width:calc(100vw - 16px)}
+  .evt-detail{padding:12px}
+}
+#evt-attempts:empty,#evt-item-log:empty{display:none}
+.evt-detail-actions .btn{min-height:30px}
