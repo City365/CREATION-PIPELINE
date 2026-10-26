@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 /* 任务事件：列表 / 详情 / 创建（P1 最小闭环） */
 const Events = (() => {
   let timer = null;
@@ -151,10 +151,31 @@ const Events = (() => {
     return block(errors, '', `${errors.length} 个错误，修正文件后重新上传`) + block(warnings, 'is-warn', `${warnings.length} 个提醒`);
   }
 
+  function channelNameById(id) {
+    const channel = videoChannelList().find((c) => c.id === id);
+    return channel ? channel.name : '';
+  }
+
+  /** 模型名只保留渠道内的短名：同一渠道下的「豆包」「Gemini」不再重复渠道全名。 */
+  function shortWorkflowLabel(workflow, channelId) {
+    if (!workflow) return '';
+    const raw = String(workflow.label || workflow.display || workflow.id);
+    const channel = channelNameById(channelId);
+    let label = raw;
+    if (channel && raw.startsWith(channel)) label = raw.slice(channel.length);
+    label = label.replace(/^[\s·|/\\-—]+/, '').trim();
+    if (!label) {
+      if (workflow.platform === 'doubao') label = '豆包';
+      else if (workflow.platform === 'gemini') label = 'Gemini';
+      else label = raw;
+    }
+    return label;
+  }
+
   function draftModelLabel(draft) {
     if (draft.kind !== 'video') return '';
     const workflow = videoWorkflows(draft.channelId).find((w) => w.id === draft.workflowId);
-    return workflow ? (workflow.label || workflow.display || workflow.id) : '';
+    return workflow ? shortWorkflowLabel(workflow, draft.channelId) : '';
   }
 
   function renderShotTable(draft) {
@@ -195,13 +216,15 @@ const Events = (() => {
     const busy = !!draft.busy;
     const channels = kind === 'video' ? videoChannelList() : imageChannelList();
     const models = kind === 'video' ? videoWorkflows(draft.channelId) : [];
+    // 一个渠道只有一个模型时不显示「视频模型」，避免重复一栏。
+    if (kind === 'video' && models.length === 1 && draft.workflowId !== models[0].id) draft.workflowId = models[0].id;
     const items = (file && file.items) || [];
     return `<div class="create-page">
       <form class="create-form" id="task-create-form" autocomplete="off">
-        <div class="create-head">
+        <div class="create-head${kind === 'video' && models.length > 1 ? '' : ' is-two'}">
           <label class="create-field"><span>任务名称</span><input class="input" id="tc-title" value="${esc(draft.title)}" placeholder="例如：第 3 集 · 雨夜街头"></label>
           <label class="create-field"><span>${kind === 'video' ? '视频生成渠道' : '图像渠道'}</span><select class="select" id="tc-channel">${channels.map((channel) => `<option value="${esc(channel.id)}" ${channel.id === draft.channelId ? 'selected' : ''}>${esc(channel.name)}</option>`).join('') || '<option value="">没有可用渠道</option>'}</select></label>
-          ${kind === 'video' ? `<label class="create-field"><span>视频模型</span><select class="select" id="tc-model">${models.map((model) => `<option value="${esc(model.id)}" ${model.id === draft.workflowId ? 'selected' : ''}>${esc(model.label || model.display || model.id)}</option>`).join('') || '<option value="">没有可用模型</option>'}</select></label>` : ''}
+          ${kind === 'video' && models.length > 1 ? `<label class="create-field"><span>视频模型</span><select class="select" id="tc-model">${models.map((model) => `<option value="${esc(model.id)}" ${model.id === draft.workflowId ? 'selected' : ''}>${esc(shortWorkflowLabel(model, draft.channelId))}</option>`).join('')}</select></label>` : ''}
         </div>
         <section class="create-import" id="tc-import">
           <div class="create-import-head">

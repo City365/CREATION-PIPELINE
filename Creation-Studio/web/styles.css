@@ -2090,3 +2090,5 @@ body.is-pane-resizing * { user-select: none !important; }
 .create-table th:nth-child(8){width:64px}
 .create-table td .textarea{min-height:48px;max-height:120px}
 .create-import-head .hint{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:520px}
+
+.create-head.is-two{grid-template-columns:minmax(240px,1.4fr) minmax(220px,1fr)}
