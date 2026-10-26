@@ -26,6 +26,7 @@ def system_prompt(topic='', skill='', project_hint='', resource_hint='', attachm
     if topic:
         identity += '本轮用户明确选择的技能：' + skill + '。先通过 read_analysis_guidance 读取 topic=' + topic + ' 的指导，只按所选技能执行，不自动串入其他阶段。'
         identity += '为技能任务调用 create_task_plan 建立计划，逐步使用 record_step_result 记录实际产出与来源，完成后总结；不输出内部思维链。'
+        identity += '交付文件按所选技能规定逐份生成，每次 create_workspace_artifact 只写一份文件，成功保存后再生成下一份；不要在回复里重复整份交付正文。技能允许短篇合并时可合并，但必须保留所有规定分节。进度摘要不能替代实际交付文件。'
         identity += project_hint
     else:
         identity += '本轮未选择技能：不要读取或套用任何创作指南，不建立流程计划，不主动引导用户进入创作阶段。需要技能规范时可说明并让用户自行选择。'

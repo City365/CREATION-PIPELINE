@@ -1843,3 +1843,9 @@ body.is-pane-resizing * { user-select: none !important; }
 .zd-tab-close{margin-left:10px;padding:0 6px;border-radius:4px;font-size:18px;line-height:24px}.zd-tab-close:hover,.zd-tab-close:focus{background:var(--surface-2);color:#e34d4d}.raster-tools{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:12px}.raster-tools label{display:flex;align-items:center;gap:6px}.raster-tools input[type=number]{width:72px}.raster-tools input[type=range]{width:110px}.raster-tools>.input{max-width:260px}.raster-stage{overflow:auto;max-height:55vh;background:repeating-conic-gradient(#ddd 0 25%,#fff 0 50%) 0 /20px 20px;text-align:center}.raster-stage canvas{display:block;max-width:100%;max-height:55vh;width:auto;height:auto;margin:auto;touch-action:none;cursor:crosshair}.raster-editor{min-width:0}
 
 .raster-tools label{white-space:nowrap}.raster-tools select{min-width:150px}
+
+/* 前置提示词折叠 */
+.generation-prefix-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.generation-prefix-body{display:grid;gap:8px;margin-top:6px}
+.generation-prefix-body[hidden]{display:none}
+.generation-prefix-summary{margin:6px 0 0;font-size:12px;opacity:.62;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}

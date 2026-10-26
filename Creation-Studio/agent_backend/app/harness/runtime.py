@@ -63,8 +63,10 @@ async def execute(req,project,prepare):
         parent,checkpoint=recovery.load(project,req.parent_run_id)
         original={k:v for k,v in parent.get('original_request',{}).items() if k not in ('client_request_id','parent_run_id')}
         if req.model_dump(exclude={'client_request_id','parent_run_id'})!=original:raise HTTPException(409,'恢复参数必须与原运行一致，请新建任务修改配置')
+    from .policy import profile
+    policy=profile(req)
     fingerprint=hashlib.sha256(json.dumps(req.model_dump(exclude={'client_request_id'}),ensure_ascii=False,sort_keys=True).encode()).hexdigest()
-    try:payload,created=run_store.claim(project,req.session_id,req.client_request_id or str(uuid.uuid4()),fingerprint,principal=identity.current.get())
+    try:payload,created=run_store.claim(project,req.session_id,req.client_request_id or str(uuid.uuid4()),fingerprint,seconds=policy['seconds'],principal=identity.current.get())
     except run_store.Conflict as exc:raise HTTPException(409,{'message':str(exc),'run_id':exc.run_id})
     if not created:
         if payload['status'] not in run_store.TERMINAL:raise HTTPException(409,{'message':'请求已经在执行','run_id':payload['id']})
@@ -76,9 +78,11 @@ async def execute(req,project,prepare):
                 for item in items:
                     after=item['sequence'];yield encode(item)
         return StreamingResponse(replay(),media_type='text/event-stream',headers={'X-Agent-Run-Id':payload['id']})
-    ctx=Runtime(project,payload);ctx.resume_checkpoint=checkpoint
+    ctx=Runtime(project,payload,seconds=policy['seconds']);ctx.resume_checkpoint=checkpoint
+    ctx.model_timeout=policy['model_timeout'];ctx.policy=policy
+    ctx.budget.limits.update(model_calls=policy['model_calls'],tool_calls=policy['tool_calls'])
     token=current.set(ctx)
-    run_store.update(project,ctx.run_id,original_request=req.model_dump(),parent_run_id=getattr(req,'parent_run_id',None))
+    run_store.update(project,ctx.run_id,original_request=req.model_dump(),parent_run_id=getattr(req,'parent_run_id',None),execution_policy=policy)
     run_store.update(project,ctx.run_id,status='preparing',phase='preparing')
     try:
         response=await ctx.guarded(prepare())

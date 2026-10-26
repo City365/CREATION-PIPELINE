@@ -2419,22 +2419,42 @@ function generationPrefixValue(kind) {
   if(layer==='auto'){const text=value.prompt||'';layer=/角色|人物|身份板|立绘|形象/.test(text)?'character':/场景|环境|背景|地点/.test(text)?'scene':/道具|物品|物件|武器/.test(text)?'prop':'video';}
   return String(style[layer]||'').trim();
 }
+const prefixOpen={image:false,video:false};
+const layoutOpen={image:true};
 function generationPrefixHtml(kind) {
   const value=kind==='video'?state.studio:state.image;
-  return '<div class="generation-parameter-field"><div class="generation-parameter-head"><label for="'+kind+'-prefix">前置提示词</label><button type="button" class="btn sm ghost" data-prefix-reset="'+kind+'">使用项目风格</button></div>'+(kind==='image'?'<select class="zs-select" id="image-style-layer" aria-label="前置词类型">'+[['auto','按正文自动选择'],['character','人物'],['scene','场景'],['prop','道具'],['video','通用 / 视频']].map(([id,title])=>'<option value="'+id+'" '+((value.styleLayer||'auto')===id?'selected':'')+'>'+title+'</option>').join('')+'</select>':'')+'<textarea id="'+kind+'-prefix" class="generation-parameter-text" rows="4" placeholder="填写要加在正文之前的风格要求；留空则不添加">'+esc(generationPrefixValue(kind))+'</textarea><small>'+esc(typeof value.prefixPrompt==='string'?'当前画面自定义前置词':state.styleDetail?'来自项目风格：'+state.styleDetail.name:'当前项目未设置前置词，可直接填写')+'</small></div>';
+  const open=prefixOpen[kind]!==false;
+  const text=generationPrefixValue(kind);
+  const flat=text.replace(/\s+/g,' ').trim();
+  const toggle='<button type="button" class="btn sm ghost" data-prefix-toggle="'+kind+'" aria-expanded="'+(open?'true':'false')+'" aria-controls="'+kind+'-prefix-body" title="'+(open?'收起前置提示词':'展开前置提示词')+'">'+(open?'收起 ▴':'展开 ▾')+'</button>';
+  const summary=open?'':'<p class="generation-prefix-summary">已收起：'+esc(flat?flat.slice(0,42)+(flat.length>42?'…':''):'未填写（留空则不添加）')+'</p>';
+  const layer=kind==='image'?'<select class="zs-select" id="image-style-layer" aria-label="前置词类型">'+[['auto','按正文自动选择'],['character','人物'],['scene','场景'],['prop','道具'],['video','通用 / 视频']].map(([id,title])=>'<option value="'+id+'" '+((value.styleLayer||'auto')===id?'selected':'')+'>'+title+'</option>').join('')+'</select>':'';
+  const body=open?'<div class="generation-prefix-body" id="'+kind+'-prefix-body">'+layer+'<textarea id="'+kind+'-prefix" class="generation-parameter-text" rows="4" placeholder="填写要加在正文之前的风格要求；留空则不添加">'+esc(text)+'</textarea><small>'+esc(typeof value.prefixPrompt==='string'?'当前画面自定义前置词':state.styleDetail?'来自项目风格：'+state.styleDetail.name:'当前项目未设置前置词，可直接填写')+'</small></div>':'';
+  // 收起时用负外边距抵消所在面板的行间距，让上下各只留 2px；两个页面容器的行距不同，分别取值。
+  // 收起时用负外边距抵消面板行距，上下各留 2px；图片页下方紧跟“图片比例”，它收起时由它自己带负边距。
+  const nextCompact=kind==='image'&&layoutOpen.image===false;
+  const collapseStyle=open?'':' style="margin-top:'+(kind==='video'?-14:-18)+'px;margin-bottom:'+(kind==='video'?-13:(nextCompact?0:-18))+'px"';
+  return '<div class="generation-parameter-field generation-prefix-field generation-prefix-field-'+kind+(open?'':' is-collapsed is-compact')+'"'+collapseStyle+'><div class="generation-parameter-head generation-prefix-head"><label for="'+kind+'-prefix">前置提示词</label>'+toggle+'<button type="button" class="btn sm ghost" data-prefix-reset="'+kind+'">使用项目风格</button></div>'+summary+body+'</div>';
 }
 function imageLayoutParametersHtml() {
   const im=state.image,ratio=im.imageRatio||'auto',selected=GenerationParams.layout(im.imageLayoutId||'free')||GenerationParams.layout('free');
   const choices=ratio==='auto'?[GenerationParams.layout('free')]:GenerationParams.available(ratio);
   const text=typeof im.layoutPrompt==='string'?im.layoutPrompt:selected.description;
+  const open=layoutOpen.image!==false;
+  const toggle='<button type="button" class="btn sm ghost" data-layout-toggle="image" aria-expanded="'+(open?'true':'false')+'" aria-controls="image-layout-body" title="'+(open?'收起比例与分区设置':'展开比例与分区设置')+'">'+(open?'收起 ▴':'展开 ▾')+'</button>';
+  const summary=open?'':'<p class="generation-prefix-summary">已收起：'+esc(ratio==='auto'?'由模型决定':ratio)+' · '+esc(selected.name)+'</p>';
   const preview=selected.shape?'<div class="image-layout-diagram '+selected.shape+'" style="aspect-ratio:'+ratio.replace(':','/')+'">'+selected.cells.map((text,n)=>'<span class="layout-cell cell-'+n+'">'+esc(text)+'</span>').join('')+'</div>':'';
-  return '<div class="generation-parameter-field"><label for="image-ratio">图片比例</label><select class="zs-select" id="image-ratio">'+['auto',...GenerationParams.ratios].map(r=>'<option value="'+r+'" '+(r===ratio?'selected':'')+'>'+(r==='auto'?'由模型决定':r)+'</option>').join('')+'</select><label for="image-layout">图片样式 / 分区布局</label><select class="zs-select" id="image-layout" '+(ratio==='auto'?'disabled':'')+'>'+choices.map(l=>'<option value="'+l.id+'" '+(l.id===selected.id?'selected':'')+'>'+esc(l.name)+'</option>').join('')+'</select>'+preview+'<label for="image-layout-prompt">分区说明（可编辑）</label><textarea id="image-layout-prompt" class="generation-parameter-text" rows="5" '+(ratio==='auto'?'disabled':'')+' placeholder="自由构图，或填写每个小块放置的内容">'+esc(text)+'</textarea><small>比例和分区要求会加入生成提示词；像素尺寸使用下方渠道分辨率。</small></div>';
+  const body=open?'<div class="generation-layout-body" id="image-layout-body"><select class="zs-select" id="image-ratio" aria-label="图片比例">'+['auto',...GenerationParams.ratios].map(r=>'<option value="'+r+'" '+(r===ratio?'selected':'')+'>'+(r==='auto'?'由模型决定':r)+'</option>').join('')+'</select><label for="image-layout">图片样式 / 分区布局</label><select class="zs-select" id="image-layout" '+(ratio==='auto'?'disabled':'')+'>'+choices.map(l=>'<option value="'+l.id+'" '+(l.id===selected.id?'selected':'')+'>'+esc(l.name)+'</option>').join('')+'</select>'+preview+'<label for="image-layout-prompt">分区说明（可编辑）</label><textarea id="image-layout-prompt" class="generation-parameter-text" rows="5" '+(ratio==='auto'?'disabled':'')+' placeholder="自由构图，或填写每个小块放置的内容">'+esc(text)+'</textarea><small>比例和分区要求会加入生成提示词；像素尺寸使用下方渠道分辨率。</small></div>':'';
+  const collapseStyle=open?'':' style="margin-top:-18px;margin-bottom:-18px"';
+  return '<div class="generation-parameter-field generation-layout-field'+(open?'':' is-collapsed is-compact')+'"'+collapseStyle+'><div class="generation-parameter-head"><label>图片比例</label>'+toggle+'</div>'+summary+body+'</div>';
 }
 function bindGenerationParameters(root,kind) {
   const value=kind==='video'?state.studio:state.image;
   const prefix=root.querySelector('#'+kind+'-prefix');if(prefix)prefix.oninput=()=>{value.prefixPrompt=prefix.value;WB.schedule(kind);};
+  const toggle=root.querySelector('[data-prefix-toggle="'+kind+'"]');if(toggle)toggle.onclick=()=>{prefixOpen[kind]=prefixOpen[kind]===false;render();};
   const reset=root.querySelector('[data-prefix-reset="'+kind+'"]');if(reset)reset.onclick=()=>{delete value.prefixPrompt;render();};
   if(kind!=='image')return;
+  const layoutToggle=root.querySelector('[data-layout-toggle="image"]');if(layoutToggle)layoutToggle.onclick=()=>{layoutOpen.image=layoutOpen.image===false;render();};
   const layer=root.querySelector('#image-style-layer');if(layer)layer.onchange=()=>{value.styleLayer=layer.value;delete value.prefixPrompt;render();};
   const ratio=root.querySelector('#image-ratio');if(ratio)ratio.onchange=()=>{value.imageRatio=ratio.value;const selected=GenerationParams.layout(value.imageLayoutId||'free');if(!selected?.ratios.includes(ratio.value)){value.imageLayoutId='free';delete value.layoutPrompt;}render();};
   const layout=root.querySelector('#image-layout');if(layout)layout.onchange=()=>{value.imageLayoutId=layout.value;delete value.layoutPrompt;render();};
@@ -7036,3 +7056,4 @@ async function openRasterEditor() {
   };
   refresh();
 }
+

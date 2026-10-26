@@ -6,6 +6,9 @@ import urllib.request
 from langchain_openai import ChatOpenAI
 from app.configs.settings import get_active_model_name, get_provider_config, load_settings
 CONFIGURED_MODELS = {"deepseek": {}, "minimax": {}, "openai": {}}
+# 模型客户端超时：流式回答按“两次数据之间”的时间算，调大这里主要是给首字前的排队留余量。
+# 原来 45 秒在高峰期等不到首个分片，会显示“模型响应超时”；默认 120 秒，可用 H3_MODEL_TIMEOUT 覆盖。
+MODEL_TIMEOUT = float(os.environ.get('H3_MODEL_TIMEOUT', '120'))
 H3_BASE = os.environ.get('H3_BASE_URL', 'http://127.0.0.1:17821').rstrip('/')
 _H3_CACHE = {'at': 0, 'items': []}
 
@@ -92,13 +95,14 @@ def create_chat_model(selection=None, effort=None):
     kwargs = {k: v for k, v in cfg.items() if k in ("model", "base_url", "max_tokens", "temperature") and v is not None and v != ""}
     from app.harness.runtime import current
     ctx=current.get()
-    kwargs.update(api_key=key, timeout=45, max_retries=0 if ctx else 1)
+    request_timeout=getattr(ctx,'model_timeout',MODEL_TIMEOUT)
+    kwargs.update(api_key=key, timeout=request_timeout, max_retries=0 if ctx else 1)
     if cfg.get('protocol') == 'responses':
         kwargs['use_responses_api'] = True
         kwargs['output_version'] = 'responses/v1'
     if cfg.get('protocol') == 'gemini':
         from langchain_google_genai import ChatGoogleGenerativeAI
-        return ChatGoogleGenerativeAI(model=cfg['model'], google_api_key=key, base_url=cfg['base_url'], max_output_tokens=kwargs.get('max_tokens'), timeout=90, max_retries=0 if ctx else 1)
+        return ChatGoogleGenerativeAI(model=cfg['model'], google_api_key=key, base_url=cfg['base_url'], max_output_tokens=kwargs.get('max_tokens'), timeout=request_timeout, max_retries=0 if ctx else 1)
     if ctx:kwargs['max_tokens']=min(kwargs.get('max_tokens') or 8000,ctx.budget.limits['output_tokens'])
     if cfg.get("protocol") == "anthropic" or "/anthropic" in str(cfg.get("base_url", "")):
         from app.models.patched_anthropic import PatchedChatAnthropic
@@ -165,3 +169,4 @@ def with_retry(model, attempts=5):
     wrapped = model.model_copy()
     wrapped.__class__ = RetrySameModel
     return wrapped
+

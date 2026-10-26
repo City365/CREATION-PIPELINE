@@ -1,5 +1,5 @@
 """Independent agent service. Run from agent_backend, sharing backend/.venv."""
-import asyncio, hashlib, json, time, uuid
+import asyncio, hashlib, json, re, time, uuid
 from typing import Literal
 from collections import deque
 from app.task_tools import build_task_tools
@@ -258,7 +258,16 @@ async def _chat(req,project,authorization):
             if isinstance(exc,runtime.RunStopped):failure='任务已停止：'+exc.reason
             elif status==401 or 'Authentication' in type(exc).__name__:failure='模型密钥无效或已失效（401），请更新模型连接配置。'
             elif status==403 or 'PermissionDenied' in type(exc).__name__:failure='模型渠道拒绝请求（403），请检查渠道账号验证、权限或内容限制。'
-            elif 'Timeout' in type(exc).__name__:failure='模型响应超时，请稍后重试或切换模型。'
+            elif 'Timeout' in type(exc).__name__:
+                seconds=getattr(ctx,'model_timeout',None) if ctx else None
+                failure='模型单次响应超时'+('（'+str(int(seconds))+'秒）' if seconds else '')+'；已保留步骤记录与来源，尚未完成的交付不能视为成功。'
+            elif status==400 or 'BadRequest' in type(exc).__name__:
+                # 400 通常带得上游的真实原因（地区限制、模型名、参数），把它显示出来。
+                detail=str(exc);reason=''
+                for pattern in (r"'message':\s*'([^']{1,200})'", r'"message":\s*"([^"]{1,200})"'):
+                    found=re.search(pattern,detail)
+                    if found:reason=found.group(1).strip();break
+                failure='上游拒绝请求（400）'+(('：'+reason) if reason else '')+'；请检查渠道地区限制、模型名或参数后重试。'
             else:failure='模型请求失败：'+type(exc).__name__+(' / HTTP '+str(status) if status else '')+'，请检查渠道或切换模型后重试。'
             receipt['status']='failed';receipt['error']=failure
             trajectory('assistant',failure,kind='error',tool_calls=[])

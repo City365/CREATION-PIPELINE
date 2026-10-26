@@ -88,3 +88,17 @@ def test_cancelled_stream_keeps_receipt_and_partial_answer(client,monkeypatch):
  assert '部分回复' in saved['text']
  assert store.get_run('p1',saved['execution']['id'])['status']=='cancelled'
  assert not main.locks
+
+def test_bad_request_surfaces_upstream_reason(client,monkeypatch):
+ create(client)
+ class BadRequestError(Exception):
+  status_code=400
+ class Graph:
+  async def astream(self,*args,**kwargs):
+   raise BadRequestError("Error code: 400 - {'error': {'message': 'User location is not supported for the API use.', 'type': 'api_error'}}")
+   yield
+ monkeypatch.setattr(main,'create_chat_model',lambda: object())
+ monkeypatch.setattr(main,'create_agent',lambda **kwargs:Graph())
+ r=client.post('/agent/chat',headers=headers(),json={'session_id':'c1','text':'hi'})
+ assert 'User location is not supported' in r.text
+ assert '上游拒绝请求（400）' in r.text

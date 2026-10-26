@@ -1,4 +1,5 @@
 'use strict';
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const config = require('./config');
@@ -40,8 +41,9 @@ function collectImages(payload) {
     if (Array.isArray(value)) { for (const v of value) visit(v, depth + 1); return; }
     if (typeof value !== 'object') return;
     if (typeof value.b64_json === 'string') pushB64(value.b64_json, value.mime_type || value.mimeType);
-    if (typeof value.base64 === 'string' && value.base64.length > 64) pushB64(value.base64, value.mime_type);
-    if (typeof value.url === 'string') pushUrl(value.url);
+    else if (typeof value.base64 === 'string' && value.base64.length > 64) pushB64(value.base64, value.mime_type);
+    else if (typeof value.url === 'string') pushUrl(value.url);
+    // 同一个结果经常同时带 b64 和 url；只取一份，否则会存成两张字节完全相同的图。
     if (typeof value.image_url === 'object' && value.image_url) pushUrl(value.image_url.url);
     if (typeof value.image_url === 'string') pushUrl(value.image_url);
     if (value.inlineData && value.inlineData.data) pushB64(value.inlineData.data, value.inlineData.mimeType);
@@ -75,15 +77,22 @@ function collectImages(payload) {
 
 async function toBuffers(items) {
   const out = [];
+  const seen = new Set();
+  // 有些渠道会把同一张图用 b64 和 url 各返回一次；按内容去重，避免存成两张一样的图。
+  const add = (item) => {
+    const hash = crypto.createHash('sha1').update(item.buffer).digest('hex');
+    if (seen.has(hash)) return;
+    seen.add(hash); out.push(item);
+  };
   for (const item of items) {
     if (item.kind === 'b64') {
-      out.push({ buffer: Buffer.from(item.value, 'base64'), mime: item.mime || 'image/png' });
+      add({ buffer: Buffer.from(item.value, 'base64'), mime: item.mime || 'image/png' });
     } else if (item.value.startsWith('data:')) {
       const parts = dataUrlParts(item.value);
-      if (parts) out.push({ buffer: parts.buffer, mime: parts.mime });
+      if (parts) add({ buffer: parts.buffer, mime: parts.mime });
     } else {
       const res = await fetchBuffer(item.value, { timeoutMs: 120000 });
-      out.push({ buffer: res.buffer, mime: res.contentType || 'image/png' });
+      add({ buffer: res.buffer, mime: res.contentType || 'image/png' });
     }
   }
   return out;

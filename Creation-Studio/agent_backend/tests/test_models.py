@@ -48,3 +48,12 @@ def test_signature_only_thinking_block_is_valid_on_replay():
  model=PatchedChatAnthropic(model='deepseek-flash',api_key='test-key')
  payload=model._get_request_payload([HumanMessage(content='hello'),AIMessage(content=[{'type':'thinking','signature':'test-signature'},{'type':'text','text':'hello'}])])
  assert payload['messages'][1]['content'][0]=={'type':'thinking','signature':'test-signature','thinking':''}
+
+def test_chat_model_timeout_defaults_to_120_seconds(monkeypatch):
+ from app.models import patched_anthropic
+ captured={}
+ monkeypatch.setattr(factory,'get_active_model_name',lambda:'deepseek')
+ monkeypatch.setattr(factory,'get_provider_config',lambda name:{'protocol':'anthropic','model':'deepseek-v4-pro','base_url':'https://api.deepseek.com/anthropic','api_key':'test-key'})
+ monkeypatch.setattr(patched_anthropic,'PatchedChatAnthropic',lambda **kw:captured.update(kw))
+ factory.create_chat_model()
+ assert captured['timeout']==120
