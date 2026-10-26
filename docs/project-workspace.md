@@ -44,6 +44,13 @@
 - 接口：`GET /api/assets`（返回 `items[].type/typeLabel` 与 `types` 计数）、`POST /api/assets/type {rel,type}`。
 - 批量 JSON 导出时按 `type` 组织即可（字段已稳定）。
 
+## 智能体聊天记录
+
+- 智能体会话同样按项目隔离：前端每次请求带当前项目的 `X-Project-Id`，后端 `conversations` 表以 `(project, id)` 为主键，运行记录、轨迹和压缩上下文也带 `project`。
+- 切换项目时前端会中止当前生成、清空会话缓存并按新项目重新加载历史；旧项目的会话不会写到新项目下。
+- 旧版本把所有会话统一存在 `h3-studio` 下；执行上面的迁移时会把它们归入当前项目，迁移前备份 `agent_backend/data/conversations.db`。
+- 没有 `X-Project-Id` 的内部健康检查仍回退到 `h3-studio`，该命名空间不再用于正常聊天。
+
 ## 旧数据迁移
 
 **不会自动迁移**。确认后手动执行：

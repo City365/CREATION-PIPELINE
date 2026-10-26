@@ -3652,7 +3652,7 @@ function markdownLite(text) {
 
 /* ------------------------------------------------------------------ ask 页复刻（剧本创作台） */
 
-const ASK_PROJECT = 'h3-studio';
+function askProjectId() { return state.projectId || 'h3-studio'; }
 
 const ASK_GENERAL = { id: '', name: '普通聊天', description: '只保留智能助手身份，不注入技能或固定流程；需要时由你选择技能。', prompts: ['你好，先介绍一下你能做什么。', '帮我把这个想法整理成可以开拍的方案。'] };
 const ASK_SKILLS = [
@@ -3788,7 +3788,7 @@ function askId() {
 async function askApi(path, init = {}) {
   const res = await fetch('/api/agent' + path, {
     ...init,
-    headers: { 'Content-Type': 'application/json', 'X-Project-Id': ASK_PROJECT, ...(init.headers || {}) },
+    headers: { 'Content-Type': 'application/json', 'X-Project-Id': askProjectId(), ...(init.headers || {}) },
   });
   if (!res.ok) {
     let message = '智能体服务请求失败（' + res.status + '）';
@@ -3860,6 +3860,24 @@ function askNewConversation() {
   askRemember();
   if (state.route === 'script') askRenderAll();
   return c;
+}
+
+/** 切换项目时先清掉当前项目的会话缓存，避免把旧项目的聊天记录写到新项目下。 */
+function askResetForProject() {
+  const a = state.ask;
+  if (!a) return;
+  if (askSyncTimer) { clearTimeout(askSyncTimer); askSyncTimer = null; }
+  if (a.controller) { try { a.controller.abort(); } catch { /* ignore */ } }
+  a.controller = null;
+  a.generating = false;
+  a.conversations = null;
+  a.activeId = '';
+  a.draft = '';
+  a.attachments = [];
+  a.loading = false;
+  a.error = '';
+  a.trajectory = null;
+  a.rename = { open: false, id: '', text: '' };
 }
 
 function askSelect(id) {
@@ -4048,7 +4066,7 @@ function askComposerHtml() {
   const efforts = askEfforts();
   return `<div class="ask-composer-area">
     <div class="ask-composer-context">
-      <span>🗂 ${esc((state.project && state.project.name) || ASK_PROJECT)}</span>
+      <span>🗂 ${esc((state.project && state.project.name) || askProjectId())}</span>
       ${state.styleDetail ? `<span>🎨 ${esc(state.styleDetail.name)}</span>` : ''}
       <span>✧ ${esc(skill.name)}${a.skillId ? ' <button type="button" data-act="ask-clear-skill" title="移除技能，返回普通聊天">×</button>' : ''}</span>
       ${(a.attachments || []).map((f) => `<span class="ask-attach">📎 ${esc(f.name)}<small>${f.status === 'indexed' ? '已索引' : '待处理'}</small><button type="button" data-act="ask-detach" data-id="${esc(f.id)}">×</button></span>`).join('')}
@@ -4150,7 +4168,7 @@ function askCapabilityHtml() {
     ${a.panelTab === 'analysis' ? `
       <div class="ask-project-context">
         <div class="ask-context-title">本轮项目资源</div>
-        <div class="ask-context-row"><span>项目</span><b>${esc(ASK_PROJECT)}</b></div>
+        <div class="ask-context-row"><span>项目</span><b>${esc((state.project && state.project.name) || askProjectId())}</b></div>
         <div class="ask-context-row"><span>数据版本</span><b>未选择</b></div>
         <div class="ask-context-row"><span>策略包</span><b>未选择</b></div>
         <p class="ask-context-note">H3 项目没有接信贷数据源，这里只展示对话与素材；需要业务数据时再扩展。</p>
@@ -4720,7 +4738,7 @@ async function askQueueReply(chat, question, insertAt, fileIds = [], resumeId = 
     if (!resumeId) {
       const saved = await fetch('/api/agent/sessions/' + encodeURIComponent(chat.id), {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', 'X-Project-Id': ASK_PROJECT },
+        headers: { 'Content-Type': 'application/json', 'X-Project-Id': askProjectId() },
         body: JSON.stringify({ ...chat, messages: history }),
         signal: controller.signal,
       });
@@ -4728,7 +4746,7 @@ async function askQueueReply(chat, question, insertAt, fileIds = [], resumeId = 
     }
     const res = await fetch(resumeId ? '/api/agent/runs/' + encodeURIComponent(resumeId) + '/resume' : '/api/agent/chat', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Project-Id': ASK_PROJECT },
+      headers: { 'Content-Type': 'application/json', 'X-Project-Id': askProjectId() },
       signal: controller.signal,
       body: JSON.stringify(resumeId ? { client_request_id: requestId } : {
         client_request_id: requestId,
@@ -4779,7 +4797,7 @@ async function askQueueReply(chat, question, insertAt, fileIds = [], resumeId = 
         try {
           for (;;) {
             const response = await fetch('/api/agent/runs/' + encodeURIComponent(runId) + '/events?after=' + lastSeq + '&limit=100', {
-              headers: { 'X-Project-Id': ASK_PROJECT }, signal: AbortSignal.timeout(10000),
+              headers: { 'X-Project-Id': askProjectId() }, signal: AbortSignal.timeout(10000),
             });
             if (!response.ok) break;
             const events = await response.json();
@@ -4830,7 +4848,7 @@ async function askSend(text) {
       if (!(a.attachments || []).length) {
         await fetch('/api/agent/sessions/' + encodeURIComponent(chat.id), {
           method: 'PUT',
-          headers: { 'Content-Type': 'application/json', 'X-Project-Id': ASK_PROJECT },
+          headers: { 'Content-Type': 'application/json', 'X-Project-Id': askProjectId() },
           body: JSON.stringify(chat),
         }).catch(() => {});
       }
@@ -4874,7 +4892,7 @@ async function askStop() {
   request.stopping = true;
   try {
     const res = await fetch('/api/agent/sessions/' + encodeURIComponent(request.sessionId) + '/requests/' + encodeURIComponent(request.requestId) + '/cancel', {
-      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Project-Id': ASK_PROJECT },
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Project-Id': askProjectId() },
       body: '{}', signal: AbortSignal.timeout(10000),
     });
     if (!res.ok) throw new Error('后端尚未确认停止，请稍后重试');
@@ -4969,7 +4987,7 @@ async function askUploadFile(file, chatId) {
   if (chatId) form.append('session_id', chatId);
   const res = await fetch('/api/agent/workspace/files', {
     method: 'POST',
-    headers: { 'X-Project-Id': ASK_PROJECT },
+    headers: { 'X-Project-Id': askProjectId() },
     body: form,
   });
   if (!res.ok) throw new Error('上传失败 HTTP ' + res.status);
@@ -4982,7 +5000,7 @@ async function askAttachFiles(files) {
   if (!chat) { askNewConversation(); chat = askActive(); }
   await fetch('/api/agent/sessions/' + encodeURIComponent(chat.id), {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json', 'X-Project-Id': ASK_PROJECT },
+    headers: { 'Content-Type': 'application/json', 'X-Project-Id': askProjectId() },
     body: JSON.stringify(chat),
   }).catch(() => {});
   for (const file of files) {
@@ -5016,7 +5034,7 @@ async function askPreviewFile(id, sheet = 0) {
   a.previewExpanded = false;
   askRenderAll();
   try {
-    const res = await fetch('/api/agent/workspace/files/' + encodeURIComponent(id) + '/preview?sheet=' + sheet, { headers: { 'X-Project-Id': ASK_PROJECT } });
+    const res = await fetch('/api/agent/workspace/files/' + encodeURIComponent(id) + '/preview?sheet=' + sheet, { headers: { 'X-Project-Id': askProjectId() } });
     if (!res.ok) throw new Error('预览接口返回 ' + res.status);
     a.previewData = await res.json();
   } catch (err) {
@@ -6773,6 +6791,7 @@ async function setActiveProject(id, opts = {}) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ projectId: id }),
   }).catch(() => {});
+  askResetForProject();
   state.assets = await api('/api/assets').catch(() => state.assets);
   state.media = await api('/api/media').catch(() => state.media);
   const jobData = await api('/api/jobs').catch(() => null);

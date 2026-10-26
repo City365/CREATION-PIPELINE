@@ -105,6 +105,45 @@ function mergeDir(sourceRoot, targetRoot) {
   return moved;
 }
 
+function agentDbPath() {
+  return process.env.H3_AGENT_DB || path.join(config.ROOT, 'agent_backend', 'data', 'conversations.db');
+}
+
+/** 把旧版智能体统一挂在 h3-studio 下的会话、运行记录、轨迹和压缩上下文归到目标项目。 */
+function migrateAgentSessions(projectId, backupDir) {
+  const target = String(projectId || '');
+  const legacy = 'h3-studio';
+  if (!target || target === legacy) return 0;
+  const file = agentDbPath();
+  if (!fs.existsSync(file)) return 0;
+  let DatabaseSync;
+  try { ({ DatabaseSync } = require('node:sqlite')); } catch { return 0; }
+  if (backupDir) {
+    try {
+      fs.mkdirSync(backupDir, { recursive: true });
+      fs.copyFileSync(file, path.join(backupDir, 'conversations.db'));
+    } catch { /* 备份失败不阻断迁移，结果仍会记录在 marker 里 */ }
+  }
+  let changes = 0;
+  let db = null;
+  try {
+    db = new DatabaseSync(file);
+    for (const table of ['conversations', 'executions', 'trajectory_events', 'compactions']) {
+      try {
+        const exists = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table);
+        if (!exists) continue;
+        const result = db.prepare(`UPDATE ${table} SET project=? WHERE project=?`).run(target, legacy);
+        changes += Number(result.changes) || 0;
+      } catch { /* 单表失败不影响其它表 */ }
+    }
+  } catch {
+    return 0;
+  } finally {
+    try { if (db) db.close(); } catch { /* ignore */ }
+  }
+  return changes;
+}
+
 function run({ force = false } = {}) {
   const marker = readMarker();
   if (marker && !force) return marker;
@@ -128,6 +167,10 @@ function run({ force = false } = {}) {
   try { moved.jobs = jobs.adoptLegacy(project.id); } catch { moved.jobs = 0; }
   try { moved.events = events.adoptLegacy(project.id); } catch { moved.events = 0; }
   try { moved.images = imageTasks.tasks().adoptLegacy(project.id); } catch { moved.images = 0; }
+  // 测试数据目录下不碰本机真实智能体会话库，除非显式指定了 H3_AGENT_DB。
+  if (!process.env.H3_DATA_DIR || process.env.H3_AGENT_DB) {
+    try { moved.agents = migrateAgentSessions(project.id, path.join(backupRoot, 'agent')); } catch { moved.agents = 0; }
+  }
   const record = {
     version: 1,
     projectId: project.id,
@@ -179,4 +222,4 @@ function preview() {
   };
 }
 
-module.exports = { run, preview, markerFile };
+module.exports = { run, preview, migrateAgentSessions, markerFile };

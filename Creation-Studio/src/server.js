@@ -536,11 +536,12 @@ async function route(req, res) {
   }
 
   if (method === 'POST' && pathname === '/api/workspace/migrate') {
+    const body = await readBody(req).catch(() => ({}));
     // 本机脚本可以用内部凭据触发；普通请求仍要求已进入某个项目。
     const targetProject = projectId || (internalCall ? workspaceMigrate.preview().projectId : '');
     if (!targetProject) return bad(res, '先进入一个项目，再迁移旧数据');
     try {
-      return ok(res, workspaceMigrate.run());
+      return ok(res, workspaceMigrate.run({ force: !!(body && body.force === true) }));
     } catch (err) {
       return bad(res, '迁移失败：' + (err.message || err));
     }
