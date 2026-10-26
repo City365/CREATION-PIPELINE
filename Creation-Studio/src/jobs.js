@@ -210,6 +210,7 @@ function addJobs(input) {
       finishedAt: null,
       projectId: input.projectId || 'unassigned',
       itemId: input.itemId || null,
+      eventId: input.eventId || null,
       userPrompt: input.userPrompt == null ? prompt : input.userPrompt,
       prefixPrompt: input.prefixPrompt,
       styleId: input.styleId,

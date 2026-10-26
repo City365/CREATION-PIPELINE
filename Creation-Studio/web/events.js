@@ -1,0 +1,162 @@
+'use strict';
+/* 任务事件：列表 / 详情 / 创建（P1 最小闭环） */
+const Events = (() => {
+  let timer = null;
+  let lastSignature = '';
+  const STATUS = { draft: '草稿', queued: '排队', running: '执行中', paused: '暂停', completed: '完成', partial: '部分失败', failed: '失败', canceled: '已取消', interrupted: '已中断' };
+  const SOURCE = { batch: '批量导入', studio: '创作台', image: '图像台', api: '接口' };
+  const ITEM = { queued: '排队', running: '执行中', success: '完成', failed: '失败', canceled: '已取消', skipped: '跳过', unknown: '未知', paused: '暂停' };
+
+  async function load() {
+    try {
+      const data = await api('/api/events');
+      const events = data.events || [];
+      const signature = JSON.stringify(events.map((e) => [e.id, e.status, e.stats && e.stats.done, e.stats && e.stats.total, e.stats && e.stats.failed]));
+      const changed = signature !== lastSignature;
+      lastSignature = signature;
+      state.events = events;
+      state.eventStats = data.stats || null;
+      if (!changed) return;
+    } catch (err) {
+      state.events = state.events || [];
+      state.eventError = err.message;
+    }
+    if (state.route === 'tasks' && currentTaskTab() === 'events') window.render();
+  }
+
+  function badge(status) {
+    const cls = status === 'completed' ? 'ok' : status === 'failed' ? 'bad' : status === 'running' ? 'info' : '';
+    return `<span class="badge ${cls}">${esc(STATUS[status] || status)}</span>`;
+  }
+
+  function duration(event) {
+    const start = event.startedAt || event.createdAt;
+    const end = event.finishedAt || Date.now();
+    if (!start) return '—';
+    const seconds = Math.max(0, Math.round((end - start) / 1000));
+    if (seconds < 60) return seconds + 's';
+    return Math.floor(seconds / 60) + 'm' + String(seconds % 60).padStart(2, '0') + 's';
+  }
+
+  function render() {
+    const events = state.events || [];
+    const stats = state.eventStats || null;
+    const rows = events.map((event) => {
+      const s = event.stats || {};
+      const progress = s.total ? Math.round(((s.done || 0) / s.total) * 100) : 0;
+      return `<tr>
+        <td>${badge(event.status)}</td>
+        <td><div class="evt-title">${esc(event.title)}</div><div class="hint">${esc(event.id)}</div></td>
+        <td>${esc(SOURCE[event.source] || event.source)}</td>
+        <td><div class="evt-progress"><span style="width:${progress}%"></span></div><div class="hint">${s.done || 0}/${s.total || 0} 完成${s.failed ? ' · ' + s.failed + ' 失败' : ''}${s.running ? ' · ' + s.running + ' 执行中' : ''}</div></td>
+        <td class="tnum">${duration(event)}</td>
+        <td class="hint">${event.createdAt ? new Date(event.createdAt).toLocaleString('zh-CN', { hour12: false }) : '—'}</td>
+        <td><button class="btn sm" data-event-detail="${esc(event.id)}">详情</button></td>
+      </tr>`;
+    }).join('');
+    return `
+    <div class="evt-toolbar">
+      <button class="btn primary" data-event-create="1">创建事件</button>
+      <button class="btn" data-event-refresh="1">刷新</button>
+      <span class="grow"></span>
+      ${stats ? `<span class="hint">事件 ${stats.total} · 执行中 ${stats.running} · 排队 ${stats.queued} · 完成 ${stats.completed} · 部分失败 ${stats.partial} · 失败 ${stats.failed}</span>` : ''}
+    </div>
+    ${state.eventError ? `<div class="card" style="padding:12px;color:var(--h3-danger)">事件加载失败：${esc(state.eventError)}</div>` : ''}
+    ${rows ? `<div class="table-wrap"><table class="jobs evt-table">
+      <thead><tr><th>状态</th><th>事件</th><th>来源</th><th>条目进度</th><th>耗时</th><th>创建</th><th>操作</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>` : `<div class="card"><div class="empty"><strong>还没有事件</strong><p>点「创建事件」导入批量 JSON，或在创作台生成一条——单条生成会自动记成一个事件。</p><button class="btn primary" data-event-create="1">创建事件</button></div></div>`}`;
+  }
+
+  function openCreate() {
+    const workflows = (state.workflows || []).map((w) => `<option value="${esc(w.id)}">${esc(w.display || w.id)}</option>`).join('');
+    openModal(`<div class="modal-head"><h2>创建事件</h2><button class="btn" data-close="1">关闭</button></div>
+      <div class="modal-body">
+        <div class="row"><span class="muted small">工作流</span><select class="select" id="evt-workflow" style="flex:1">${workflows}</select></div>
+        <div class="row"><span class="muted small">标题</span><input class="input" id="evt-title" placeholder="留空用批次名称" style="flex:1" /></div>
+        <div class="hint">粘贴批量 JSON（与「批量导入」同格式）；每个任务会成为一个条目，整批是一个事件。</div>
+        <textarea class="textarea mono" id="evt-json" style="min-height:260px" placeholder='{"format":"zealman-h3-batch","version":1,"tasks":[...]}'></textarea>
+      </div>
+      <div class="modal-foot"><span class="hint grow" id="evt-msg"></span><button class="btn" data-close="1">取消</button><button class="btn primary" id="evt-submit">创建事件</button></div>`);
+    const submit = document.querySelector('#evt-submit');
+    submit.onclick = async () => {
+      const json = document.querySelector('#evt-json').value.trim();
+      const workflowId = document.querySelector('#evt-workflow').value;
+      const title = document.querySelector('#evt-title').value.trim();
+      const msg = document.querySelector('#evt-msg');
+      if (!json) { msg.textContent = '先粘贴批量 JSON'; return; }
+      submit.disabled = true;
+      try {
+        const event = await api('/api/events/import', { method: 'POST', body: { json, workflowId, title } });
+        msg.textContent = '';
+        closeModal();
+        await load();
+        await load();
+        openDetail(event.id);
+        toast('事件已创建：' + (event.stats?.total || 0) + ' 个条目');
+      } catch (err) {
+        msg.textContent = err.message;
+      } finally {
+        submit.disabled = false;
+      }
+    };
+  }
+
+  async function openDetail(id) {
+    const event = await api('/api/events/' + encodeURIComponent(id));
+    const s = event.stats || {};
+    const items = (event.items || []).map((item) => `<tr>
+      <td>${badge(item.status === 'success' ? 'completed' : item.status)}</td>
+      <td>${esc(item.title || item.refId)}<div class="hint">${esc(item.refType)} · ${esc(item.refId)}</div></td>
+      <td class="hint">${esc(item.error || '—')}</td>
+      <td><button class="btn sm" data-event-item-log="${esc(item.id)}">日志</button></td>
+    </tr>`).join('');
+    const panel = openModal(`<div class="modal-head"><h2>${esc(event.title)}</h2><button class="btn" data-close="1">关闭</button></div>
+      <div class="modal-body">
+        <div class="hint">${esc(event.id)} · ${esc(SOURCE[event.source] || event.source)} · 创建 ${new Date(event.createdAt).toLocaleString('zh-CN', { hour12: false })}</div>
+        <div class="row" style="gap:16px;flex-wrap:wrap">
+          <span>状态：${badge(event.status)}</span>
+          <span>条目：${s.done || 0}/${s.total || 0} 完成</span>
+          <span>失败：${s.failed || 0}</span>
+          <span>执行中：${s.running || 0}</span>
+          <span>未知：${s.unknown || 0}</span>
+        </div>
+        ${items ? `<div class="table-wrap"><table class="jobs"><thead><tr><th>状态</th><th>条目</th><th>错误</th><th>操作</th></tr></thead><tbody>${items}</tbody></table></div>` : '<div class="hint">这个事件还没有条目。</div>'}
+        <div id="evt-item-log"></div>
+      </div>
+      <div class="modal-foot"><span class="grow"></span><button class="btn" data-close="1">关闭</button></div>`);
+    panel.classList.add('modal-wide');
+    const logBox = document.querySelector('#evt-item-log');
+    document.querySelectorAll('[data-event-item-log]').forEach((button) => {
+      button.onclick = async () => {
+        const data = await api('/api/events/' + encodeURIComponent(id) + '/items/' + encodeURIComponent(button.dataset.eventItemLog) + '/log');
+        logBox.innerHTML = '<h3 style="margin:12px 0 6px">条目日志：' + esc(data.item?.title || data.item?.refId || '') + '</h3>' +
+          ((data.lines || []).length
+            ? '<pre class="evt-log">' + esc(data.lines.map((l) => (l.t ? new Date(l.t).toLocaleTimeString('zh-CN', { hour12: false }) + ' ' : '') + (l.level || 'info') + ' ' + (l.text || '')).join('\n')) + '</pre>'
+            : '<div class="hint">没有日志记录。</div>');
+      };
+    });
+  }
+
+  function start() {
+    if (timer) return;
+    timer = setInterval(() => {
+      if (state.route === 'tasks' && currentTaskTab() === 'events' && !document.querySelector('#modal:not([hidden])')) load();
+    }, 8000);
+  }
+
+  function bind(root) {
+    root.addEventListener('click', (event) => {
+      const create = event.target.closest('[data-event-create]');
+      if (create) { openCreate(); return; }
+      const refresh = event.target.closest('[data-event-refresh]');
+      if (refresh) { load(); return; }
+      const detail = event.target.closest('[data-event-detail]');
+      if (detail) { openDetail(detail.dataset.eventDetail).catch((err) => toast(err.message, true)); }
+    });
+    start();
+    if (!state.events) load();
+  }
+
+  return { render, load, bind, openCreate, openDetail };
+})();

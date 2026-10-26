@@ -15,6 +15,7 @@ const projects = require('./projects');
 const styles = require('./styles');
 const jobs = require('./jobs');
 const batch = require('./batch');
+const events = require('./events');
 const channels = require('./channels');
 const imagegen = require('./imagegen');
 const imageTasks = require('./image-tasks');
@@ -38,6 +39,7 @@ const STATIC = {
   '/index.html': ['index.html', 'text/html; charset=utf-8'],
   '/generation-params.js': ['generation-params.js', 'text/javascript; charset=utf-8'],
   '/image-tasks.js': ['image-tasks.js', 'text/javascript; charset=utf-8'],
+  '/events.js': ['events.js', 'text/javascript; charset=utf-8'],
   '/workbench-manager.js': ['workbench-manager.js', 'text/javascript; charset=utf-8'],
   '/workbench.css': ['workbench.css', 'text/css; charset=utf-8'],
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
@@ -894,7 +896,8 @@ function rememberImageBatch(entry) {
   if (method === 'POST' && pathname === '/api/images/generate') {
     const body=await readBody(req),worker=imageTasks.tasks();
     const task=worker.enqueue(body);
-    if(body.background)return ok(res,{taskId:task.id,runId:task.id,status:task.status});
+    let eventId=null;try{eventId=events.recordSingleImage(task,'image');}catch{ /* 事件失败不影响任务 */ }
+    if(body.background)return ok(res,{taskId:task.id,runId:task.id,status:task.status,eventId});
     const result=await worker.wait(task.id);
     if(result.status!=='success')return bad(res,result.error||'图像任务未完成');
     return ok(res,result.result);
@@ -1135,8 +1138,38 @@ function mediaPath(input) {
     const check = workflows.validate(wf, body);
     if (check.errors.length) return bad(res, check.errors.join('；'));
     const created = jobs.addJobs(body);
-    return ok(res, { jobs: created.map((j) => ({ id: j.id })), warnings: check.warnings });
+    let eventId = null;
+    try { eventId = events.recordJobs(created, body.eventId ? 'batch' : 'studio'); } catch { /* 事件失败不影响任务 */ }
+    return ok(res, { jobs: created.map((j) => ({ id: j.id })), eventId, warnings: check.warnings });
   }
+
+  if (method === 'GET' && pathname === '/api/events') {
+    return ok(res, events.list({ status: url.searchParams.get('status') || '', source: url.searchParams.get('source') || '', limit: url.searchParams.get('limit') }));
+  }
+
+  if (method === 'POST' && pathname === '/api/events/import') {
+    const body = await readBody(req);
+    const parsed = batch.parseBatch(body.json, { baseDir: body.baseDir, fileDir: body.fileDir, name: body.name });
+    const inputs = batch.toJobInputs(parsed, body.workflowId);
+    if (!inputs.length) return bad(res, '没有可导入的任务：' + (parsed.errors.join('；') || '请检查 JSON'));
+    const event = events.createFromJobInputs(inputs, { title: body.title || parsed.name || '', source: 'batch', workflowId: body.workflowId, projectId: body.projectId || '', channelId: body.channelId || '' });
+    return ok(res, event);
+  }
+
+  if (method === 'POST' && pathname === '/api/events') {
+    const body = await readBody(req);
+    const items = Array.isArray(body.items) ? body.items : [];
+    if (!items.length) return bad(res, '事件没有条目');
+    const inputs = items.map((item) => ({ ...item, workflowId: item.workflowId || body.workflowId, count: 1, projectId: body.projectId || item.projectId, itemId: body.itemId || item.itemId }));
+    const event = events.createFromJobInputs(inputs, { title: body.title, source: ['batch', 'studio', 'image', 'api'].includes(body.source) ? body.source : 'api', workflowId: body.workflowId, projectId: body.projectId || '', channelId: body.channelId || '' });
+    return ok(res, event);
+  }
+
+  const eventItemLog = /^\/api\/events\/([^/]+)\/items\/([^/]+)\/log$/.exec(pathname);
+  if (method === 'GET' && eventItemLog) return ok(res, events.itemLog(eventItemLog[1], eventItemLog[2]));
+
+  const eventRoute = /^\/api\/events\/([^/]+)$/.exec(pathname);
+  if (method === 'GET' && eventRoute) return ok(res, events.get(eventRoute[1]));
 
   const jobAction = /^\/api\/jobs\/([^/]+)\/(cancel|retry|resume|delete|hold|unhold|logs)$/.exec(pathname);
   if (jobAction) {

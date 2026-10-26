@@ -1869,3 +1869,10 @@ body.is-pane-resizing * { user-select: none !important; }
 .task-tabs{margin:0;gap:6px;flex-wrap:wrap}
 .task-tabs [role=tab]{padding:8px 14px;border:1px solid var(--h3-border);background:var(--h3-bg-1)}
 .task-tabs [role=tab][aria-selected=true]{border-color:var(--h3-border-strong);background:var(--h3-bg-2)}
+
+/* 事件列表 */
+.evt-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.evt-progress{height:4px;width:180px;max-width:100%;background:var(--h3-bg-2);border:1px solid var(--h3-border)}
+.evt-progress>span{display:block;height:100%;background:var(--h3-accent,#5189ca)}
+.evt-table td{vertical-align:top}
+.evt-log{margin:0;max-height:320px;overflow:auto;background:var(--h3-bg-1);border:1px solid var(--h3-border);padding:10px;font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-word}

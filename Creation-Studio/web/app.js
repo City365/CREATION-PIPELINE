@@ -5739,7 +5739,7 @@ function bindLogs(root) {
 
 /* ------------------------------------------------------------------ 任务管理（合并入口） */
 
-const TASK_TABS = [['running', '运行任务管理'], ['batch', '批量创建'], ['video', '视频生成日志'], ['image', '图像生成日志']];
+const TASK_TABS = [['running', '运行任务管理'], ['events', '事件'], ['batch', '批量创建'], ['video', '视频生成日志'], ['image', '图像生成日志']];
 function currentTaskTab() {
   const tab = state.taskTab || localStorage.getItem('h3.tasks.tab') || 'running';
   return TASK_TABS.some(([id]) => id === tab) ? tab : 'running';
@@ -5759,7 +5759,7 @@ function renderTasks() {
     <div class="page-actions"><button class="btn" data-act="go-studio">去创作台</button><button class="btn" data-act="go-image">去图像台</button></div>
   </div>`;
   const tabs = `<div class="generation-log-tabs task-tabs" role="tablist" aria-label="任务管理页签">${TASK_TABS.map(([id, label]) => `<button type="button" role="tab" data-task-tab="${id}" aria-selected="${tab === id}" class="${tab === id ? 'is-active' : ''}">${label}</button>`).join('')}</div>`;
-  const body = tab === 'batch' ? renderBatch(true) : tab === 'running' ? renderJobs(true) : logsPanel(tab);
+  const body = tab === 'events' ? Events.render() : tab === 'batch' ? renderBatch(true) : tab === 'running' ? renderJobs(true) : logsPanel(tab);
   return head + tabs + body;
 }
 function bindTasks(root) {
@@ -5777,7 +5777,8 @@ function bindTasks(root) {
     if (action.dataset.act === 'go-studio') { location.hash = '#studio'; return; }
     if (action.dataset.act === 'go-image') { location.hash = '#image'; }
   });
-  if (tab === 'batch') bindBatch(root);
+  if (tab === 'events') Events.bind(root);
+  else if (tab === 'batch') bindBatch(root);
   else if (tab === 'running') bindJobs(root);
   else bindLogs(root);
 }
