@@ -63,7 +63,7 @@ const Events = (() => {
     }).join('');
     return `
     <form class="task-search" data-events-search><label for="event-search">搜索任务</label><div><input class="input" id="event-search" name="query" value="${esc(state.taskEventQuery||'')}" placeholder="任务名称"><button class="btn" type="submit">搜索</button></div></form>
-    <div class="filters">${[['','全部'],['unscheduled','待调度'],['scheduled','待执行'],['running','执行中'],['completed','完成'],['failed','失败'],['interrupted','待确认']].map(([value,label])=>`<button class="chip ${(state.taskEventStatus||'')===value?'active':''}" data-event-status="${value}">${label}</button>`).join('')}</div>
+    <div class="filters">${[['','全部'],['draft,unscheduled','待调度'],['scheduled,queued','待执行'],['running','执行中'],['paused','暂停'],['completed','完成'],['partial','部分失败'],['failed','失败'],['canceled','已取消'],['interrupted','待确认']].map(([value,label])=>`<button class="chip ${(state.taskEventStatus||'')===value?'active':''}" data-event-status="${value}">${label}</button>`).join('')}</div>
     ${state.eventError ? `<div class="card" style="padding:12px;color:var(--h3-danger)">事件加载失败：${esc(state.eventError)}</div>` : ''}
     ${rows ? `<div class="table-wrap"><table class="jobs evt-table">
       <thead><tr><th>状态</th><th>任务</th><th>调度</th><th>条目进度</th><th>耗时</th><th>创建</th><th>操作</th></tr></thead>
@@ -76,7 +76,7 @@ const Events = (() => {
   const createDrafts = { video: null, image: null };
   const CREATE_RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4'];
   const FILE_KIND_LABEL = { json: 'JSON', xlsx: 'Excel', draft: '草稿' };
-  const AUDIT_LABEL = { prepare: '保存任务', schedule: '配置调度', queue: '加入队列', pause: '暂停', resume: '继续', cancel: '取消', retry: '重试' };
+  const AUDIT_LABEL = { prepare: '保存任务', schedule: '配置调度', queue: '加入队列', pause: '暂停', resume: '继续', cancel: '取消', retry: '重试', skip: '跳过分镜', move: '调整顺序' };
 
   function workflowFor(id) { return (state.workflows || []).find((w) => w.id === id) || null; }
 
@@ -173,6 +173,21 @@ const Events = (() => {
     return label;
   }
 
+  function availableRatios(draft) {
+    if (draft.kind === 'image') return CREATE_RATIOS;
+    const workflow = videoWorkflows(draft.channelId).find((w) => w.id === draft.workflowId);
+    return (workflow && (workflow.ratios || []).length) ? workflow.ratios : CREATE_RATIOS;
+  }
+
+  /** 换渠道 / 模型后，把行里不在新渠道范围内的画幅拉回第一个可用值。 */
+  function normalizeRatios(draft) {
+    if (!draft.file || !(draft.file.items || []).length) return;
+    const ratios = availableRatios(draft);
+    for (const item of draft.file.items) {
+      if (!ratios.includes(item.ratio)) item.ratio = ratios[0];
+    }
+  }
+
   function draftModelLabel(draft) {
     if (draft.kind !== 'video') return '';
     const workflow = videoWorkflows(draft.channelId).find((w) => w.id === draft.workflowId);
@@ -184,11 +199,7 @@ const Events = (() => {
     if (!file || !(file.items || []).length) return '';
     const model = draftModelLabel(draft);
     const isImage = draft.kind === 'image';
-    const ratios = (() => {
-      if (isImage) return CREATE_RATIOS;
-      const workflow = videoWorkflows(draft.channelId).find((w) => w.id === draft.workflowId);
-      return (workflow && (workflow.ratios || []).length) ? workflow.ratios : CREATE_RATIOS;
-    })();
+    const ratios = availableRatios(draft);
     const rows = file.items.map((item, index) => {
       const refs = (item.images || []).map((image, order) => `<span class="shot-ref" title="${esc(image.path || '')}">
         <b>${order + 1}</b><span class="shot-ref-name">${esc(image.name || String(image.path || '').split(/[\\/]/).pop() || '图片')}</span>${image.note ? `<i>${esc(image.note)}</i>` : ''}
@@ -228,6 +239,13 @@ const Events = (() => {
     // 一个渠道只有一个模型时不显示「视频模型」，避免重复一栏。
     if (kind === 'video' && models.length === 1 && draft.workflowId !== models[0].id) draft.workflowId = models[0].id;
     const items = (file && file.items) || [];
+    const noChannel = !channels.length;
+    const canSave = !busy && items.length > 0 && !((file && file.errors) || []).length && !!draft.channelId && (kind !== 'video' || !!draft.workflowId);
+    const summary = noChannel
+      ? `${kind === 'video' ? '没有可用的视频渠道' : '没有可用的图像渠道'}，请先到 设置 添加`
+      : items.length
+        ? `${items.length} 个分镜${draftModelLabel(draft) ? ' · ' + esc(draftModelLabel(draft)) : ''}`
+        : '还没有上传分镜文件';
     return `<div class="create-page">
       <form class="create-form" id="task-create-form" autocomplete="off">
         <div class="create-head${kind === 'video' && models.length > 1 ? '' : ' is-two'}">
@@ -248,10 +266,10 @@ const Events = (() => {
           ${renderShotTable(draft)}
           <p class="create-msg" id="tc-msg">${esc(draft.msg || '')}</p>
           <div class="create-actions">
-            <div class="create-summary" id="tc-summary">${items.length ? `${items.length} 个分镜${draftModelLabel(draft) ? ' · ' + esc(draftModelLabel(draft)) : ''}` : '还没有上传分镜文件'}</div>
+            <div class="create-summary" id="tc-summary">${summary}</div>
             <div class="create-action-buttons">
               ${draft.editId ? '<button type="button" class="btn ghost" data-tc-cancel-edit>放弃修改</button>' : ''}
-              <button type="button" class="btn primary" data-tc-save ${busy || !items.length ? 'disabled' : ''}>${draft.editId ? '保存修改' : '保存任务'}</button>
+              <button type="button" class="btn primary" data-tc-save ${canSave ? '' : 'disabled'}>${draft.editId ? '保存修改' : '保存任务'}</button>
             </div>
           </div>
         </section>
@@ -310,6 +328,7 @@ const Events = (() => {
     if (!items.length) throw new Error('文件里没有分镜');
     if (!draft.channelId) throw new Error(draft.kind === 'video' ? '请选择视频生成渠道' : '请选择图像渠道');
     if (draft.kind === 'video' && !draft.workflowId) throw new Error('请选择视频模型');
+    normalizeRatios(draft);
     const workflow = draft.kind === 'video' ? workflowFor(draft.workflowId) : null;
     const defaultDuration = Number(workflow?.durationDefault) || 10;
     const defaultResolution = String(workflow?.defaultResolution || '').trim();
@@ -408,11 +427,13 @@ const Events = (() => {
         const draft = readCreateHead(root);
         draft.channelId = target.value;
         draft.workflowId = defaultWorkflowId(draft.channelId);
+        normalizeRatios(draft);
         window.render();
         return;
       }
       if (target.id === 'tc-model') {
         readCreateHead(root);
+        normalizeRatios(currentDraft());
         window.render();
       }
     });
@@ -423,7 +444,7 @@ const Events = (() => {
       if (add) {
         const draft = currentDraft();
         if (!draft.file) return;
-        draft.file.items.push({ title: '', prompt: '', images: [], duration: null, ratio: '16:9' });
+        draft.file.items.push({ title: '', prompt: '', images: [], audios: [], duration: null, ratio: availableRatios(draft)[0] });
         window.render();
         return;
       }
@@ -476,30 +497,49 @@ const Events = (() => {
 
   /* ---------------- 调度页：只分「未分配 / 已分配」 ---------------- */
 
+  function taskErrorBanner() {
+    return state.eventError ? `<div class="card" style="padding:12px;color:var(--h3-danger)">任务加载失败：${esc(state.eventError)}</div>` : '';
+  }
+
   function scheduleRows(events, assigned) {
-    if (!events.length) return `<div class="card"><div class="empty"><strong>${assigned ? '没有已分配的任务' : '没有待调度的任务'}</strong><p>${assigned ? '在未分配里配置运行时间后，任务会出现在这里。' : '在创建页保存任务后，它会出现在这里等待调度。'}</p></div></div>`;
+    if (!events.length) return `<div class="card schedule-empty"><div class="empty"><strong>${assigned ? '没有已分配的任务' : '没有待调度的任务'}</strong><p>${assigned ? '在未分配里配置运行时间后，任务会出现在这里。' : '在创建页保存任务后，它会出现在这里等待调度。'}</p></div></div>`;
     const rows = events.map((event) => {
       const when = event.schedule?.startAt ? new Date(event.schedule.startAt).toLocaleString('zh-CN', { hour12: false }) : (assigned ? '立即执行' : '未设置');
+      const running = event.status === 'running';
+      const canCancel = ['draft', 'unscheduled', 'scheduled', 'queued', 'paused'].includes(event.status);
+      const canDelete = ['draft', 'unscheduled'].includes(event.status);
       return `<tr>
         <td><div class="evt-title">${esc(event.title)}</div><div class="hint">${esc(event.id)}</div></td>
         <td>${event.stats?.total || event.itemCount || 0} 个分镜</td>
         <td>${esc(when)}</td>
+        <td class="tnum">${Number(event.schedule?.order) || 0}</td>
         <td>${Number(event.policy?.concurrency) || 1}</td>
         <td>${event.policy?.onItemFail === 'stop' ? '失败即停' : '继续'}</td>
-        <td><button class="btn sm" data-event-schedule="${esc(event.id)}">${assigned ? '修改调度' : '配置调度'}</button></td>
+        <td class="evt-actions">
+          ${running ? '<span class="hint">执行中</span>' : `<button class="btn sm" data-event-schedule="${esc(event.id)}">${assigned ? '修改调度' : '配置调度'}</button>`}
+          ${canCancel ? `<button class="btn sm ghost" data-event-action="cancel" data-id="${esc(event.id)}">取消</button>` : ''}
+          ${canDelete ? `<button class="btn sm ghost" data-event-delete="${esc(event.id)}">删除</button>` : ''}
+        </td>
       </tr>`;
     }).join('');
-    return `<div class="table-wrap"><table class="jobs schedule-table"><thead><tr><th>任务</th><th>分镜</th><th>运行时间</th><th>并发</th><th>失败处理</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    return `<div class="table-wrap"><table class="jobs schedule-table"><thead><tr><th>任务</th><th>分镜</th><th>运行时间</th><th>次序</th><th>并发</th><th>失败处理</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table></div>`;
   }
 
   function renderSchedule() {
-    const events = state.events || [];
+    const page = taskPagination(state.events || [], 'events', state.eventPaging);
+    const events = page.rows;
+    const stats = state.eventStats || {};
     const unassigned = events.filter((event) => ['unscheduled', 'draft'].includes(event.status));
-    const assigned = events.filter((event) => ['scheduled', 'queued', 'running', 'paused'].includes(event.status));
-    return `<div class="schedule-page">
-      <section class="schedule-block"><div class="task-panel-head"><div><h2>未分配 <span class="count">${unassigned.length}</span></h2><p>刚保存的任务，还没有运行时间。</p></div></div>${scheduleRows(unassigned, false)}</section>
-      <section class="schedule-block"><div class="task-panel-head"><div><h2>已分配 <span class="count">${assigned.length}</span></h2><p>已经排好运行时间的任务；这里不显示执行过程。</p></div></div>${scheduleRows(assigned, true)}</section>
-    </div>`;
+    const assigned = events
+      .filter((event) => ['scheduled', 'queued', 'running', 'paused'].includes(event.status))
+      .sort((a, b) => (Number(a.schedule?.order) || 0) - (Number(b.schedule?.order) || 0)
+        || String(a.schedule?.startAt || '').localeCompare(String(b.schedule?.startAt || '')));
+    const unassignedTotal = (stats.unscheduled || 0) + (stats.draft || 0);
+    const assignedTotal = (stats.scheduled || 0) + (stats.queued || 0) + (stats.running || 0) + (stats.paused || 0);
+    return `${taskErrorBanner()}<div class="schedule-page">
+      <section class="schedule-block"><div class="task-panel-head"><div><h2>未分配 <span class="count">${unassignedTotal}</span></h2><p>刚保存的任务，还没有运行时间。</p></div></div>${scheduleRows(unassigned, false)}</section>
+      <section class="schedule-block"><div class="task-panel-head"><div><h2>已分配 <span class="count">${assignedTotal}</span></h2><p>已经排好运行时间的任务；这里不显示执行过程。</p></div></div>${scheduleRows(assigned, true)}</section>
+    </div>${page.footer}`;
   }
 
   /* ---------------- 监控页：配置操作 + 每个条目的执行记录 ---------------- */
@@ -513,78 +553,96 @@ const Events = (() => {
     return Math.floor(seconds / 60) + 'm' + String(seconds % 60).padStart(2, '0') + 's';
   }
 
-  function firstError(event) {
-    const item = (event.items || []).find((row) => row.error);
-    return item ? String(item.error).slice(0, 80) : '';
+  function itemStatusBadge(status) {
+    const label = ITEM[status] || status;
+    const cls = status === 'success' ? 'ok' : status === 'failed' ? 'bad' : status === 'running' ? 'info' : '';
+    return `<span class="badge ${cls}">${esc(label)}</span>`;
   }
 
   function renderMonitor() {
-    const events = state.events || [];
-    if (!events.length) return `<div class="card"><div class="empty"><strong>还没有可监控的任务</strong><p>任务开始执行后，这里会记录每一步的配置和结果。</p></div></div>`;
+    const page = taskPagination(state.events || [], 'events', state.eventPaging);
+    const events = page.rows;
+    if (!events.length) return `${taskErrorBanner()}<div class="card"><div class="empty"><strong>还没有可监控的任务</strong><p>任务开始执行后，这里会记录每一步的配置和结果。</p></div></div>`;
     const rows = events.map((event) => {
       const when = event.schedule?.startAt ? new Date(event.schedule.startAt).toLocaleString('zh-CN', { hour12: false }) : '立即';
-      const error = firstError(event);
+      const error = event.lastError || '';
       return `<tr>
+        <td>${badge(event.status)}</td>
         <td><div class="evt-title">${esc(event.title)}</div><div class="hint">${esc(event.id)}</div></td>
         <td><div class="hint">并发 ${Number(event.policy?.concurrency) || 1} · ${event.policy?.onItemFail === 'stop' ? '失败即停' : '失败继续'}</div><div class="hint">${esc(when)}</div></td>
         <td>${event.startedAt ? new Date(event.startedAt).toLocaleString('zh-CN', { hour12: false }) : '—'}</td>
         <td class="tnum">${durationText(event)}</td>
         <td>${event.stats?.done || 0}/${event.stats?.total || 0}${event.stats?.failed ? ` · <span class="is-danger">失败 ${event.stats.failed}</span>` : ''}</td>
-        <td class="hint">${error ? esc(error) : '—'}</td>
+        <td class="hint">${error ? esc((event.errorCount ? event.errorCount + ' 个 · ' : '') + error) : '—'}</td>
         <td><button class="btn sm" data-event-attempts="${esc(event.id)}">执行记录</button></td>
       </tr>`;
     }).join('');
-    return `<div class="table-wrap"><table class="jobs monitor-table"><thead><tr><th>任务</th><th>调度配置</th><th>开始时间</th><th>耗时</th><th>条目</th><th>错误 / 警告</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    return `${taskErrorBanner()}<div class="table-wrap"><table class="jobs monitor-table"><thead><tr><th>状态</th><th>任务</th><th>调度配置</th><th>开始时间</th><th>耗时</th><th>条目</th><th>错误 / 警告</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>${page.footer}`;
   }
 
   async function openAttempts(id) {
-    const [event, data] = await Promise.all([
-      api('/api/events/' + encodeURIComponent(id)),
-      api('/api/events/' + encodeURIComponent(id) + '/attempts?page=1').catch(() => ({ items: [], total: 0 })),
-    ]);
+    const event = await api('/api/events/' + encodeURIComponent(id));
     const auditRows = (event.audit || []).map((entry) => `<li><span class="hint">${new Date(entry.at).toLocaleString('zh-CN', { hour12: false })}</span> ${esc(AUDIT_LABEL[entry.action] || entry.action)}${entry.detail ? ' · ' + esc(entry.detail) : ''}</li>`).join('') || '<li class="hint">还没有配置操作。</li>';
-    const attemptRows = (data.items || []).flatMap((group) => group.attempts.map((attempt) => `<tr>
-      <td>${esc(group.title)}</td>
-      <td>${esc(attempt.status)}</td>
-      <td class="hint">${attempt.startedAt ? new Date(attempt.startedAt).toLocaleString('zh-CN', { hour12: false }) : '—'}</td>
-      <td class="tnum">${attempt.startedAt ? Math.max(0, Math.round(((attempt.finishedAt || Date.now()) - attempt.startedAt) / 1000)) + 's' : '—'}</td>
-      <td class="hint">${esc(attempt.error || '')}</td>
-    </tr>`)).join('') || '<tr><td colspan="5" class="hint">还没有执行记录。</td></tr>';
     openModal(`<div class="modal-head"><h2>执行记录 · ${esc(event.title)}</h2><button class="btn" data-close="1">关闭</button></div>
       <div class="modal-body">
         <div class="monitor-config"><span>运行时间：${event.schedule?.startAt ? new Date(event.schedule.startAt).toLocaleString('zh-CN', { hour12: false }) : '立即'}</span><span>并发：${Number(event.policy?.concurrency) || 1}</span><span>失败处理：${event.policy?.onItemFail === 'stop' ? '失败即停' : '继续'}</span></div>
         <h3 class="monitor-h3">配置操作</h3><ul class="monitor-audit">${auditRows}</ul>
         <h3 class="monitor-h3">执行记录</h3>
-        <div class="table-wrap"><table class="jobs"><thead><tr><th>分镜</th><th>状态</th><th>开始</th><th>耗时</th><th>错误</th></tr></thead><tbody>${attemptRows}</tbody></table></div>
+        <div id="attempt-wrap"><div class="hint">加载中…</div></div>
       </div>
       <div class="modal-foot"><span class="grow"></span><button class="btn" data-close="1">关闭</button></div>`);
+    const wrap = document.querySelector('#attempt-wrap');
+    const renderPage = async (page) => {
+      wrap.innerHTML = '<div class="hint">加载中…</div>';
+      let data;
+      try { data = await api('/api/events/' + encodeURIComponent(id) + '/attempts?page=' + page); }
+      catch (err) { wrap.innerHTML = `<div class="hint">${esc(err.message)}</div>`; return; }
+      const attemptRows = (data.items || []).flatMap((group) => group.attempts.map((attempt) => `<tr>
+        <td>${esc(group.title)}</td>
+        <td>${itemStatusBadge(attempt.status)}</td>
+        <td class="hint">${attempt.startedAt ? new Date(attempt.startedAt).toLocaleString('zh-CN', { hour12: false }) : '—'}</td>
+        <td class="tnum">${attempt.startedAt ? Math.max(0, Math.round(((attempt.finishedAt || Date.now()) - attempt.startedAt) / 1000)) + 's' : '—'}</td>
+        <td class="hint">${esc(attempt.error || '')}</td>
+      </tr>`)).join('') || '<tr><td colspan="5" class="hint">还没有执行记录。</td></tr>';
+      const pages = Math.max(1, Math.ceil((data.total || 0) / (data.pageSize || 10)));
+      const button = (label, target, disabled) => `<button class="btn sm" data-attempt-page="${target}" ${disabled ? 'disabled' : ''}>${label}</button>`;
+      const pager = pages > 1 ? `<nav class="task-pagination"><span>共 ${data.total} 条 · 第 ${data.page} / ${pages} 页</span><div>${button('上一页', data.page - 1, data.page <= 1)}${button('下一页', data.page + 1, data.page >= pages)}</div></nav>` : '';
+      wrap.innerHTML = `<div class="table-wrap"><table class="jobs"><thead><tr><th>分镜</th><th>状态</th><th>开始</th><th>耗时</th><th>错误</th></tr></thead><tbody>${attemptRows}</tbody></table></div>${pager}`;
+      wrap.querySelectorAll('[data-attempt-page]').forEach((btn) => { btn.onclick = () => renderPage(Number(btn.dataset.attemptPage)); });
+    };
+    await renderPage(1);
   }
 
   /* ---------------- 日志页：每个小任务的运行状态与结果 ---------------- */
 
   function renderLogs() {
-    const events = state.events || [];
-    if (!events.length) return `<div class="card"><div class="empty"><strong>还没有任务日志</strong><p>任务执行后，每个分镜的状态和结果都会记录在这里。</p></div></div>`;
+    const page = taskPagination(state.events || [], 'events', state.eventPaging);
+    const events = page.rows;
+    if (!events.length) return `${taskErrorBanner()}<div class="card"><div class="empty"><strong>还没有任务日志</strong><p>任务执行后，每个分镜的状态和结果都会记录在这里。</p></div></div>`;
     const rows = events.map((event) => `<tr>
       <td><div class="evt-title">${esc(event.title)}</div><div class="hint">${esc(event.id)}</div></td>
-      <td>${esc(STATUS[event.status] || event.status)}</td>
+      <td>${badge(event.status)}</td>
       <td>${event.stats?.done || 0}/${event.stats?.total || 0}</td>
       <td>${event.stats?.success || 0} 成功 · ${event.stats?.failed || 0} 失败${event.stats?.unknown ? ` · ${event.stats.unknown} 未知` : ''}</td>
+      <td>${event.startedAt ? new Date(event.startedAt).toLocaleString('zh-CN', { hour12: false }) : '—'}</td>
+      <td class="tnum">${durationText(event)}</td>
       <td><button class="btn sm" data-event-log-view="${esc(event.id)}">查看分镜日志</button></td>
     </tr>`).join('');
-    return `<div class="table-wrap"><table class="jobs log-table"><thead><tr><th>任务</th><th>状态</th><th>进度</th><th>结果</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    return `${taskErrorBanner()}<div class="table-wrap"><table class="jobs log-table"><thead><tr><th>任务</th><th>状态</th><th>进度</th><th>结果</th><th>开始</th><th>耗时</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>${page.footer}`;
   }
 
   async function openLogs(id) {
     const event = await api('/api/events/' + encodeURIComponent(id));
     const rows = (event.items || []).map((item) => `<tr>
       <td>${esc(item.title || item.refId)}<div class="hint">${esc(item.refType)} · ${esc(item.refId || '')}</div></td>
-      <td>${esc(STATUS[item.status] || item.status)}</td>
+      <td>${itemStatusBadge(item.status)}</td>
+      <td class="hint">${item.startedAt ? new Date(item.startedAt).toLocaleString('zh-CN', { hour12: false }) : '—'}</td>
+      <td class="tnum">${item.startedAt ? Math.max(0, Math.round(((item.finishedAt || Date.now()) - item.startedAt) / 1000)) + 's' : '—'}</td>
       <td class="hint">${esc(item.error || '—')}</td>
       <td><button class="btn sm" data-event-item-log="${esc(item.id)}" ${item.refId ? '' : 'disabled'}>日志</button></td>
     </tr>`).join('');
     const panel = openModal(`<div class="modal-head"><h2>分镜日志 · ${esc(event.title)}</h2><button class="btn" data-close="1">关闭</button></div>
-      <div class="modal-body"><div class="table-wrap"><table class="jobs"><thead><tr><th>分镜</th><th>状态</th><th>错误</th><th></th></tr></thead><tbody>${rows}</tbody></table></div><div id="evt-item-log"></div></div>
+      <div class="modal-body"><div class="table-wrap"><table class="jobs"><thead><tr><th>分镜</th><th>状态</th><th>开始</th><th>耗时</th><th>错误</th><th></th></tr></thead><tbody>${rows}</tbody></table></div><div id="evt-item-log"></div></div>
       <div class="modal-foot"><span class="grow"></span><button class="btn" data-close="1">关闭</button></div>`);
     const box = panel.querySelector('#evt-item-log');
     panel.querySelectorAll('[data-event-item-log]').forEach((button) => {
@@ -597,6 +655,24 @@ const Events = (() => {
         } catch (err) { toast(err.message, true); }
       };
     });
+  }
+
+  async function confirmDelete(id) {
+    const event = await api('/api/events/' + encodeURIComponent(id));
+    openModal(`<div class="modal-head"><h2>删除任务</h2><button class="btn" data-close="1">关闭</button></div>
+      <div class="modal-body"><p>确定删除「${esc(event.title || event.id)}」？</p><p class="hint">删除后任务和它的执行记录都会消失，不能恢复。</p></div>
+      <div class="modal-foot"><span class="grow"></span><button class="btn" data-close="1">取消</button><button class="btn danger" id="evt-delete-confirm">删除</button></div>`);
+    document.querySelector('#evt-delete-confirm').onclick = async () => {
+      try {
+        await api('/api/events/' + encodeURIComponent(id), { method: 'DELETE' });
+        closeModal();
+        lastSignature = '';
+        state.taskPages = { ...(state.taskPages || {}), events: 1 };
+        await load();
+        window.render();
+        toast('任务已删除');
+      } catch (err) { toast(err.message, true); }
+    };
   }
 
   async function openSchedule(id) {
@@ -634,6 +710,22 @@ const Events = (() => {
         toast('调度已保存');
       } catch (err) { toast(err.message, true); }
     };
+  }
+
+  function resetForProject() {
+    state.events = null;
+    state.eventStats = null;
+    state.eventPaging = null;
+    state.eventError = null;
+    state.taskEventStatus = '';
+    state.taskEventQuery = '';
+    state.taskPages = {};
+    createDrafts.video = null;
+    createDrafts.image = null;
+    lastSignature = '';
+    state.taskTab = 'manage';
+    try { localStorage.setItem('h3.tasks.tab', 'manage'); } catch { /* ignore */ }
+    if (document.querySelector('#modal:not([hidden])')) closeModal();
   }
 
   function draftFromEvent(event) {
@@ -702,7 +794,7 @@ const Events = (() => {
     const s = event.stats || {};
     const detailPage=taskPagination(event.items||[],'detail',event.itemPaging);
     const items = detailPage.rows.map((item) => `<tr>
-      <td>${badge(item.status === 'success' ? 'completed' : item.status)}</td>
+      <td>${itemStatusBadge(item.status)}</td>
       <td>${esc(item.title || item.refId)}<div class="hint">${esc(item.refType)} · ${esc(item.refId)}</div></td>
       <td class="hint">${esc(item.error || '—')}</td>
       <td class="evt-actions">${['queued','paused'].includes(item.status)?`<button class="btn sm" data-event-item-action="up" data-item="${esc(item.id)}">上移</button><button class="btn sm" data-event-item-action="down" data-item="${esc(item.id)}">下移</button>`:''}<button class="btn sm ghost" data-event-item-log="${esc(item.id)}" ${item.refId?'':'disabled'}>日志</button><button class="btn sm ghost" data-event-item-probe="${esc(item.refId)}" ${item.refId?'':'disabled'} data-ref-type="${esc(item.refType)}">探针</button>${item.remoteId&&item.provider==='manager'&&['failed','unknown','canceled'].includes(item.status)?`<button class="btn sm" data-event-item-action="resume-original" data-item="${esc(item.id)}">继续查询／下载</button>`:''}${['failed','canceled','skipped'].includes(item.status) ? `<button class="btn sm" data-event-item-action="retry" data-item="${esc(item.id)}">重试</button>` : ''}${['queued','paused'].includes(item.status) ? `<button class="btn sm ghost" data-event-item-action="skip" data-item="${esc(item.id)}" ${item.refId?'':'disabled'}>跳过</button>` : ''}</td>
@@ -710,7 +802,9 @@ const Events = (() => {
     const panel = openModal(`<div class="modal-head"><h2>${esc(event.title)}</h2><button class="btn" data-close="1">关闭</button></div>
       <div class="modal-body">
         <div class="hint">${esc(event.id)} · ${esc(SOURCE[event.source] || event.source)} · 创建 ${new Date(event.createdAt).toLocaleString('zh-CN', { hour12: false })}</div>
-        ${event.status==='draft'?`<button class="btn" data-event-edit="${esc(event.id)}">编辑草稿</button><button class="btn primary" data-event-action="queue" data-id="${esc(event.id)}">加入队列</button>`:''}
+        ${event.status==='draft'?`<button class="btn" data-event-edit="${esc(event.id)}">编辑草稿</button><button class="btn primary" data-event-action="queue" data-id="${esc(event.id)}">加入队列</button><button class="btn ghost" data-event-delete="${esc(event.id)}">删除</button>`:''}
+        ${event.status==='unscheduled'?`<button class="btn" data-event-edit="${esc(event.id)}">编辑任务</button><button class="btn ghost" data-event-action="cancel" data-id="${esc(event.id)}">取消任务</button><button class="btn ghost" data-event-delete="${esc(event.id)}">删除</button>`:''}
+        ${event.status==='canceled'?`<button class="btn ghost" data-event-delete="${esc(event.id)}">删除</button>`:''}
         <div class="row evt-actions" style="gap:8px;flex-wrap:wrap;margin:8px 0">
           ${['queued','running'].includes(event.status) ? `<button class="btn sm" data-event-action="pause" data-id="${esc(event.id)}">暂停</button>` : ''}
           ${event.status === 'paused' ? `<button class="btn sm" data-event-action="resume" data-id="${esc(event.id)}">继续</button>` : ''}
@@ -792,6 +886,8 @@ const Events = (() => {
       if (attempts) { openAttempts(attempts.dataset.eventAttempts).catch((err) => toast(err.message, true)); return; }
       const logView = event.target.closest('[data-event-log-view]');
       if (logView) { openLogs(logView.dataset.eventLogView).catch((err) => toast(err.message, true)); return; }
+      const remove = event.target.closest('[data-event-delete]');
+      if (remove) { confirmDelete(remove.dataset.eventDelete).catch((err) => toast(err.message, true)); return; }
       const action = event.target.closest('[data-event-action]');
       if (action) { runAction(action.dataset.eventAction, action.dataset.id).catch((err) => toast(err.message, true)); return; }
       const itemAction = event.target.closest('[data-event-item-action]');
@@ -817,6 +913,8 @@ const Events = (() => {
 
   document.addEventListener('click', (event) => {
     const edit=event.target.closest('[data-event-edit]');if(edit){openCreatePage(edit.dataset.eventEdit).catch(err=>toast(err.message,true));return;}
+    const remove=event.target.closest('[data-event-delete]');
+    if(remove){if(!remove.closest('#modal'))return;confirmDelete(remove.dataset.eventDelete).catch(err=>toast(err.message,true));return;}
     const action = event.target.closest('[data-event-action]');
     if (!action || !action.closest('#modal')) return;
     event.preventDefault();
@@ -834,5 +932,5 @@ const Events = (() => {
       <div class="modal-foot"><span class="grow"></span><button class="btn" data-close="1">关闭</button></div>`);
   }
 
-  return { render, renderCreate, renderSchedule, renderMonitor, renderLogs, load, bind, openCreatePage, openDetail, openSchedule, openAttempts, openLogs };
+  return { render, renderCreate, renderSchedule, renderMonitor, renderLogs, load, bind, resetForProject, openCreatePage, openDetail, openSchedule, openAttempts, openLogs, confirmDelete };
 })();

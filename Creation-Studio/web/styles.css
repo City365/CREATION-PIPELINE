@@ -2102,3 +2102,9 @@ body.is-pane-resizing * { user-select: none !important; }
 .create-import-head .hint{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:520px}
 
 .create-head.is-two{grid-template-columns:minmax(240px,1.4fr) minmax(220px,1fr)}
+
+.btn.primary:disabled{background:var(--h3-border-strong);border-color:var(--h3-border-strong);color:var(--h3-text-3);opacity:.7}
+.schedule-empty .empty{padding:30px 20px}
+.modal-head{justify-content:space-between}
+.schedule-table td:last-child{white-space:nowrap}
+

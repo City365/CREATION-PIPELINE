@@ -1264,9 +1264,11 @@ function mediaPath(input) {
   if(attemptLogRoute&&method==='GET')return ok(res,events.repository.attemptLog(attemptLogRoute[1],Math.max(0,Number(url.searchParams.get('after'))||0)));
   const lifecycleAction=/^\/api\/events\/([^/]+)\/(schedule|queue|prepare|attempts)$/.exec(pathname);
   if(lifecycleAction){const id=lifecycleAction[1];if(method==='POST'&&lifecycleAction[2]==='queue')return ok(res,events.queueEvent(id));if(method==='POST'&&lifecycleAction[2]==='prepare')return ok(res,events.prepareEvent(id));if(method==='POST'&&lifecycleAction[2]==='schedule')return ok(res,events.scheduleEvent(id,await readBody(req)));if(method==='GET'&&lifecycleAction[2]==='attempts'){const event=events.get(id),data=events.repository.attemptPage(id,url.searchParams.get('page'));const grouped=new Map();for(const attempt of data.attempts){const item=event.items.find(i=>i.id===attempt.itemId);if(!grouped.has(attempt.itemId))grouped.set(attempt.itemId,{itemId:attempt.itemId,title:item?.title||attempt.itemId,attempts:[]});grouped.get(attempt.itemId).attempts.push(attempt);}return ok(res,{...data,items:[...grouped.values()]});}}
+  const deleteEventRoute = /^\/api\/events\/([^/]+)$/.exec(pathname);
+  if (method === 'DELETE' && deleteEventRoute) return ok(res, events.removeEvent(deleteEventRoute[1]));
+
   const eventAction = /^\/api\/events\/([^/]+)\/(pause|resume|cancel|retry-failed)$/.exec(pathname);
-  if (method === 'POST' && eventAction) {
-    const id = eventAction[1];
+  if (method === 'POST' && eventAction) {    const id = eventAction[1];
     if (eventAction[2] === 'pause') return ok(res, events.pauseEvent(id));
     if (eventAction[2] === 'resume') return ok(res, events.resumeEvent(id));
     if (eventAction[2] === 'cancel') return ok(res, events.cancelEvent(id));

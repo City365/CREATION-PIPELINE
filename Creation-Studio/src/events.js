@@ -128,7 +128,7 @@ function hydrate(event, context = {}) {
 
 function list(filter={}){
  const result=repository.query(filter);
- return {...result,schedulerError:state.schedulerError||null,events:result.events.map(raw=>{const e=hydrate(raw);const {items,spec,...rest}=e;return {...rest,kind:repository.kind(e),spec:{projectId:spec?.projectId,workflowId:spec?.workflowId},itemCount:items.length};})};
+ return {...result,schedulerError:state.schedulerError||null,events:result.events.map(raw=>{const e=hydrate(raw);const {items,spec,...rest}=e;const firstError=items.find(item=>item.error);return {...rest,kind:repository.kind(e),spec:{projectId:spec?.projectId,workflowId:spec?.workflowId},itemCount:items.length,lastError:firstError?String(firstError.error).slice(0,160):'',errorCount:items.filter(item=>item.error).length};})};
 }
 
 function get(id) {
@@ -430,10 +430,11 @@ function cancelEvent(id) {
   for (const item of event.items) {
     const status = itemStatusOf(item, map);
     if (status === 'queued' || status === 'paused') {
-      cancelPending(item)
+      if (item.refId) cancelPending(item);
       item.override = 'canceled';
     }
   }
+  event.pendingSchedule = false;
   audit(event, 'cancel', '取消未提交条目');
   save();
   return get(id);
@@ -459,21 +460,31 @@ function retryItem(id, itemId) {
   event.paused = false;
   event.canceled = false;
   event.status='queued';event.finishedAt=null;
+  audit(event, 'retry', `重试分镜 ${item.title || item.id}`);
   save();
   setTimeout(tick, 50);
   return get(id);
 }
 
-function moveItem(id,itemId,direction){const event=rawEvent(id),map=jobMapNow(),from=event.items.findIndex(i=>i.id===itemId);if(from<0)throw Object.assign(new Error('条目不存在'),{status:404});if(!['queued','paused'].includes(itemStatusOf(event.items[from],map)))throw Object.assign(new Error('只能调整尚未派发条目的顺序'),{status:409});const step=direction==='up'?-1:1;let to=from+step;while(to>=0&&to<event.items.length&&!['queued','paused'].includes(itemStatusOf(event.items[to],map)))to+=step;if(to>=0&&to<event.items.length){[event.items[from],event.items[to]]=[event.items[to],event.items[from]];save();}return get(id);}
+function moveItem(id,itemId,direction){
+  const event=rawEvent(id),map=jobMapNow(),from=event.items.findIndex(i=>i.id===itemId);
+  if(from<0)throw Object.assign(new Error('条目不存在'),{status:404});
+  if(!['queued','paused'].includes(itemStatusOf(event.items[from],map)))throw Object.assign(new Error('只能调整尚未派发条目的顺序'),{status:409});
+  const step=direction==='up'?-1:1;let to=from+step;
+  while(to>=0&&to<event.items.length&&!['queued','paused'].includes(itemStatusOf(event.items[to],map)))to+=step;
+  if(to>=0&&to<event.items.length){[event.items[from],event.items[to]]=[event.items[to],event.items[from]];audit(event,'move',direction==='up'?'上移分镜':'下移分镜');save();}
+  return get(id);
+}
 function skipItem(id, itemId) {
   const event = rawEvent(id);
   const item = (event.items || []).find((i) => i.id === itemId);
   if (!item) { const error = new Error('条目不存在'); error.status = 404; throw error; }
   const map = jobMapNow();
   const status = itemStatusOf(item, map);
-  if (['queued', 'paused'].includes(status)) { cancelPending(item) }
+  if (['queued', 'paused'].includes(status) && item.refId) { cancelPending(item) }
   if (!['queued', 'paused'].includes(status)) { const error = new Error('只能跳过尚未执行的条目'); error.status = 409; throw error; }
   item.override = 'skipped';
+  audit(event, 'skip', `跳过分镜 ${item.title || item.id}`);
   save();
   return get(id);
 }
@@ -487,6 +498,8 @@ function retryFailed(id) {
 }
 function scheduleEvent(id, input={}) {
   const event=rawEvent(id);
+  const current=get(id).status;
+  if(['running','completed','failed','partial','canceled','interrupted'].includes(current)) throw Object.assign(new Error('任务已开始或已结束，不能再改调度'),{status:409});
   if(input.startAt && !Number.isFinite(Date.parse(input.startAt))) {const err=new Error('执行时间无效');err.status=400;throw err;}
   for(const item of event.items||[]){const status=itemStatusOf(item,jobMapNow());if(['queued','paused'].includes(status)&&item.refId)hold(item,true);}
   event.schedule={...event.schedule,order:Number(input.order)||0,startAt:input.startAt||null};
@@ -509,10 +522,21 @@ function scheduleEvent(id, input={}) {
 }
 function lookupRef(refId){load();for(const event of state.events){const item=event.items?.find(i=>i.refId===refId);if(item)return {event,item};}const row=repository.open().prepare("SELECT event_id,item_id FROM task_attempts WHERE json_extract(payload,'$.refId')=? LIMIT 1").get(refId);if(row){const event=repository.get(row.event_id),item=event?.items.find(i=>i.id===row.item_id);if(item)return {event,item};}return null;}
 async function resumeOriginal(id,itemId){const event=rawEvent(id),item=event.items.find(i=>i.id===itemId);if(!item||item.refType!=='job')throw Object.assign(new Error('该任务不支持远端续查'),{status:409});const job=jobs.get(item.refId);if(job?.provider!=='manager'||!job.remotePromptId)throw Object.assign(new Error('没有可恢复的远端任务编号'),{status:409});capture(event,item,jobMapNow());event.legacy=false;event.status='queued';event.finishedAt=null;event.paused=false;event.canceled=false;save();await jobs.resume(item.refId);jobs.setHeld(item.refId,true);setTimeout(safeTick,50);return get(id);}
-function updateDraft(id,inputs,meta={}){const event=rawEvent(id);inputs=prepareInputs(inputs,event.kind);event.version=(event.version||1)+1;if(!event.draft)throw Object.assign(new Error('已入队任务不能修改提交快照，请复制为新任务'),{status:409});event.title=meta.title||event.title;event.spec.items=inputs.map(input=>({...input,params:input}));event.items=inputs.flatMap(input=>Array.from({length:event.kind==='video'?Math.max(1,Math.min(20,Number(input.count)||1)):1},()=>({...normalizeRef(event.kind==='image'?'imageTask':'job',''),title:input.title||input.prompt?.slice(0,60)||'生成任务',input:{...input,count:1},dispatchState:'pending'})));save();return get(id);}
+function updateDraft(id,inputs,meta={}){const event=rawEvent(id);inputs=prepareInputs(inputs,event.kind);event.version=(event.version||1)+1;if(!event.draft&&!event.pendingSchedule)throw Object.assign(new Error('已入队任务不能修改提交快照，请复制为新任务'),{status:409});event.title=meta.title||event.title;event.spec.items=inputs.map(input=>({...input,params:input}));event.items=inputs.flatMap(input=>Array.from({length:event.kind==='video'?Math.max(1,Math.min(20,Number(input.count)||1)):1},()=>({...normalizeRef(event.kind==='image'?'imageTask':'job',''),title:input.title||input.prompt?.slice(0,60)||'生成任务',input:{...input,count:1},dispatchState:'pending'})));save();return get(id);}
 function queueEvent(id) {const event=rawEvent(id);event.draft=false;event.pendingSchedule=false;event.paused=false;const future=event.schedule?.startAt&&Date.parse(event.schedule.startAt)>Date.now();if(future){event.status='scheduled';audit(event,'queue','按计划时间等待执行');save();return get(id);}event.status='queued';audit(event,'queue','加入队列');save();materialize(event);save();setTimeout(safeTick,50);return get(id);}
 /** 保存任务但先不调度：出现在调度页的「未分配」里。 */
-function prepareEvent(id) {const event=rawEvent(id);if(['running'].includes(event.status))throw Object.assign(new Error('执行中的任务不能重新调度'),{status:409});event.draft=false;event.pendingSchedule=true;event.status='unscheduled';event.paused=false;event.canceled=false;event.finishedAt=null;audit(event,'prepare','保存任务，等待调度');save();return get(id);}
+function prepareEvent(id) {const event=rawEvent(id);const status=get(id).status;if(['running','completed','failed','partial','canceled','interrupted'].includes(status))throw Object.assign(new Error('任务已开始或已结束，不能重新调度'),{status:409});event.draft=false;event.pendingSchedule=true;event.status='unscheduled';event.paused=false;event.canceled=false;event.finishedAt=null;audit(event,'prepare','保存任务，等待调度');save();return get(id);}
+/** 删除尚未开始或已取消的任务；执行中的任务必须先取消。 */
+function removeEvent(id){
+  const event=rawEvent(id);
+  const status=get(id).status;
+  if(!['draft','unscheduled','canceled'].includes(status))throw Object.assign(new Error('只有尚未开始或已取消的任务可以删除'),{status:409});
+  load();
+  state.events=state.events.filter((item)=>item.id!==id);
+  save();
+  repository.remove(id);
+  return {ok:true,id,title:event.title||''};
+}
 
 function percentile(values, ratio) {
   if (!values.length) return null;
@@ -655,4 +679,4 @@ function adoptLegacy(projectId) {
   return changed;
 }
 
-module.exports = { repository, materialize, importHistory, lookupRef, capture, scheduleEvent, queueEvent, prepareEvent, updateDraft, resumeOriginal, moveItem, adoptLegacy, load, save, list, get, create, createFromJobInputs, recordJobs, recordSingleJob, recordSingleImage, itemLog, hydrate, tick, start, stop, pauseEvent, resumeEvent, cancelEvent, retryItem, skipItem, retryFailed, report, reportCsv, reportRange, state };
+module.exports = { repository, materialize, importHistory, lookupRef, capture, scheduleEvent, queueEvent, prepareEvent, removeEvent, updateDraft, resumeOriginal, moveItem, adoptLegacy, load, save, list, get, create, createFromJobInputs, recordJobs, recordSingleJob, recordSingleImage, itemLog, hydrate, tick, start, stop, pauseEvent, resumeEvent, cancelEvent, retryItem, skipItem, retryFailed, report, reportCsv, reportRange, state };

@@ -43,7 +43,11 @@ function query(filter={}) {
  const db=open(),base=conditions.length?' WHERE '+conditions.join(' AND '):'';
  const stats={total:0,running:0,queued:0,completed:0,failed:0,partial:0,paused:0,interrupted:0,draft:0,canceled:0};
  for(const row of db.prepare("SELECT json_extract(payload,'$.status') AS status,COUNT(*) AS n FROM task_events"+base+' GROUP BY status').all(...args)){stats[row.status]=row.n;stats.total+=row.n;}
- if(filter.status){conditions.push("json_extract(payload,'$.status')=?");args.push(filter.status);}
+ if(filter.status){
+   const statuses=String(filter.status).split(',').map(s=>s.trim()).filter(Boolean);
+   if(statuses.length===1){conditions.push("json_extract(payload,'$.status')=?");args.push(statuses[0]);}
+   else if(statuses.length>1){conditions.push("json_extract(payload,'$.status') IN ("+statuses.map(()=>'?').join(',')+")");args.push(...statuses);}
+ }
  if(filter.query){conditions.push("json_extract(payload,'$.title') LIKE ?");args.push('%'+filter.query+'%');}
  const where=conditions.length?' WHERE '+conditions.join(' AND '):'';
  const total=db.prepare('SELECT COUNT(*) AS n FROM task_events'+where).get(...args).n,page=Math.max(1,Math.min(Math.ceil(total/10)||1,Number(filter.page)||1));
@@ -54,5 +58,7 @@ function query(filter={}) {
 function get(id){const row=open().prepare('SELECT payload FROM task_events WHERE id=?').get(id);return row?JSON.parse(row.payload):null;}
 function active(){return open().prepare("SELECT payload FROM task_events WHERE json_extract(payload,'$.status') IN ('queued','running','paused','interrupted') OR json_extract(payload,'$.draft')=0 AND json_extract(payload,'$.finishedAt') IS NULL").all().map(r=>JSON.parse(r.payload));}
 function attemptLog(id,after=0){const row=open().prepare('SELECT payload FROM task_attempts WHERE id=?').get(id);if(!row)throw Object.assign(new Error('执行记录不存在'),{status:404});const record=JSON.parse(row.payload),logs=record.logs||[];return {id,lines:logs.slice(after,after+50),after,next:Math.min(logs.length,after+50),hasMore:after+50<logs.length};}
-function attemptPage(eventId,index=1){const db=open(),total=db.prepare('SELECT COUNT(*) AS n FROM task_attempts WHERE event_id=?').get(eventId).n,page=Math.max(1,Math.min(Math.ceil(total/10)||1,Number(index)||1));const attempts=db.prepare("SELECT id,item_id AS itemId,created_at AS createdAt,json_extract(payload,'$.status') AS status FROM task_attempts WHERE event_id=? ORDER BY created_at DESC,rowid DESC LIMIT 10 OFFSET ?").all(eventId,(page-1)*10);return {attempts,total,page,pageSize:10};}
-module.exports = { open, read, write, kind, query, get, active, attempt, attempts, attemptLog, attemptPage };
+function attemptPage(eventId,index=1){const db=open(),total=db.prepare('SELECT COUNT(*) AS n FROM task_attempts WHERE event_id=?').get(eventId).n,page=Math.max(1,Math.min(Math.ceil(total/10)||1,Number(index)||1));const attempts=db.prepare("SELECT id,item_id AS itemId,created_at AS createdAt,json_extract(payload,'$.status') AS status,json_extract(payload,'$.startedAt') AS startedAt,json_extract(payload,'$.finishedAt') AS finishedAt,json_extract(payload,'$.error') AS error FROM task_attempts WHERE event_id=? ORDER BY created_at DESC,rowid DESC LIMIT 10 OFFSET ?").all(eventId,(page-1)*10);return {attempts,total,page,pageSize:10};}
+function remove(id){const db=open();const row=db.prepare('SELECT id FROM task_events WHERE id=?').get(id);if(!row)return false;db.prepare('DELETE FROM task_attempts WHERE event_id=?').run(id);db.prepare('DELETE FROM task_events WHERE id=?').run(id);return true;}
+
+module.exports = { open, read, write, kind, query, get, active, attempt, attempts, attemptLog, attemptPage, remove };

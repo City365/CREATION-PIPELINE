@@ -5862,7 +5862,7 @@ function renderTasks(){
     : tab==='monitor'?Events.renderMonitor()
     : tab==='logs'?Events.renderLogs()
     : Events.render('manage');
-  const tabActions=`<div class="task-tabbar-actions">${tab==='monitor'?'<button type="button" class="btn sm" data-event-range="7">近 7 天报告</button>':''}<button type="button" class="btn sm ghost" data-task-refresh="1">刷新</button></div>`;
+  const tabActions=`<div class="task-tabbar-actions">${tab==='monitor'?'<button type="button" class="btn sm" data-event-range="7">近 7 天报告</button>':''}${tab==='create'?'':'<button type="button" class="btn sm ghost" data-task-refresh="1">刷新</button>'}</div>`;
   return `<header class="task-header"><div><h1>${title}</h1></div><div class="task-media-switch" role="group" aria-label="媒体类型"><button class="btn ${media==='video'?'primary':''}" data-task-media="video" aria-pressed="${media==='video'}">视频</button><button class="btn ${media==='image'?'primary':''}" data-task-media="image" aria-pressed="${media==='image'}">图像</button></div></header><section class="task-workspace"><div class="task-tabbar"><div class="task-tabs" role="tablist" aria-label="任务生命周期">${TASK_TABS.map(([id,label])=>`<button type="button" role="tab" id="task-tab-${id}" aria-controls="task-panel" data-task-tab="${id}" aria-selected="${tab===id}">${label}</button>`).join('')}</div>${tabActions}</div><div class="task-panel" id="task-panel" role="tabpanel" aria-labelledby="task-tab-${tab}">${body}</div></section>`;
 }
 
@@ -6829,6 +6829,8 @@ async function setActiveProject(id, opts = {}) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ projectId: id }),
   }).catch(() => {});
+  Events.resetForProject();
+  if (state.route === 'tasks') await Events.load();
   askResetForProject();
   state.assets = await api('/api/assets').catch(() => state.assets);
   state.media = await api('/api/media').catch(() => state.media);
