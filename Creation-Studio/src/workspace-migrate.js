@@ -147,10 +147,12 @@ function migrateAgentSessions(projectId, backupDir) {
 function run({ force = false } = {}) {
   const marker = readMarker();
   if (marker && !force) return marker;
-  const project = pickProject();
+  // force 重跑时沿用第一次迁移选定的项目，避免因为用户切换了当前项目而把数据拆到两处。
+  const project = (marker && marker.projectId ? projects.get(marker.projectId) : null) || pickProject();
   if (!project) return null;
   const paths = workspace.pathsFor(project);
   const backupRoot = path.join(config.DATA, 'backups', 'workspace-' + stamp().replace(/[: ]/g, '-'));
+  const agentBackupDir = path.join(backupRoot, 'agent');
   const sources = {
     assets: path.join(config.DATA, 'assets'),
     uploads: path.join(config.DATA, 'uploads'),
@@ -169,8 +171,11 @@ function run({ force = false } = {}) {
   try { moved.images = imageTasks.tasks().adoptLegacy(project.id); } catch { moved.images = 0; }
   // 测试数据目录下不碰本机真实智能体会话库，除非显式指定了 H3_AGENT_DB。
   if (!process.env.H3_DATA_DIR || process.env.H3_AGENT_DB) {
-    try { moved.agents = migrateAgentSessions(project.id, path.join(backupRoot, 'agent')); } catch { moved.agents = 0; }
+    try { moved.agents = migrateAgentSessions(project.id, agentBackupDir); } catch { moved.agents = 0; }
   }
+  const backupList = Object.values(backups).filter(Boolean);
+  const agentDbBackup = path.join(agentBackupDir, 'conversations.db');
+  if (fs.existsSync(agentDbBackup)) backupList.push(agentDbBackup);
   const record = {
     version: 1,
     projectId: project.id,
@@ -178,7 +183,7 @@ function run({ force = false } = {}) {
     dir: paths.dir,
     at: Date.now(),
     moved,
-    backups: Object.values(backups).filter(Boolean),
+    backups: backupList,
   };
   fs.mkdirSync(config.DATA, { recursive: true });
   fs.writeFileSync(markerFile(), JSON.stringify(record, null, 2) + '\n', 'utf8');
