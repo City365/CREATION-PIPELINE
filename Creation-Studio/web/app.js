@@ -1971,6 +1971,7 @@ async function generate() {
   try {
     const body = {
       ...workbenchContext,
+      requestId:crypto.randomUUID(),
       workflowId: wf.id,
       prompt: s.prompt,
       prefixPrompt:generationPrefixValue('video'),
@@ -2008,7 +2009,9 @@ function jobStatusBadge(job) {
 
 function renderJobs(embed = false) {
   const filter = state.jobFilter || { status: '', provider: '' };
-  const jobs = state.jobs.filter((j) => (!filter.status || j.status === filter.status) && (!filter.provider || j.provider === filter.provider));
+  const query = (filter.query || '').trim().toLowerCase();
+  const jobs = state.jobs.filter((j) => (!filter.status || j.status === filter.status) && (!filter.provider || j.provider === filter.provider) && (!query || [j.title, j.prompt, j.id, j.workflowId].some((v) => String(v || '').toLowerCase().includes(query)))).sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
+  const page = taskPagination(jobs, 'running');
   const counts = { queued: 0, running: 0, success: 0, failed: 0 };
   state.jobs.forEach((j) => { if (counts[j.status] !== undefined) counts[j.status]++; });
   const head = `
@@ -2017,25 +2020,26 @@ function renderJobs(embed = false) {
     <div class="page-actions"><button class="btn" data-act="go-logs">查看执行日志</button><button class="btn" data-act="go-studio">去创作台</button></div>
   </div>`;
   return `${embed ? '' : head}
+  <form class="task-search" data-task-search><label for="task-search">搜索视频任务</label><div><input class="input" id="task-search" name="query" value="${esc(filter.query || '')}" placeholder="输入任务名称、提示词或 ID" /><button class="btn" type="submit">搜索</button></div></form>
   <div class="filters">
     ${['', 'queued', 'running', 'success', 'failed', 'canceled'].map((s) => `<button class="chip ${filter.status === s ? 'active' : ''}" data-filter-status="${s}">${s ? STATUS_LABEL[s] : '全部状态'}</button>`).join('')}
     <span style="width:12px"></span>
-    ${[['', '全部类型'], ['autodl', '官网API'], ['generic', '自定义']].map(([p, label]) => `<button class="chip ${filter.provider === p ? 'active' : ''}" data-filter-provider="${p}">${label}</button>`).join('')}
+    ${[['', '全部渠道'], ['manager', '本机管理器'], ['autodl', '官网 API'], ['generic', '自定义']].map(([p, label]) => `<button class="chip ${filter.provider === p ? 'active' : ''}" data-filter-provider="${p}">${label}</button>`).join('')}
     ${embed ? '<span class="grow"></span><button class="btn sm" data-act="go-logs">查看执行日志</button>' : ''}
   </div>
-  ${jobs.length ? `<div class="table-wrap"><table class="jobs">
+  ${jobs.length ? `<div class="table-wrap"><table class="jobs task-job-table">
     <thead><tr><th>状态</th><th>任务</th><th>工作流</th><th>参考</th><th>进度</th><th>创建</th><th>操作</th></tr></thead>
-    <tbody>${jobs.map((job) => {
+    <tbody>${page.rows.map((job) => {
       const wf = workflowById(job.workflowId);
       const video = (job.outputs || []).find((o) => o.type === 'video');
       return `<tr class="status-${job.status}">
-        <td>${jobStatusBadge(job)}<div class="hint">${esc(job.stage || '')}</div></td>
-        <td class="cell-prompt"><div><strong>${esc(job.title)}</strong>${job.held ? ' <span class="badge">锁定</span>' : ''}</div><div class="one-line">${esc(job.excerpt || job.prompt)}</div></td>
-        <td><div class="small">${wf ? esc(wf.label) : esc(job.workflowId)}</div><div class="hint">${job.provider === 'autodl' ? '官网API' : '自定义'}</div></td>
-        <td class="small">${(job.images || []).length} 图 · ${(job.audios || []).length} 音频<div class="hint">${job.duration || '—'} 秒 · ${esc(job.resolution || job.aspectRatio || '')}</div></td>
-        <td style="min-width:110px"><div class="mini-bar"><i style="width:${job.progress || 0}%"></i></div><div class="hint">${job.progress || 0}%</div></td>
-        <td class="small">${fmtTime(job.createdAt)}<div class="hint">${ago(job.createdAt)}</div></td>
-        <td><div class="cell-actions">
+        <td data-label="状态">${jobStatusBadge(job)}${job.stage && job.stage !== STATUS_LABEL[job.status] ? `<div class="hint">${esc(job.stage)}</div>` : ''}</td>
+        <td data-label="任务" class="cell-prompt"><div class="task-row-title" title="${esc(job.title)}"><strong>${esc(job.title)}</strong>${job.held ? ' <span class="badge">锁定</span>' : ''}</div><div class="one-line">${esc(job.excerpt || job.prompt)}</div></td>
+        <td data-label="工作流"><div class="small">${wf ? esc(wf.label) : esc(job.workflowId)}</div><div class="hint">${job.provider === 'manager' ? '本机管理器' : job.provider === 'autodl' ? '官网 API' : '自定义'}</div></td>
+        <td data-label="参考" class="small">${(job.images || []).length} 图 · ${(job.audios || []).length} 音频<div class="hint">${job.duration || '—'} 秒 · ${esc(job.resolution || job.aspectRatio || '')}</div></td>
+        <td data-label="进度"><div class="mini-bar"><i style="width:${job.progress || 0}%"></i></div><div class="hint">${job.progress || 0}%</div></td>
+        <td data-label="创建" class="small">${fmtTime(job.createdAt)}<div class="hint">${ago(job.createdAt)}</div></td>
+        <td data-label="操作"><div class="cell-actions">
           ${job.status === 'queued' || job.status === 'running' ? `<button class="btn sm" data-act="cancel" data-id="${job.id}">取消</button>` : ''}
           ${job.provider === 'manager' && job.remotePromptId && ['failed', 'canceled'].includes(job.status) ? `<button class="btn sm" data-act="resume" data-id="${job.id}">继续查询／下载</button>` : ''}
           ${job.status === 'failed' || job.status === 'canceled' || job.status === 'success' ? `<button class="btn sm" data-act="retry" data-id="${job.id}">重试</button>` : ''}
@@ -2047,16 +2051,22 @@ function renderJobs(embed = false) {
         </div></td>
       </tr>`;
     }).join('')}</tbody>
-  </table></div>` : `<div class="card"><div class="empty"><strong>还没有任务</strong><p>在创作台点「生成视频」后，排队、生成中与已完成的任务都会列在这里。</p><button class="btn primary" data-act="go-studio">去创作台</button></div></div>`}
+  </table></div>${page.footer}` : `<div class="card"><div class="empty"><strong>${state.jobs.length ? '没有匹配的任务' : '还没有任务'}</strong><p>${state.jobs.length ? '试试其他关键词，或切换到全部状态、全部渠道。' : '在创作台生成视频后，任务进度与结果会显示在这里。'}</p><button class="btn primary" data-act="go-studio">去创作台</button></div></div>`}
   `;
 }
 
 function bindJobs(root) {
+  root.querySelector('[data-task-search]')?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    state.jobFilter = { ...(state.jobFilter || {}), query: new FormData(event.target).get('query') || '' };
+    if (state.taskPages) state.taskPages.running = 1;
+    render();
+  });
   root.addEventListener('click', async (event) => {
     const filterStatus = event.target.closest('[data-filter-status]');
     const filterProvider = event.target.closest('[data-filter-provider]');
-    if (filterStatus) { state.jobFilter = { ...(state.jobFilter || {}), status: filterStatus.dataset.filterStatus }; return render(); }
-    if (filterProvider) { state.jobFilter = { ...(state.jobFilter || {}), provider: filterProvider.dataset.filterProvider }; return render(); }
+    if (filterStatus) { if (state.taskPages) state.taskPages.running = 1; state.jobFilter = { ...(state.jobFilter || {}), status: filterStatus.dataset.filterStatus }; return render(); }
+    if (filterProvider) { if (state.taskPages) state.taskPages.running = 1; state.jobFilter = { ...(state.jobFilter || {}), provider: filterProvider.dataset.filterProvider }; return render(); }
     const target = event.target.closest('[data-act]');
     if (!target) return;
     const act = target.dataset.act;
@@ -5572,6 +5582,7 @@ function renderBatch(embed = false) {
     </div>
   </div>`;
   return `${embed ? '' : head}
+  ${embed ? '<div class="task-batch-tools"><button class="btn" data-act="batch-import">导入 JSON</button><button class="btn" data-act="batch-template">保存模板</button><button class="btn" data-act="batch-spec">复制 AI 说明</button></div>' : ''}
   <div class="batch-grid">
     <div class="card" style="padding:14px;display:flex;flex-direction:column;gap:10px">
       <div class="row"><span class="muted small">工作流</span><select class="select" id="batch-workflow" style="flex:1">${state.workflows.map((w) => `<option value="${esc(w.id)}" ${w.id === (b.workflowId || state.studio.workflowId) ? 'selected' : ''}>${esc(w.display)}</option>`).join('')}</select></div>
@@ -5706,9 +5717,9 @@ function bindBatch(root) {
 /* ------------------------------------------------------------------ logs */
 
 function logsPanel(tab) {
-  const jobsWithLogs = state.jobs.slice(0, 50);
-  return `<section id="generation-log-panel" role="tabpanel" aria-labelledby="${tab==='video'?'video':'image'}-log-tab">
-  ${tab==='image'?IJ.table(true):IJ.logTable(jobsWithLogs.map(job=>({id:job.id,createdAt:job.createdAt,title:job.title,statusHtml:jobStatusBadge(job)+'<div class="hint">'+esc(job.stage||'')+'</div>',error:job.error,actions:'<button class="btn sm" data-act="detail" data-id="'+job.id+'">查看日志</button>'})))}
+  const jobsWithLogs = (state.route==='tasks'?(state.taskVideoLogs||[]):state.jobs).slice().sort((a,b) => (Number(b.createdAt)||0) - (Number(a.createdAt)||0));
+  return `<section id="generation-log-panel" role="tabpanel" aria-labelledby="${state.route === 'tasks' ? 'task-tab-logs' : (tab==='video'?'video':'image') + '-log-tab'}">
+  ${tab==='image'?IJ.table(true,state.route==='tasks'?state.taskImageLogs:undefined):IJ.logTable(jobsWithLogs.map(job=>({id:job.id,createdAt:job.createdAt,title:job.title,statusHtml:jobStatusBadge(job)+'<div class="hint">'+esc(job.stage||'')+'</div>',error:job.error,actions:'<button class="btn sm" data-act="detail" data-id="'+job.id+'">查看日志</button>'})))}
   </section>`;
 }
 
@@ -5739,48 +5750,50 @@ function bindLogs(root) {
 
 /* ------------------------------------------------------------------ 任务管理（合并入口） */
 
-const TASK_TABS = [['running', '运行任务管理'], ['events', '事件'], ['batch', '批量创建'], ['video', '视频生成日志'], ['image', '图像生成日志']];
-function currentTaskTab() {
-  const tab = state.taskTab || localStorage.getItem('h3.tasks.tab') || 'running';
-  return TASK_TABS.some(([id]) => id === tab) ? tab : 'running';
+const TASK_TABS = [['manage','任务管理'],['create','创建任务'],['schedule','任务调度'],['monitor','任务监控'],['logs','日志']];
+function taskMedia(){return state.taskMedia||localStorage.getItem('h3.tasks.media')||'video';}
+function currentTaskTab(){const value=state.taskTab||localStorage.getItem('h3.tasks.tab')||'manage';return TASK_TABS.some(([id])=>id===value)?value:'manage';}
+function taskPagination(rows,key,meta){
+  const size=10,total=meta?.total??rows.length,pages=Math.max(1,Math.ceil(total/size));
+  state.taskPages=state.taskPages||{};
+  const page=Math.max(1,Math.min(pages,Number(meta?.page??state.taskPages[key])||1));state.taskPages[key]=page;
+  const start=(page-1)*size;
+  const button=(label,target,disabled)=>`<button type="button" class="btn sm" data-task-page="${target}" data-page-key="${esc(key)}" ${disabled?'disabled':''}>${label}</button>`;
+  return {rows:meta?rows:rows.slice(start,start+size),footer:`<nav class="task-pagination" aria-label="列表分页"><span>共 ${total} 条 · 每页10条</span><div>${button('首页',1,page===1)}${button('上一页',page-1,page===1)}<span class="task-page-number" aria-live="polite">${page} / ${pages}</span>${button('下一页',page+1,page===pages)}${button('末页',pages,page===pages)}</div></nav>`};
 }
-function renderTasks() {
-  const tab = currentTaskTab();
-  const counts = {};
-  state.jobs.forEach((j) => { counts[j.status] = (counts[j.status] || 0) + 1; });
-  const imageTasks = state.imageTasks || [];
-  const running = (counts.running || 0) + imageTasks.filter((t) => t.status === 'running').length;
-  const queued = (counts.queued || 0) + imageTasks.filter((t) => ['queued', 'paused'].includes(t.status)).length;
-  const done = (counts.success || 0) + imageTasks.filter((t) => t.status === 'success').length;
-  const failed = (counts.failed || 0) + imageTasks.filter((t) => t.status === 'failed').length;
-  const head = `
-  <div class="page-head">
-    <div><h1>任务管理</h1><p>创建 · 调度 · 监控：视频与图像任务统一在这里 · 生成中 ${running} · 排队 ${queued} · 完成 ${done} · 失败 ${failed}</p></div>
-    <div class="page-actions"><button class="btn" data-act="go-studio">去创作台</button><button class="btn" data-act="go-image">去图像台</button></div>
-  </div>`;
-  const tabs = `<div class="generation-log-tabs task-tabs" role="tablist" aria-label="任务管理页签">${TASK_TABS.map(([id, label]) => `<button type="button" role="tab" data-task-tab="${id}" aria-selected="${tab === id}" class="${tab === id ? 'is-active' : ''}">${label}</button>`).join('')}</div>`;
-  const body = tab === 'events' ? Events.render() : tab === 'batch' ? renderBatch(true) : tab === 'running' ? renderJobs(true) : logsPanel(tab);
-  return head + tabs + body;
+function renderTasks(){
+  const tab=currentTaskTab(),media=taskMedia();
+  const stats=state.eventStats||{};
+  const title=(TASK_TABS.find(([id])=>id===tab)||[null,'任务管理'])[1];
+  const monitor=tab==='monitor'?`<div class="task-metrics">${[['running','执行中'],['queued','排队'],['completed','已完成'],['failed','失败']].map(([key,label])=>`<div class="task-metric metric-${key}"><div class="task-metric-label">${label}</div><div class="task-metric-value">${stats[key]||0}</div></div>`).join('')}</div><p class="hint">待确认 ${stats.interrupted||0} · 部分失败 ${stats.partial||0}</p>`:'';
+  const body=tab==='logs'?logsPanel(media):tab==='create'?Events.renderCreate():Events.render(tab);
+  const tabActions=`<div class="task-tabbar-actions">${tab==='monitor'?'<button type="button" class="btn sm" data-event-range="7">近 7 天报告</button>':''}<button type="button" class="btn sm ghost" data-task-refresh="1">刷新</button></div>`;
+  return `<header class="task-header"><div><h1>${title}</h1></div><div class="task-media-switch" role="group" aria-label="媒体类型"><button class="btn ${media==='video'?'primary':''}" data-task-media="video" aria-pressed="${media==='video'}">视频</button><button class="btn ${media==='image'?'primary':''}" data-task-media="image" aria-pressed="${media==='image'}">图像</button></div></header><section class="task-workspace"><div class="task-tabbar"><div class="task-tabs" role="tablist" aria-label="任务生命周期">${TASK_TABS.map(([id,label])=>`<button type="button" role="tab" id="task-tab-${id}" aria-controls="task-panel" data-task-tab="${id}" aria-selected="${tab===id}">${label}</button>`).join('')}</div>${tabActions}</div><div class="task-panel" id="task-panel" role="tabpanel" aria-labelledby="task-tab-${tab}">${monitor}${body}</div></section>`;
 }
-function bindTasks(root) {
-  const tab = currentTaskTab();
-  root.addEventListener('click', (event) => {
-    const button = event.target.closest('[data-task-tab]');
-    if (button) {
-      state.taskTab = button.dataset.taskTab;
-      localStorage.setItem('h3.tasks.tab', state.taskTab);
-      render();
+
+async function loadTaskLogs(force=false){
+  const media=taskMedia(),page=(state.taskPages||{})[media]||1,key=media+':'+page;
+  if(!force&&state.taskLogKey===key)return;
+  state.taskLogKey=key;
+  try{const data=await api((media==='video'?'/api/jobs':'/api/images/tasks')+'?page='+page);if(key!==state.taskLogKey)return;state.taskLogPaging={total:data.total,page:data.page,pageSize:10};if(media==='video')state.taskVideoLogs=data.jobs||[];else state.taskImageLogs=data.tasks||[];if(state.route==='tasks'&&currentTaskTab()==='logs')render();}catch(err){state.taskLogKey=null;toast(err.message,true);}
+}
+function bindTasks(root){
+  root.addEventListener('click',async event=>{
+    const media=event.target.closest('[data-task-media]');
+    if(media){state.taskMedia=media.dataset.taskMedia;localStorage.setItem('h3.tasks.media',state.taskMedia);state.taskEventStatus='';state.taskEventQuery='';state.taskPages={};state.taskLogPaging=null;state.taskVideoLogs=[];state.taskImageLogs=[];state.events=[];state.eventPaging=null;await Events.load();render();return;}
+    const page=event.target.closest('[data-task-page]');
+    if(page&&!page.disabled){state.taskPages={...(state.taskPages||{}),[page.dataset.pageKey]:Number(page.dataset.taskPage)};if(page.dataset.pageKey==='events')await Events.load();else if(currentTaskTab()==='logs')await loadTaskLogs(true);render();return;}
+    const refresh=event.target.closest('[data-task-refresh]');
+    if(refresh){
+      if(currentTaskTab()==='logs'){await loadTaskLogs(true);render();}
+      else if(currentTaskTab()==='create'){try{state.assets=await api('/api/assets');}catch{/* 刷新素材失败时保持原列表 */}render();}
+      else await Events.load();
       return;
     }
-    const action = event.target.closest('[data-act]');
-    if (!action) return;
-    if (action.dataset.act === 'go-studio') { location.hash = '#studio'; return; }
-    if (action.dataset.act === 'go-image') { location.hash = '#image'; }
+    const button=event.target.closest('[data-task-tab]');
+    if(button){state.taskEventStatus=button.dataset.taskTab==='schedule'?'queued':'';state.taskPages={...(state.taskPages||{}),events:1};state.taskTab=button.dataset.taskTab;localStorage.setItem('h3.tasks.tab',state.taskTab);await Events.load();render();return;}
   });
-  if (tab === 'events') Events.bind(root);
-  else if (tab === 'batch') bindBatch(root);
-  else if (tab === 'running') bindJobs(root);
-  else bindLogs(root);
+  if(currentTaskTab()==='logs'){bindLogs(root);loadTaskLogs();}else Events.bind(root);
 }
 
 /* ------------------------------------------------------------------ settings */
@@ -6530,7 +6543,7 @@ async function refreshJobs() {
 
 function connectEvents() {
   if (!window.EventSource) return;
-  const source = new EventSource('/api/events');
+  const source = new EventSource('/api/task-events/stream');
   let timer = null;
   source.onmessage = () => {};
   source.addEventListener('job', (event) => {
