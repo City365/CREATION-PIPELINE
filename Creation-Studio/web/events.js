@@ -316,14 +316,7 @@ const Events = (() => {
       target.file = parsed;
       target.busy = false;
       if (draft.kind === 'video' && !(parsed.errors || []).length && (parsed.items || []).length) {
-        try {
-          const synced = await api('/api/assets/shots/import', { method: 'POST', body: { items: parsed.items, source: file.name } });
-          state.assetLibrary = await api('/api/assets/library');
-          if (synced.imported) target.msg = `已同步 ${synced.imported} 个分镜到素材库`;
-          if ((synced.warnings || []).length) toast(synced.warnings[0], true);
-        } catch (err) {
-          target.msg = `文件已解析，但同步素材库失败：${err.message}`;
-        }
+        target.msg = `解析完成，共 ${parsed.items.length} 个镜头；保存任务后才会同步到素材库`;
       }
     } catch (err) {
       const target = currentDraft();
@@ -359,11 +352,13 @@ const Events = (() => {
       return {
         title, prompt, prefixPrompt: String(item.prefixPrompt || '').trim() || undefined, images,
         duration: Math.max(1, Math.min(15, Number(item.duration) || defaultDuration)),
+        ratio,
         aspectRatio: ratio,
         workflowId: draft.workflowId,
       };
     });
-    const title = String(draft.title || '').trim() || String(rows[0].prompt || '').slice(0, 30);
+    const fileBase = String(draft.file?.name || '').replace(/\.[^.]+$/, '').trim();
+    const title = String(draft.title || '').trim() || fileBase || String(rows[0].prompt || '').slice(0, 30);
     return {
       kind: draft.kind,
       title,
@@ -386,19 +381,26 @@ const Events = (() => {
     const buttons = root.querySelectorAll('[data-tc-save]');
     buttons.forEach((button) => { button.disabled = true; });
     try {
-      if (payload.kind === 'video') {
+      let savedEvent;
+      if (draft.editId) {
+        await api('/api/events/' + encodeURIComponent(draft.editId) + '/draft', { method: 'POST', body: { title: payload.title, items: payload.items } });
+        savedEvent = await api('/api/events/' + encodeURIComponent(draft.editId) + '/prepare', { method: 'POST', body: {} });
+      } else {
+        savedEvent = await api('/api/events', { method: 'POST', body: payload });
+      }
+      if (payload.kind === 'video' && savedEvent) {
         try {
-          await api('/api/assets/shots/import', { method: 'POST', body: { items: payload.items, source: draft.file?.name || '' } });
+          const synced = await api('/api/assets/shots/import', { method: 'POST', body: {
+            taskId: savedEvent.id,
+            taskTitle: savedEvent.title || payload.title,
+            items: payload.items,
+            source: draft.file?.name || '',
+          } });
           state.assetLibrary = await api('/api/assets/library');
+          if ((synced.warnings || []).length) toast(synced.warnings[0], true);
         } catch (err) {
           toast('任务已保存，但素材库同步失败：' + err.message, true);
         }
-      }
-      if (draft.editId) {
-        await api('/api/events/' + encodeURIComponent(draft.editId) + '/draft', { method: 'POST', body: { title: payload.title, items: payload.items } });
-        await api('/api/events/' + encodeURIComponent(draft.editId) + '/prepare', { method: 'POST', body: {} });
-      } else {
-        await api('/api/events', { method: 'POST', body: payload });
       }
       createDrafts[draft.kind] = null;
       lastSignature = '';

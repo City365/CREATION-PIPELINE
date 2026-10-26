@@ -2240,4 +2240,7 @@ body.is-pane-resizing * { user-select: none !important; }
 .create-table.is-video th:nth-child(8){width:60px}
 .create-table.is-image th:nth-child(5){width:78px}
 .create-table.is-image th:nth-child(6){width:auto}
-.create-table.is-image th:nth-child(7){width:60px}
+.create-table.is-image th:nth-child(7){width:60px}.lib-task{font-weight:600}
+.lib-sub{margin:2px 0 6px 10px;padding-left:8px;border-left:1px solid var(--h3-border)}
+.lib-shot{font-size:11px;padding:5px 8px}
+.lib-shot em{font-size:9px}

@@ -2167,8 +2167,10 @@ function currentAssetView() {
   const data = state.assetLibrary;
   const view = state.assetView || { kind: 'material', type: 'character' };
   if (view.kind === 'material' && !ASSET_MATERIALS.some((item) => item.id === view.type)) view.type = 'character';
-  if (view.kind === 'shot' && !(data && (data.shots || []).some((shot) => shot.name === view.name))) {
-    return { kind: 'material', type: 'character' };
+  if (view.kind === 'shot') {
+    const task = (data?.tasks || []).find((row) => (view.taskId ? row.id === view.taskId : row.title === view.taskTitle));
+    if (!task || !(task.shots || []).some((shot) => shot.name === view.name)) return { kind: 'material', type: 'character' };
+    return { ...view, taskId: task.id, taskTitle: task.title };
   }
   return view;
 }
@@ -2182,10 +2184,17 @@ function assetLibraryEmpty(text, hint) {
   return `<div class="card"><div class="empty"><strong>${esc(text)}</strong><p>${esc(hint)}</p></div></div>`;
 }
 
+function assetTaskKey(task) { return task.id || task.title; }
+
 function renderAssetSidebar(data, view) {
-  const shots = (data.shots || []).filter((shot) => !state.assetQuery || String(shot.name).toLowerCase().includes(String(state.assetQuery).toLowerCase()));
+  const query = String(state.assetQuery || '').toLowerCase();
+  const tasks = (data.tasks || []).filter((task) => !query
+    || String(task.title).toLowerCase().includes(query)
+    || (task.shots || []).some((shot) => String(shot.name).toLowerCase().includes(query)));
+  const activeTaskKey = view.kind === 'shot' ? (view.taskId || view.taskTitle) : '';
+  const expanded = state.assetExpanded || {};
   return `<aside class="library-nav">
-    <div class="library-nav-head"><h2>素材库</h2><span class="hint">${(data.shots || []).length} 个分镜</span></div>
+    <div class="library-nav-head"><h2>素材库</h2><span class="hint">${(data.tasks || []).length} 个任务 · ${(data.shots || []).length} 个分镜</span></div>
     <div class="library-group">
       <div class="library-group-title">资产</div>
       ${ASSET_MATERIALS.map((material) => `<button class="lib-item ${view.kind === 'material' && view.type === material.id ? 'active' : ''}" data-lib-material="${material.id}">
@@ -2193,10 +2202,17 @@ function renderAssetSidebar(data, view) {
       </button>`).join('')}
     </div>
     <div class="library-group">
-      <div class="library-group-title">分镜 <button class="lib-add" data-act="new-shot" title="新建分镜">＋</button></div>
-      ${shots.length ? shots.map((shot) => `<button class="lib-item ${view.kind === 'shot' && view.name === shot.name ? 'active' : ''}" data-lib-shot="${esc(shot.name)}">
-        <span class="lib-item-name">${esc(shot.name)}</span><em>${shot.count}/9</em>
-      </button>`).join('') : '<div class="lib-empty">还没有分镜</div>'}
+      <div class="library-group-title">分镜</div>
+      ${tasks.length ? tasks.map((task, index) => {
+        const key = assetTaskKey(task);
+        const isOpen = expanded[key] ?? (activeTaskKey === key);
+        return `<button class="lib-item lib-task ${activeTaskKey === key ? 'active' : ''}" data-lib-task="${esc(key)}" title="任务 ID：${esc(task.id || '未记录')}">
+          <span class="lib-item-name">${esc(task.title)}</span><em>${task.count}</em>
+        </button>
+        ${isOpen ? `<div class="lib-sub">${(task.shots || []).map((shot) => `<button class="lib-item lib-shot ${view.kind === 'shot' && view.name === shot.name && (view.taskId || '') === (task.id || '') ? 'active' : ''}" data-lib-shot="${esc(shot.name)}" data-task-id="${esc(task.id || '')}" data-task-title="${esc(task.title)}">
+          <span class="lib-item-name">${esc(shot.name)}</span><em>${shot.count}/9</em>
+        </button>`).join('') || '<div class="lib-empty">这个任务还没有镜头</div>'}</div>` : ''}`;
+      }).join('') : '<div class="lib-empty">保存任务后会同步到这里</div>'}
     </div>
     ${(data.other || []).length ? `<div class="library-group">
       <div class="library-group-title">其他</div>
@@ -2250,6 +2266,7 @@ function renderShotFacts(shot) {
   const extras = Object.entries(json.extra || {}).filter(([, value]) => String(value).trim() !== '');
   const notes = images.filter((image) => image.note).map((image) => `${image.slot || '图'} ${image.note}`);
   const facts = [
+    ['任务', `${shot.taskTitle || '—'}${shot.taskId ? ' · ' + shot.taskId : ''}`, true],
     ['分镜名称', shot.name],
     ['视频提示词', json.prompt || '—', true],
     ['视频前置提示词', json.prefixPrompt || '无', true],
@@ -2268,10 +2285,11 @@ function renderShotFacts(shot) {
 }
 
 function renderShotView(data, view) {
-  const shot = (data.shots || []).find((row) => row.name === view.name);
+  const task = (data.tasks || []).find((row) => (view.taskId ? row.id === view.taskId : row.title === view.taskTitle));
+  const shot = task && (task.shots || []).find((row) => row.name === view.name);
   if (!shot) return assetLibraryEmpty('分镜不存在', '它可能已经被删除。');
   return `<div class="library-main-head">
-    <div><h2>${esc(shot.name)}</h2><p class="hint">分镜 / ${esc(shot.name)} · ${shot.count}/9 张参考图</p></div>
+    <div><h2>${esc(shot.name)}</h2><p class="hint">任务 / ${esc(shot.taskTitle || task.title)}${shot.taskId ? ' · ' + esc(shot.taskId) : ''} · ${shot.count}/9 张参考图</p></div>
     <div class="library-actions">
       <button class="btn ghost" data-act="reveal-shot">打开文件夹</button>
     </div>
@@ -2308,7 +2326,7 @@ function assetDetailModal(item) {
     <div class="modal-foot"><span class="grow"></span><button class="btn" data-close="1">关闭</button></div>`);
 }
 
-function pickSlotFile(shotName, slot) {
+function pickSlotFile(task, shotName, slot) {
   const input = $('#file-input');
   if (!input) return;
   input.accept = 'image/*';
@@ -2323,7 +2341,7 @@ function pickSlotFile(shotName, slot) {
         reader.onerror = () => reject(new Error('读取失败'));
         reader.readAsDataURL(file);
       });
-      await api('/api/assets/shot/slot', { method: 'POST', body: { shot: shotName, slot, name: file.name, data } });
+      await api('/api/assets/shot/slot', { method: 'POST', body: { taskId: task.id, taskTitle: task.title, shot: shotName, slot, name: file.name, data } });
       await loadAssetLibrary();
       render();
       toast('已写入图' + ['一', '二', '三', '四', '五', '六', '七', '八', '九'][slot - 1]);
@@ -2332,7 +2350,7 @@ function pickSlotFile(shotName, slot) {
   input.click();
 }
 
-async function openAssetPicker(shotName, slot) {
+async function openAssetPicker(task, shotName, slot) {
   let type = 'character';
   const draw = () => {
     const data = state.assetLibrary || {};
@@ -2352,7 +2370,7 @@ async function openAssetPicker(shotName, slot) {
     body.querySelectorAll('[data-pick-rel]').forEach((card) => {
       card.onclick = async () => {
         try {
-          await api('/api/assets/shot/slot', { method: 'POST', body: { shot: shotName, slot, source: card.dataset.pickRel } });
+          await api('/api/assets/shot/slot', { method: 'POST', body: { taskId: task.id, taskTitle: task.title, shot: shotName, slot, source: card.dataset.pickRel } });
           closeModal();
           await loadAssetLibrary();
           render();
@@ -2383,22 +2401,40 @@ function bindAssets(root) {
   root.addEventListener('click', async (event) => {
     const material = event.target.closest('[data-lib-material]');
     if (material) { state.assetView = { kind: 'material', type: material.dataset.libMaterial }; return render(); }
+    const taskBtn = event.target.closest('[data-lib-task]');
+    if (taskBtn) {
+      const key = taskBtn.dataset.libTask;
+      const task = (state.assetLibrary.tasks || []).find((row) => (row.id || row.title) === key);
+      state.assetExpanded = { ...(state.assetExpanded || {}), [key]: !(state.assetExpanded || {})[key] };
+      if (task && task.shots && task.shots.length) state.assetView = { kind: 'shot', taskId: task.id || '', taskTitle: task.title, name: task.shots[0].name };
+      return render();
+    }
     const shot = event.target.closest('[data-lib-shot]');
-    if (shot) { state.assetView = { kind: 'shot', name: shot.dataset.libShot }; return render(); }
+    if (shot) {
+      const taskId = shot.dataset.taskId || '';
+      const taskTitle = shot.dataset.taskTitle || '';
+      state.assetView = { kind: 'shot', taskId, taskTitle, name: shot.dataset.libShot };
+      state.assetExpanded = { ...(state.assetExpanded || {}), [taskId || taskTitle]: true };
+      return render();
+    }
     if (event.target.closest('[data-lib-other]')) { state.assetView = { kind: 'other' }; return render(); }
     const card = event.target.closest('[data-asset-rel]');
     if (card) {
       const item = (state.assetLibrary.items || []).find((row) => row.rel === card.dataset.assetRel);
       if (item) return assetDetailModal(item);
     }
+    const view = currentAssetView();
+    const task = view.kind === 'shot'
+      ? (state.assetLibrary.tasks || []).find((row) => (view.taskId ? row.id === view.taskId : row.title === view.taskTitle))
+      : null;
     const uploadSlot = event.target.closest('[data-slot-upload]');
-    if (uploadSlot) return pickSlotFile(currentAssetView().name, Number(uploadSlot.dataset.slotUpload));
+    if (uploadSlot) return pickSlotFile(task, view.name, Number(uploadSlot.dataset.slotUpload));
     const pickSlot = event.target.closest('[data-slot-pick]');
-    if (pickSlot) return openAssetPicker(currentAssetView().name, Number(pickSlot.dataset.slotPick));
+    if (pickSlot) return openAssetPicker(task, view.name, Number(pickSlot.dataset.slotPick));
     const clearSlot = event.target.closest('[data-slot-clear]');
     if (clearSlot) {
       try {
-        await api('/api/assets/shot/clear', { method: 'POST', body: { shot: currentAssetView().name, slot: Number(clearSlot.dataset.slotClear) } });
+        await api('/api/assets/shot/clear', { method: 'POST', body: { taskId: task.id, taskTitle: task.title, shot: view.name, slot: Number(clearSlot.dataset.slotClear) } });
         await loadAssetLibrary(); render(); toast('已清除');
       } catch (err) { toast(err.message, true); }
       return;
@@ -2409,7 +2445,6 @@ function bindAssets(root) {
       if (action.dataset.act === 'refresh-assets') { await loadAssetLibrary(); return render(); }
       if (action.dataset.act === 'open-assets') { await api('/api/reveal', { method: 'POST', body: { path: state.assetLibrary.root } }); return; }
       if (action.dataset.act === 'upload-material') {
-        const view = currentAssetView();
         const input = $('#file-input');
         input.accept = 'image/*';
         input.onchange = async () => {
@@ -2430,20 +2465,10 @@ function bindAssets(root) {
         input.click();
         return;
       }
-      if (action.dataset.act === 'new-shot') {
-        return askText('新建分镜', '', '例如：镜头01 / 第3场-推门', async (name) => {
-          if (!name) return;
-          const created = await api('/api/assets/shot', { method: 'POST', body: { name } });
-          await loadAssetLibrary();
-          state.assetView = { kind: 'shot', name: created.name || name };
-          render();
-          toast('分镜已创建');
-        });
-      }
       if (action.dataset.act === 'reveal-shot') {
-        const view = currentAssetView();
-        const shot = (state.assetLibrary.shots || []).find((row) => row.name === view.name);
-        const dir = shot ? requirePathJoin(state.assetLibrary.root, shot.rel) : state.assetLibrary.root;
+        const currentTask = (state.assetLibrary.tasks || []).find((row) => (view.taskId ? row.id === view.taskId : row.title === view.taskTitle));
+        const currentShot = currentTask && (currentTask.shots || []).find((row) => row.name === view.name);
+        const dir = currentShot ? requirePathJoin(state.assetLibrary.root, currentShot.rel) : state.assetLibrary.root;
         await api('/api/reveal', { method: 'POST', body: { path: dir } });
       }
     } catch (err) { toast(err.message, true); }

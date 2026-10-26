@@ -1,7 +1,8 @@
 'use strict';
 /**
- * 素材库新结构：
- *   assets/分镜/<镜头>/图一..图九 + shot.json
+ * 素材库结构（按任务分组）：
+ *   assets/分镜/<任务>/task.json
+ *   assets/分镜/<任务>/<镜头>/图一..图九 + shot.json
  *   assets/素材/{人物,场景,道具}/...
  *   assets/其他/...
  */
@@ -17,6 +18,7 @@ const MATERIALS = [
 ];
 const SLOT_LABELS = ['图一', '图二', '图三', '图四', '图五', '图六', '图七', '图八', '图九'];
 const SHOT_JSON = 'shot.json';
+const TASK_JSON = 'task.json';
 
 function rootFor(projectId) {
   const root = library.assetRoot(projectId);
@@ -40,27 +42,66 @@ function ensureLayout(root) {
   return layout;
 }
 
-function relOf(root, abs) {
-  return path.relative(root, abs).split(path.sep).join('/');
-}
-
-function urlOf(rel) {
-  return '/api/assets/file?rel=' + encodeURIComponent(rel);
-}
-
-function materialMeta(type) {
-  return MATERIALS.find((item) => item.id === type) || MATERIALS[0];
-}
-
-function safeShotName(name) {
+function relOf(root, abs) { return path.relative(root, abs).split(path.sep).join('/'); }
+function urlOf(rel) { return '/api/assets/file?rel=' + encodeURIComponent(rel); }
+function materialMeta(type) { return MATERIALS.find((item) => item.id === type) || MATERIALS[0]; }
+function safeName(name, fallback) {
   const clean = safeSegment(String(name || '').trim());
-  if (!clean || clean === '.' || clean === '..') throw new Error('分镜名称不能为空');
-  return clean;
+  return clean && clean !== '.' && clean !== '..' ? clean : fallback;
 }
 
-function shotDir(root, shot) {
-  return path.join(layoutOf(root).storyboard, safeShotName(shot));
+function storyboardRoot(root) { return layoutOf(root).storyboard; }
+
+function readTaskJson(dir) {
+  const file = path.join(dir, TASK_JSON);
+  return fs.existsSync(file) ? readJson(file, null) : null;
 }
+
+function writeTaskJson(dir, data) {
+  writeJson(path.join(dir, TASK_JSON), { ...data, updatedAt: Date.now() });
+}
+
+/** 找任务目录：先按 id，再按标题（兼容旧目录）。 */
+function findTask(root, id, title) {
+  const base = storyboardRoot(root);
+  let entries = [];
+  try { entries = fs.readdirSync(base, { withFileTypes: true }).filter((entry) => entry.isDirectory()); } catch { entries = []; }
+  for (const entry of entries) {
+    const dir = path.join(base, entry.name);
+    const data = readTaskJson(dir);
+    if (id && data && data.id === id) return { dir, data, name: entry.name };
+  }
+  if (title) {
+    const clean = safeName(title, '');
+    const dir = path.join(base, clean);
+    if (clean && fs.existsSync(dir)) return { dir, data: readTaskJson(dir) || { title: clean }, name: clean };
+  }
+  return null;
+}
+
+function ensureTask(root, task = {}) {
+  const base = storyboardRoot(root);
+  const found = findTask(root, task.id, task.title);
+  if (found) {
+    const data = { id: task.id || found.data?.id || '', title: task.title || found.data?.title || found.name, source: task.source || found.data?.source || '' };
+    writeTaskJson(found.dir, data);
+    return { dir: found.dir, name: found.name, data };
+  }
+  const title = safeName(task.title || (task.source ? path.basename(task.source, path.extname(task.source)) : ''), '未命名任务');
+  let name = title;
+  let dir = path.join(base, name);
+  let suffix = 2;
+  while (fs.existsSync(dir)) {
+    name = `${title}-${suffix++}`;
+    dir = path.join(base, name);
+  }
+  ensureDir(dir);
+  const data = { id: String(task.id || ''), title, source: String(task.source || ''), createdAt: Date.now() };
+  writeTaskJson(dir, data);
+  return { dir, name, data };
+}
+
+function shotDir(taskDir, shot) { return path.join(taskDir, safeName(shot, '镜头')); }
 
 function slotIndex(value) {
   const number = Number(value);
@@ -86,7 +127,7 @@ function readShotJson(dir) {
   let file = fs.existsSync(preferred) ? preferred : '';
   if (!file) {
     try {
-      file = fs.readdirSync(dir).filter((name) => name.toLowerCase().endsWith('.json')).map((name) => path.join(dir, name))[0] || '';
+      file = fs.readdirSync(dir).filter((name) => name.toLowerCase().endsWith('.json') && name !== TASK_JSON).map((name) => path.join(dir, name))[0] || '';
     } catch { file = ''; }
   }
   if (!file) return { file: '', data: null };
@@ -104,11 +145,8 @@ function shotSlots(root, dir) {
     if (index >= 0) {
       const rel = relOf(root, path.join(dir, name));
       slots[index] = { ...slots[index], rel, url: urlOf(rel), name };
-    } else {
-      leftovers.push(name);
-    }
+    } else leftovers.push(name);
   }
-  // 旧分镜文件夹里不是「图一」命名的图片，按顺序补进空槽，保证能看到。
   for (const name of leftovers) {
     const empty = slots.find((item) => !item.rel);
     if (!empty) break;
@@ -118,33 +156,69 @@ function shotSlots(root, dir) {
   return slots;
 }
 
-function listShots(root) {
-  const dir = layoutOf(root).storyboard;
+function readShot(root, dir, task) {
+  const slots = shotSlots(root, dir);
+  const { file, data } = readShotJson(dir);
+  let mtime = 0;
+  try { mtime = fs.statSync(dir).mtimeMs; } catch { /* ignore */ }
+  const images = slots.filter((slot) => slot.rel);
+  return {
+    name: path.basename(dir),
+    rel: relOf(root, dir),
+    taskId: task.id || '',
+    taskTitle: task.title || '',
+    taskDir: task.dirName || '',
+    prompt: String(data?.prompt || data?.userPrompt || ''),
+    title: String(data?.title || path.basename(dir)),
+    jsonRel: file ? relOf(root, file) : '',
+    json: data,
+    slots,
+    count: images.length,
+    cover: images[0]?.url || '',
+    mtime,
+  };
+}
+
+function taskShots(root, dir, task) {
   let entries = [];
   try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { entries = []; }
   const shots = [];
   for (const entry of entries) {
     if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
     const abs = path.join(dir, entry.name);
-    const slots = shotSlots(root, abs);
-    const { file, data } = readShotJson(abs);
-    let mtime = 0;
-    try { mtime = fs.statSync(abs).mtimeMs; } catch { /* ignore */ }
-    const images = slots.filter((slot) => slot.rel);
-    shots.push({
-      name: entry.name,
-      rel: relOf(root, abs),
-      prompt: String(data?.prompt || data?.userPrompt || ''),
-      title: String(data?.title || entry.name),
-      jsonRel: file ? relOf(root, file) : '',
-      json: data,
-      slots,
-      count: images.length,
-      cover: images[0]?.url || '',
-      mtime,
-    });
+    const hasShot = fs.existsSync(path.join(abs, SHOT_JSON)) || fs.readdirSync(abs).some((name) => kindOf(name) === 'image');
+    if (!hasShot) continue;
+    shots.push(readShot(root, abs, { ...task, dirName: path.basename(dir) }));
   }
   return shots.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
+}
+
+function listTasks(root) {
+  const base = storyboardRoot(root);
+  let entries = [];
+  try { entries = fs.readdirSync(base, { withFileTypes: true }).filter((entry) => entry.isDirectory() && !entry.name.startsWith('.')); } catch { entries = []; }
+  const tasks = [];
+  const legacyShots = [];
+  for (const entry of entries) {
+    const dir = path.join(base, entry.name);
+    const data = readTaskJson(dir);
+    if (!data) {
+      const flat = readShotJson(dir);
+      const hasImages = fs.readdirSync(dir).some((name) => kindOf(name) === 'image');
+      if (flat.data || hasImages) {
+        legacyShots.push(readShot(root, dir, { id: '', title: '未分组', dirName: entry.name }));
+        continue;
+      }
+    }
+    const task = { id: String(data?.id || ''), title: String(data?.title || entry.name), source: String(data?.source || ''), dirName: entry.name, dir };
+    const shots = taskShots(root, dir, task);
+    tasks.push({ ...task, shots, count: shots.length, mtime: fs.statSync(dir).mtimeMs });
+  }
+  tasks.sort((a, b) => b.mtime - a.mtime || a.title.localeCompare(b.title, 'zh-CN'));
+  if (legacyShots.length) {
+    tasks.push({ id: '', title: '未分组（旧结构）', source: '', dirName: '', dir: base, legacy: true, shots: legacyShots, count: legacyShots.length, mtime: 0 });
+  }
+  return tasks;
 }
 
 function listMaterial(root, type) {
@@ -161,10 +235,7 @@ function listMaterial(root, type) {
     const abs = path.join(dir, entry.name);
     const st = fs.statSync(abs);
     const rel = relOf(root, abs);
-    items.push({
-      name: entry.name, rel, url: urlOf(rel), kind, type: meta.id, typeLabel: meta.label,
-      category: meta.label, bytes: st.size, mtime: st.mtimeMs,
-    });
+    items.push({ name: entry.name, rel, url: urlOf(rel), kind, type: meta.id, typeLabel: meta.label, category: meta.label, bytes: st.size, mtime: st.mtimeMs });
   }
   return items.sort((a, b) => b.mtime - a.mtime || a.name.localeCompare(b.name, 'zh-CN'));
 }
@@ -193,112 +264,48 @@ function listOther(root) {
 
 function scan(projectId) {
   const root = rootFor(projectId);
-  const shots = listShots(root);
+  const tasks = listTasks(root);
+  const shots = tasks.flatMap((task) => task.shots);
   const materials = {};
   for (const material of MATERIALS) materials[material.id] = listMaterial(root, material.id);
   const other = listOther(root);
   const flat = [];
-  for (const material of MATERIALS) {
-    for (const item of materials[material.id]) flat.push({ ...item, group: '', folder: material.label });
-  }
+  for (const material of MATERIALS) for (const item of materials[material.id]) flat.push({ ...item, group: '', folder: material.label });
   for (const shot of shots) {
     for (const slot of shot.slots.filter((row) => row.rel)) {
-      flat.push({
-        name: slot.name, rel: slot.rel, url: slot.url, kind: 'image', type: 'storyboard',
-        typeLabel: '分镜参考', group: shot.name, folder: shot.name, slot: slot.label, bytes: 0, mtime: shot.mtime,
-      });
+      flat.push({ name: slot.name, rel: slot.rel, url: slot.url, kind: 'image', type: 'storyboard', typeLabel: '分镜参考', group: shot.name, folder: `${shot.taskTitle} / ${shot.name}`, slot: slot.label, bytes: 0, mtime: shot.mtime });
     }
   }
   for (const item of other) flat.push({ ...item, group: '', folder: '其他' });
   const types = [
     ...MATERIALS.map((material) => ({ id: material.id, label: material.label, hint: '', count: materials[material.id].length })),
-    { id: 'storyboard', label: '分镜参考', hint: '一个分镜一个文件夹', count: shots.length },
+    { id: 'storyboard', label: '分镜参考', hint: '任务 / 镜头', count: shots.length },
     { id: 'other', label: '其他', hint: '未归类', count: other.length },
   ];
   return {
-    root,
-    layout: layoutOf(root),
-    shots,
-    materials,
-    other,
-    items: flat,
-    types,
-    groups: shots.map((shot) => ({ name: shot.name, rel: shot.rel, count: shot.count, cover: shot.cover, mtime: shot.mtime })),
+    root, layout: layoutOf(root), tasks, shots, materials, other, items: flat, types,
+    groups: tasks.map((task) => ({ name: task.title, rel: task.dirName, count: task.count, cover: task.shots[0]?.cover || '', mtime: task.mtime })),
   };
 }
 
-function ensureJson(dir, shot) {
+function ensureTaskShot(root, taskInput, shotName) {
+  const task = ensureTask(root, taskInput);
+  const dir = ensureDir(shotDir(task.dir, shotName));
+  const shot = path.basename(dir);
   const file = path.join(dir, SHOT_JSON);
-  if (fs.existsSync(file)) return file;
-  const data = { title: shot, prompt: '', images: [], slots: {}, source: '' };
-  writeJson(file, data);
-  return file;
+  if (!fs.existsSync(file)) writeJson(file, { title: shot, prompt: '', images: [], slots: {}, source: '' });
+  return { task, dir, shot };
 }
 
-function readJsonAt(dir) {
-  const { data } = readShotJson(dir);
-  return data || { title: path.basename(dir), prompt: '', images: [], slots: {} };
-}
-
-function saveSlotBuffer(root, shot, slot, fileName, buffer, meta = {}) {
-  const index = slotIndex(slot);
-  const dir = ensureDir(shotDir(root, shot));
-  const ext = path.extname(sanitizeFilename(fileName || 'image.png')) || '.png';
-  removeSlotFiles(dir, index);
-  const target = path.join(dir, SLOT_LABELS[index - 1] + ext);
-  fs.writeFileSync(target, buffer);
-  const rel = relOf(root, target);
-  syncJsonSlot(root, shot, index, { path: target, name: path.basename(target), sourcePath: meta.sourcePath || '', note: meta.note || '' });
-  return { rel, url: urlOf(rel), slot: index, label: SLOT_LABELS[index - 1] };
-}
-
-function syncJsonSlot(root, shot, index, image) {
-  const dir = shotDir(root, shot);
-  ensureJson(dir, shot);
-  const file = path.join(dir, SHOT_JSON);
-  const data = readJson(file, {}) || {};
-  data.title = data.title || shot;
-  data.prompt = data.prompt || '';
-  const slots = { ...(data.slots || {}) };
-  const label = SLOT_LABELS[index - 1];
-  if (image) slots[label] = image; else delete slots[label];
-  data.slots = slots;
-  data.images = SLOT_LABELS.map((slotLabel, i) => {
-    const row = slots[slotLabel] || (i === index - 1 ? image : null);
-    if (!row) return null;
-    return { path: row.path, name: row.name, note: row.note || '', slot: slotLabel, sourcePath: row.sourcePath || '' };
-  }).filter(Boolean);
-  writeJson(file, data);
-}
-
-function saveMaterialBuffer(projectId, type, fileName, buffer) {
+function createShot(projectId, taskInput, name) {
   const root = rootFor(projectId);
-  const meta = materialMeta(type);
-  const dir = ensureDir(path.join(layoutOf(root).material, meta.dir));
-  const clean = sanitizeFilename(fileName || 'image.png');
-  const ext = path.extname(clean);
-  const base = path.basename(clean, ext);
-  let target = path.join(dir, clean);
-  let i = 2;
-  while (fs.existsSync(target)) target = path.join(dir, `${base} (${i++})${ext}`);
-  fs.writeFileSync(target, buffer);
-  const rel = relOf(root, target);
-  return { name: path.basename(target), rel, url: urlOf(rel), type: meta.id, typeLabel: meta.label };
+  const { task, shot, dir } = ensureTaskShot(root, taskInput || {}, name);
+  return { name: shot, taskId: task.data.id, taskTitle: task.data.title, rel: relOf(root, dir) };
 }
 
-function createShot(projectId, name, prompt = '') {
+function updateShot(projectId, taskInput, shotName, patch = {}) {
   const root = rootFor(projectId);
-  const shot = safeShotName(name);
-  const dir = ensureDir(shotDir(root, shot));
-  const file = path.join(dir, SHOT_JSON);
-  if (!fs.existsSync(file)) writeJson(file, { title: shot, prompt: String(prompt || ''), images: [], slots: {}, source: '' });
-  return { name: shot, dir, rel: relOf(root, dir) };
-}
-
-function updateShot(projectId, name, patch = {}) {
-  const root = rootFor(projectId);
-  const dir = ensureDir(shotDir(root, name));
-  ensureJson(dir, name);
+  const { dir, shot } = ensureTaskShot(root, taskInput || {}, shotName);
   const file = path.join(dir, SHOT_JSON);
   const data = readJson(file, {}) || {};
   if (patch.prompt != null) data.prompt = String(patch.prompt);
@@ -306,38 +313,90 @@ function updateShot(projectId, name, patch = {}) {
   if (patch.json && typeof patch.json === 'object') Object.assign(data, patch.json);
   data.updatedAt = Date.now();
   writeJson(file, data);
-  return { name, rel: relOf(root, dir) };
+  return { name: shot, rel: relOf(root, dir) };
 }
 
-function copyToSlot(projectId, shot, slot, sourceRel) {
+function syncJsonSlot(root, taskInput, shotName, index, image) {
+  const { dir } = ensureTaskShot(root, taskInput, shotName);
+  const file = path.join(dir, SHOT_JSON);
+  const data = readJson(file, {}) || {};
+  data.title = data.title || shotName;
+  data.prompt = data.prompt || '';
+  const slots = { ...(data.slots || {}) };
+  const label = SLOT_LABELS[index - 1];
+  if (image) slots[label] = image; else delete slots[label];
+  data.slots = slots;
+  data.images = SLOT_LABELS.map((slotLabel) => slots[slotLabel]).filter(Boolean).map((row) => ({
+    path: row.path, name: row.name, note: row.note || '', slot: row.slot, sourcePath: row.sourcePath || '',
+  }));
+  writeJson(file, data);
+}
+
+function saveSlotBuffer(root, taskInput, shotName, slot, fileName, buffer, meta = {}) {
+  const index = slotIndex(slot);
+  const { dir } = ensureTaskShot(root, taskInput, shotName);
+  const ext = path.extname(sanitizeFilename(fileName || 'image.png')) || '.png';
+  removeSlotFiles(dir, index);
+  const target = path.join(dir, SLOT_LABELS[index - 1] + ext);
+  fs.writeFileSync(target, buffer);
+  const rel = relOf(root, target);
+  syncJsonSlot(root, taskInput, shotName, index, { path: target, name: path.basename(target), sourcePath: meta.sourcePath || '', note: meta.note || '' });
+  return { rel, url: urlOf(rel), slot: index, label: SLOT_LABELS[index - 1] };
+}
+
+function copyToSlot(projectId, taskInput, shotName, slot, sourceRel) {
   const root = rootFor(projectId);
   const index = slotIndex(slot);
   const source = path.resolve(root, String(sourceRel || ''));
   if (!source.startsWith(path.resolve(root)) || !fs.existsSync(source) || !fs.statSync(source).isFile()) throw new Error('素材文件不存在');
-  return saveSlotBuffer(root, shot, index, path.basename(source), fs.readFileSync(source), { sourcePath: source });
+  return saveSlotBuffer(root, taskInput, shotName, index, path.basename(source), fs.readFileSync(source), { sourcePath: source });
 }
 
-function clearSlot(projectId, shot, slot) {
+function clearSlot(projectId, taskInput, shotName, slot) {
   const root = rootFor(projectId);
   const index = slotIndex(slot);
-  const dir = ensureDir(shotDir(root, shot));
+  const { dir } = ensureTaskShot(root, taskInput, shotName);
   removeSlotFiles(dir, index);
-  syncJsonSlot(root, shot, index, null);
+  syncJsonSlot(root, taskInput, shotName, index, null);
   return { slot: index, label: SLOT_LABELS[index - 1] };
 }
 
-function importShots(projectId, items, sourceName = '') {
+function moveLegacyShots(root, taskDir, sourceName) {
+  const base = storyboardRoot(root);
+  let entries = [];
+  try { entries = fs.readdirSync(base, { withFileTypes: true }).filter((entry) => entry.isDirectory()); } catch { return; }
+  for (const entry of entries) {
+    const dir = path.join(base, entry.name);
+    if (dir === taskDir) continue;
+    const taskJson = path.join(dir, TASK_JSON);
+    if (fs.existsSync(taskJson)) continue;
+    const shotJson = readShotJson(dir);
+    if (!shotJson.data) continue;
+    if (sourceName && shotJson.data.source && shotJson.data.source !== sourceName) continue;
+    const target = path.join(taskDir, entry.name);
+    if (fs.existsSync(target)) continue;
+    try { fs.renameSync(dir, target); } catch { /* 保留原目录 */ }
+  }
+}
+
+function importShots(projectId, items, sourceName = '', taskInput = {}) {
   const root = rootFor(projectId);
   const list = Array.isArray(items) ? items : [];
+  const task = ensureTask(root, {
+    id: taskInput.id || '',
+    title: taskInput.title || (sourceName ? path.basename(sourceName, path.extname(sourceName)) : '任务'),
+    source: sourceName,
+  });
+  moveLegacyShots(root, task.dir, sourceName);
   const shots = [];
   const warnings = [];
   list.forEach((item, index) => {
     const rawTitle = String(item.title || '').trim() || `镜头${String(index + 1).padStart(2, '0')}`;
-    const base = safeShotName(rawTitle);
+    const base = safeName(rawTitle, `镜头${index + 1}`);
     let name = base;
     let suffix = 2;
     while (shots.some((row) => row.name === name)) name = `${base}-${suffix++}`;
-    const dir = ensureDir(shotDir(root, name));
+    const dir = ensureDir(shotDir(task.dir, name));
     for (let slot = 1; slot <= 9; slot += 1) removeSlotFiles(dir, slot);
     const images = Array.isArray(item.images) ? item.images.slice(0, 9) : [];
     const saved = [];
@@ -357,30 +416,49 @@ function importShots(projectId, items, sourceName = '') {
       prompt: String(item.prompt || ''),
       prefixPrompt: String(item.prefixPrompt || ''),
       duration: item.duration == null ? null : item.duration,
-      ratio: item.ratio || '',
+      ratio: item.ratio || item.aspectRatio || '',
       images: saved,
       slots: Object.fromEntries(saved.map((row) => [row.slot, row])),
       extra: item.extra || {},
       source: String(sourceName || ''),
+      taskId: task.data.id || '',
       importedAt: Date.now(),
     };
     writeJson(path.join(dir, SHOT_JSON), json);
     shots.push({ name, prompt: json.prompt, count: saved.length, slots: saved.length });
   });
-  return { imported: shots.length, shots, warnings };
+  writeTaskJson(task.dir, { ...task.data, count: shots.length, updatedAt: Date.now() });
+  return { imported: shots.length, shots, warnings, task: { id: task.data.id, title: task.data.title, dir: relOf(root, task.dir) } };
 }
 
-function deleteShot(projectId, name) {
+function deleteShot(projectId, taskInput, name) {
   const root = rootFor(projectId);
-  const dir = shotDir(root, name);
+  const task = findTask(root, taskInput?.id, taskInput?.title);
+  if (!task) throw new Error('任务不存在');
+  const dir = shotDir(task.dir, name);
   if (!fs.existsSync(dir)) throw new Error('分镜不存在');
   fs.rmSync(dir, { recursive: true, force: true });
   return { ok: true, name };
 }
 
+function saveMaterialBuffer(projectId, type, fileName, buffer) {
+  const root = rootFor(projectId);
+  const meta = materialMeta(type);
+  const dir = ensureDir(path.join(layoutOf(root).material, meta.dir));
+  const clean = sanitizeFilename(fileName || 'image.png');
+  const ext = path.extname(clean);
+  const base = path.basename(clean, ext);
+  let target = path.join(dir, clean);
+  let i = 2;
+  while (fs.existsSync(target)) target = path.join(dir, `${base} (${i++})${ext}`);
+  fs.writeFileSync(target, buffer);
+  const rel = relOf(root, target);
+  return { name: path.basename(target), rel, url: urlOf(rel), type: meta.id, typeLabel: meta.label };
+}
+
 module.exports = {
-  MATERIALS, SLOT_LABELS, SHOT_JSON,
-  rootFor, layoutOf, ensureLayout, scan, listShots, listMaterial,
-  createShot, updateShot, saveSlotBuffer, copyToSlot, clearSlot, importShots, deleteShot, saveMaterialBuffer,
-  materialMeta, urlOf, relOf, shotDir,
+  MATERIALS, SLOT_LABELS, SHOT_JSON, TASK_JSON,
+  rootFor, layoutOf, ensureLayout, scan, listTasks, listMaterial,
+  findTask, ensureTask, createShot, updateShot, saveSlotBuffer, copyToSlot, clearSlot, importShots, deleteShot, saveMaterialBuffer,
+  materialMeta, urlOf, relOf,
 };
