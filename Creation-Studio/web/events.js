@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 /* 任务事件：列表 / 详情 / 创建（P1 最小闭环） */
 const Events = (() => {
   let timer = null;
@@ -81,7 +81,7 @@ const Events = (() => {
   function workflowFor(id) { return (state.workflows || []).find((w) => w.id === id) || null; }
 
   function videoChannelList() {
-    const list = [{ id: 'autodl', name: '官网 API' }];
+    const list = [];
     for (const channel of state.channels?.video || []) {
       if (channel.enabled === false) continue;
       list.push({ id: 'ch:' + channel.id, name: channel.name });
@@ -90,10 +90,9 @@ const Events = (() => {
   }
 
   function videoWorkflows(channelId) {
-    const all = state.workflows || [];
-    if (channelId === 'autodl') return all.filter((w) => w.provider === 'autodl');
-    const raw = String(channelId || '').replace(/^ch:/, '');
-    return all.filter((w) => w.channelId === raw);
+    if (!channelId) return [];
+    const raw = String(channelId).replace(/^ch:/, '');
+    return (state.workflows || []).filter((w) => w.channelId === raw);
   }
 
   function imageChannelList() {
@@ -104,7 +103,7 @@ const Events = (() => {
     const list = videoChannelList();
     const active = (state.channels?.video || []).find((c) => c.active && c.enabled !== false);
     if (active && list.some((c) => c.id === 'ch:' + active.id)) return 'ch:' + active.id;
-    return list[0] ? list[0].id : 'autodl';
+    return list[0] ? list[0].id : '';
   }
 
   function defaultWorkflowId(channelId) {
@@ -626,7 +625,11 @@ const Events = (() => {
     const spec = event.spec || {};
     if (kind === 'video') {
       const workflowId = spec.workflowId || first.workflowId || '';
-      if (workflowId) { draft.workflowId = workflowId; draft.channelId = workflowFor(workflowId)?.channelId ? 'ch:' + workflowFor(workflowId).channelId : 'autodl'; }
+      if (workflowId) {
+        const workflow = workflowFor(workflowId);
+        draft.workflowId = workflowId;
+        draft.channelId = workflow?.channelId ? 'ch:' + workflow.channelId : (defaultVideoChannel() || '');
+      }
     } else {
       draft.channelId = spec.channelId || first.channelId || draft.channelId;
     }

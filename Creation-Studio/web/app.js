@@ -1248,7 +1248,7 @@ function stageEmptyHtml(wf) {
         <li><b>1</b><span>在左侧添加 1–${wf.images} 张参考图，点图上标签为角色 / 场景命名主体。</span></li>
         <li><b>2</b><span>${wf.audios ? `可选：为 ${wf.audios} 个音频槽选本地音频，绑定到主体作为音色参考。` : '当前工作流不接收音频参考。'}</span></li>
         <li><b>3</b><span>写提示词，用 &lt;Picture 1&gt; / &lt;Subject 1&gt; / &lt;Audio 1&gt; 引用素材，&lt;d&gt;写对白&lt;/d&gt;；或先插入骨架 / 示例。</span></li>
-        <li><b>4</b><span>左上角选「渠道」，底部选「视频模型」（官网 API 是 H3 工作流，管理器渠道是豆包 / Gemini），再选画幅与时长，点「生成视频」。</span></li>
+        <li><b>4</b><span>左上角选「渠道」（管理器里的豆包 / Gemini），底部选「视频模型」，再选画幅与时长，点「生成视频」。</span></li>
       </ol>
       <div class="h3-empty-actions">
         <button type="button" class="h3-btn" data-act="go-jobs"><span class="h3-btn-icon">${ICON.play}</span>查看任务日志</button>
@@ -1262,12 +1262,12 @@ function renderStudio() {
   const s = state.studio;
   const ownJobs = state.jobs.filter(j => j.itemId === WB.context("video").itemId);
   const wf = currentWorkflow();
-  if (!wf) return `<div class="h3-empty"><div class="h3-empty-card"><h2 class="h3-empty-title">没有工作流</h2><p class="h3-empty-desc">在设置里添加一个视频渠道，或恢复默认的官网 API 工作流。</p></div></div>`;
+  if (!wf) return `<div class="h3-empty"><div class="h3-empty-card"><h2 class="h3-empty-title">没有工作流</h2><p class="h3-empty-desc">在 设置 → 视频生成 里添加一个管理器渠道。</p></div></div>`;
   const isAuto = wf.provider === 'autodl';
   const isManager = wf.provider === 'manager';
   const modelChoices = s.channelId
     ? state.workflows.filter((w) => w.channelId === s.channelId)
-    : state.workflows.filter((w) => w.provider === 'autodl');
+    : state.workflows.filter((w) => w.provider !== 'autodl');
   const images = s.images || [];
   const audios = s.audios || [];
   const nextEmpty = images.findIndex((x) => !x);
@@ -1281,15 +1281,22 @@ function renderStudio() {
   const recent = ownJobs.slice(0, 5);
 
   const videoChannels = (state.channels.video || []).filter((c) => c.enabled !== false);
-  const defaultVideoChannel = videoChannels.find((c) => c.active) || null;
   const autodlWorkflows = state.workflows.filter((w) => w.provider === 'autodl');
-  const channelOptions = [
-    `<option value="" ${isAuto ? 'selected' : ''}>官网 API（AutoDL）${keyCount ? ` · ${keyCount} Key` : ' · 未配置 Key'}${defaultVideoChannel ? '' : ' · 默认'}</option>`,
-    ...videoChannels.map((c) => `<option value="${esc(c.id)}" ${c.id === wf.channelId ? 'selected' : ''}>${esc(c.name)}${c.active ? ' · 默认' : ''}</option>`),
-  ].join('');
+  const channelWorkflows = wf.channelId ? state.workflows.filter((w) => w.channelId === wf.channelId) : [];
+  const channelOptions = videoChannels.length
+    ? videoChannels.map((c) => `<option value="${esc(c.id)}" ${c.id === wf.channelId ? 'selected' : ''}>${esc(c.name)}${c.active ? ' · 默认' : ''}</option>`).join('')
+    : '<option value="">没有可用的视频渠道</option>';
+  const shortModel = (w) => {
+    const name = String(w.label || w.id);
+    const channel = videoChannels.find((c) => c.id === w.channelId);
+    if (channel && name.startsWith(channel.name)) return name.slice(channel.name.length).replace(/^[\s·|/\\-—]+/, '').trim() || name;
+    return name;
+  };
   const modelOptions = isAuto
     ? autodlWorkflows.map((w) => `<option value="${esc(w.id)}" ${w.id === wf.id ? 'selected' : ''}>${esc(String(w.display).replace(/^\[官网API\]\s*/, ''))}</option>`).join('')
-    : `<option value="${esc(wf.id)}" selected>${esc((channel && (channel.model || channel.name)) || wf.label)}</option>`;
+    : (channelWorkflows.length
+      ? channelWorkflows.map((w) => `<option value="${esc(w.id)}" ${w.id === wf.id ? 'selected' : ''}>${esc(shortModel(w))}</option>`).join('')
+      : `<option value="${esc(wf.id)}" selected>${esc((channel && (channel.model || channel.name)) || wf.label)}</option>`);
 
   const remote = isManager
     ? `<div class="h3-remote-group">
@@ -1430,7 +1437,7 @@ function renderStudio() {
             <div class="h3-field h3-compose-field is-model">
               <div class="h3-field-head"><span class="h3-field-label">视频模型</span></div>
               <div class="h3-select-wrap"><select class="h3-select" id="p-model" title="${esc(wf.note || '')}">
-                ${modelChoices.map((w) => `<option value="${esc(w.id)}" ${w.id === wf.id ? 'selected' : ''}>${esc(w.label)}</option>`).join('')}
+                ${modelChoices.map((w) => `<option value="${esc(w.id)}" ${w.id === wf.id ? 'selected' : ''}>${esc(shortModel(w))}</option>`).join('')}
               </select><span class="h3-select-caret">${ICON.caret}</span></div>
             </div>
             ${aspectField}
@@ -2023,7 +2030,7 @@ function renderJobs(embed = false) {
   <div class="filters">
     ${['', 'queued', 'running', 'success', 'failed', 'canceled'].map((s) => `<button class="chip ${filter.status === s ? 'active' : ''}" data-filter-status="${s}">${s ? STATUS_LABEL[s] : '全部状态'}</button>`).join('')}
     <span style="width:12px"></span>
-    ${[['', '全部渠道'], ['manager', '本机管理器'], ['autodl', '官网 API'], ['generic', '自定义']].map(([p, label]) => `<button class="chip ${filter.provider === p ? 'active' : ''}" data-filter-provider="${p}">${label}</button>`).join('')}
+    ${[['', '全部渠道'], ['manager', '本机管理器'], ['generic', '自定义']].map(([p, label]) => `<button class="chip ${filter.provider === p ? 'active' : ''}" data-filter-provider="${p}">${label}</button>`).join('')}
     ${embed ? '<span class="grow"></span><button class="btn sm" data-act="go-logs">查看执行日志</button>' : ''}
   </div>
   ${jobs.length ? `<div class="table-wrap"><table class="jobs task-job-table">
@@ -5671,7 +5678,7 @@ function renderBatch(embed = false) {
   ${embed ? '<div class="task-batch-tools"><button class="btn" data-act="batch-import">导入 JSON</button><button class="btn" data-act="batch-template">保存模板</button><button class="btn" data-act="batch-spec">复制 AI 说明</button></div>' : ''}
   <div class="batch-grid">
     <div class="card" style="padding:14px;display:flex;flex-direction:column;gap:10px">
-      <div class="row"><span class="muted small">工作流</span><select class="select" id="batch-workflow" style="flex:1">${state.workflows.map((w) => `<option value="${esc(w.id)}" ${w.id === (b.workflowId || state.studio.workflowId) ? 'selected' : ''}>${esc(w.display)}</option>`).join('')}</select></div>
+      <div class="row"><span class="muted small">工作流</span><select class="select" id="batch-workflow" style="flex:1">${state.workflows.filter((w) => w.provider !== 'autodl' || !state.workflows.some((x) => x.provider === 'manager')).map((w) => `<option value="${esc(w.id)}" ${w.id === (b.workflowId || state.studio.workflowId) ? 'selected' : ''}>${esc(w.display)}</option>`).join('')}</select></div>
       <textarea class="textarea mono" id="batch-json" style="min-height:300px" placeholder='{"format":"zealman-h3-batch","version":1,"baseDir":"","defaults":{"duration":10,"repeat":1},"tasks":[...]}'>${esc(b.text || '')}</textarea>
       <div class="row">
         <button class="btn primary" data-act="batch-parse">解析并校验</button>
@@ -5927,7 +5934,7 @@ const CHANNEL_KIND_META = {
   },
   video: {
     title: '视频生成',
-    desc: '官网 API 用上面的 Key（每个 Key 一个工位）；自定义渠道支持 OpenAI 视频兼容 / 通用任务式接口，视频创作台默认用「默认」渠道。',
+    desc: '视频渠道就是管理器里的豆包 / Gemini 账号池，也可以接自定义视频接口；视频创作台默认用「默认」渠道。',
   },
 };
 
@@ -5989,18 +5996,7 @@ function appearancePane() {
 function channelPane(kind) {
   const d = state.settingsDraft;
   const meta = CHANNEL_KIND_META[kind];
-  const video = kind === 'video';
-  const hasActiveCustom = video && (state.channels.video || []).some((c) => c.active && c.enabled !== false);
   return `
-    ${video ? `<div class="settings-block">
-      <div class="settings-block-head">
-        <h3>官网 API（AutoDL）</h3>
-        <button type="button" class="btn sm ${hasActiveCustom ? 'ghost' : 'primary'}" data-autodl-default="1" title="把官网 API 设为视频默认渠道">${hasActiveCustom ? '设为默认' : '当前默认'}</button>
-      </div>
-      <p class="hint">官网 API 用，每个 Key 同时跑 1 个任务。令牌在 <a href="https://autodl.art/large-model/tokens" target="_blank" rel="noreferrer">autodl.art/large-model/tokens</a> 创建，分组选「特惠」。</p>
-      <div class="row"><input class="input mono" id="key-token" placeholder="粘贴 Token" style="flex:1" /><button type="button" class="btn" id="key-add">添加 KEY</button></div>
-      ${keyRowsHtml(d.autodlKeys)}
-    </div>` : ''}
     <div class="settings-block">
       <div class="settings-block-head"><h3>${meta.title}渠道</h3></div>
       <p class="hint">${meta.desc}</p>
@@ -7053,12 +7049,17 @@ async function init() {
     const stored = localStorage.getItem('h3.workflowId');
     const storedWidth = Number(localStorage.getItem('h3.panelWidth')) || 0;
     if (storedWidth) state.studio.panelWidth = storedWidth;
-    // 默认渠道以「设置 → 视频生成」里标的默认为准，其次是上次选择，最后是内置默认工作流
+    // 默认渠道以「设置 → 视频生成」里标的默认为准，其次是上次选择；有管理器渠道时不再回落到官网 API。
+    const videoChannels = (state.channels.video || []).filter((c) => c.enabled !== false);
     const activeVideo = (state.channels.video || []).find((c) => c.active && c.enabled !== false);
-    const wf = (activeVideo ? workflowById('ch:' + activeVideo.id) : null)
+    const managerWf = activeVideo ? state.workflows.find((w) => w.channelId === activeVideo.id) : null;
+    let wf = managerWf
       || workflowById(stored)
       || workflowById(data.defaultWorkflowId)
       || state.workflows[0];
+    if (wf && wf.provider === 'autodl' && videoChannels.length) {
+      wf = state.workflows.find((w) => w.channelId === videoChannels[0].id) || wf;
+    }
     state.studio.workflowId = wf.id;
     state.studio.channelId = wf.channelId || '';
     state.studio.resolution = wf.defaultResolution || '';
