@@ -1239,7 +1239,7 @@ function mediaPath(input) {
     const items = Array.isArray(body.items) ? body.items : [];
     if (!items.length) return bad(res, '事件没有条目');
     const inputs = items.map((item) => ({ ...item, workflowId: item.workflowId || body.workflowId, count: item.count || 1, projectId: scoped(body.projectId) || item.projectId, itemId: body.itemId || item.itemId }));
-    const event = events.createFromJobInputs(body.kind==='image'?inputs:prepareEventVideos(inputs), { kind:body.kind,requestId:body.requestId||req.headers['idempotency-key'],policy:body.policy,schedule:body.schedule,draft:body.draft, title: body.title, source: ['batch', 'studio', 'image', 'api'].includes(body.source) ? body.source : 'api', workflowId: body.workflowId, projectId: scoped(body.projectId), channelId: body.channelId || '' });
+    const event = events.createFromJobInputs(body.kind==='image'?inputs:prepareEventVideos(inputs), { kind:body.kind,requestId:body.requestId||req.headers['idempotency-key'],policy:body.policy,schedule:body.schedule,draft:body.draft,pendingSchedule:body.pendingSchedule, title: body.title, source: ['batch', 'studio', 'image', 'api'].includes(body.source) ? body.source : 'api', workflowId: body.workflowId, projectId: scoped(body.projectId), channelId: body.channelId || '' });
     return ok(res, event);
   }
 
@@ -1262,8 +1262,8 @@ function mediaPath(input) {
   if(draftRoute&&method==='POST'){const body=await readBody(req),event=events.get(draftRoute[1]);const inputs=Array.isArray(body.items)?body.items:[];if(!inputs.length)return bad(res,'至少需要一个条目');return ok(res,events.updateDraft(event.id,event.kind==='image'?inputs:prepareEventVideos(inputs),body));}
   const attemptLogRoute=/^\/api\/task-attempts\/([^/]+)\/logs$/.exec(pathname);
   if(attemptLogRoute&&method==='GET')return ok(res,events.repository.attemptLog(attemptLogRoute[1],Math.max(0,Number(url.searchParams.get('after'))||0)));
-  const lifecycleAction=/^\/api\/events\/([^/]+)\/(schedule|queue|attempts)$/.exec(pathname);
-  if(lifecycleAction){const id=lifecycleAction[1];if(method==='POST'&&lifecycleAction[2]==='queue')return ok(res,events.queueEvent(id));if(method==='POST'&&lifecycleAction[2]==='schedule')return ok(res,events.scheduleEvent(id,await readBody(req)));if(method==='GET'&&lifecycleAction[2]==='attempts'){const event=events.get(id),data=events.repository.attemptPage(id,url.searchParams.get('page'));const grouped=new Map();for(const attempt of data.attempts){const item=event.items.find(i=>i.id===attempt.itemId);if(!grouped.has(attempt.itemId))grouped.set(attempt.itemId,{itemId:attempt.itemId,title:item?.title||attempt.itemId,attempts:[]});grouped.get(attempt.itemId).attempts.push(attempt);}return ok(res,{...data,items:[...grouped.values()]});}}
+  const lifecycleAction=/^\/api\/events\/([^/]+)\/(schedule|queue|prepare|attempts)$/.exec(pathname);
+  if(lifecycleAction){const id=lifecycleAction[1];if(method==='POST'&&lifecycleAction[2]==='queue')return ok(res,events.queueEvent(id));if(method==='POST'&&lifecycleAction[2]==='prepare')return ok(res,events.prepareEvent(id));if(method==='POST'&&lifecycleAction[2]==='schedule')return ok(res,events.scheduleEvent(id,await readBody(req)));if(method==='GET'&&lifecycleAction[2]==='attempts'){const event=events.get(id),data=events.repository.attemptPage(id,url.searchParams.get('page'));const grouped=new Map();for(const attempt of data.attempts){const item=event.items.find(i=>i.id===attempt.itemId);if(!grouped.has(attempt.itemId))grouped.set(attempt.itemId,{itemId:attempt.itemId,title:item?.title||attempt.itemId,attempts:[]});grouped.get(attempt.itemId).attempts.push(attempt);}return ok(res,{...data,items:[...grouped.values()]});}}
   const eventAction = /^\/api\/events\/([^/]+)\/(pause|resume|cancel|retry-failed)$/.exec(pathname);
   if (method === 'POST' && eventAction) {
     const id = eventAction[1];

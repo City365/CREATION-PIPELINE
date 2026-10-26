@@ -2048,3 +2048,45 @@ body.is-pane-resizing * { user-select: none !important; }
 .create-caps{display:flex;flex-wrap:wrap;gap:6px;margin-top:-4px}
 .create-cap{font-size:11px;line-height:1.5;padding:3px 9px;border-radius:999px;border:1px solid var(--h3-border);background:var(--h3-bg-0);color:var(--h3-text-2);white-space:nowrap}
 .create-cap.is-note{border-style:dashed;color:var(--h3-text-3)}
+
+/* 创建 / 调度 / 监控 / 日志 */
+.create-head{display:grid;grid-template-columns:minmax(220px,1.4fr) minmax(180px,1fr) minmax(180px,1fr);gap:14px;align-items:end}
+@media(max-width:900px){.create-head{grid-template-columns:1fr}}
+.create-import{border:1px solid var(--h3-border);border-radius:10px;background:var(--task-surface,var(--h3-bg-1));padding:16px 18px;display:grid;gap:12px}
+.create-import-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.create-import-head b{font-size:14px;font-weight:600;margin-right:4px}
+.create-table{min-width:1080px}
+.create-table th{padding:10px 10px}
+.create-table td{vertical-align:top;padding:8px 10px}
+.create-table .input,.create-table .select,.create-table .textarea{width:100%;font-size:12px}
+.create-table .textarea{min-height:52px;resize:vertical}
+.create-table .shot-model{font-size:12px;color:var(--h3-text-2);white-space:nowrap}
+.create-table .shot-refs{display:flex;flex-direction:column;gap:4px;min-width:220px}
+.shot-ref{display:flex;align-items:center;gap:6px;font-size:11px;background:var(--h3-bg-0);border:1px solid var(--h3-border);border-radius:5px;padding:2px 6px}
+.shot-ref b{color:var(--task-blue,var(--h3-info));font-weight:600}
+.shot-ref-name{max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.shot-ref i{font-style:normal;color:var(--h3-text-3);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.shot-ref-x{border:0;background:transparent;color:var(--h3-text-3);cursor:pointer;font-size:13px;line-height:1;padding:0 2px}
+.shot-ref-x:hover{color:var(--task-red,var(--h3-danger))}
+.create-table-foot{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.schedule-page{display:grid;gap:22px}
+.schedule-block{display:grid;gap:12px}
+.schedule-block .count{font-size:12px;font-weight:500;color:var(--h3-text-3);margin-left:4px}
+.schedule-form{display:grid;grid-template-columns:repeat(2,minmax(200px,1fr));gap:14px}
+@media(max-width:640px){.schedule-form{grid-template-columns:1fr}}
+.monitor-config{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--h3-text-2);padding:10px 12px;border:1px solid var(--h3-border);border-radius:8px;background:var(--h3-bg-0)}
+.monitor-h3{margin:14px 0 8px;font-size:13px}
+.monitor-audit{margin:0;padding-left:18px;font-size:12px;line-height:1.9}
+
+.create-import.is-over{outline:2px dashed var(--task-blue,var(--h3-info));outline-offset:-6px}
+.create-table{table-layout:fixed}
+.create-table th:nth-child(1){width:38px}
+.create-table th:nth-child(2){width:16%}
+.create-table th:nth-child(3){width:30%}
+.create-table th:nth-child(4){width:110px}
+.create-table th:nth-child(5){width:140px}
+.create-table th:nth-child(6){width:84px}
+.create-table th:nth-child(7){width:auto}
+.create-table th:nth-child(8){width:64px}
+.create-table td .textarea{min-height:48px;max-height:120px}
+.create-import-head .hint{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:520px}

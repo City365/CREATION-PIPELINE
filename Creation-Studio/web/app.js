@@ -5849,12 +5849,14 @@ function taskPagination(rows,key,meta){
 }
 function renderTasks(){
   const tab=currentTaskTab(),media=taskMedia();
-  const stats=state.eventStats||{};
   const title=(TASK_TABS.find(([id])=>id===tab)||[null,'任务管理'])[1];
-  const monitor=tab==='monitor'?`<div class="task-metrics">${[['running','执行中'],['queued','排队'],['completed','已完成'],['failed','失败']].map(([key,label])=>`<div class="task-metric metric-${key}"><div class="task-metric-label">${label}</div><div class="task-metric-value">${stats[key]||0}</div></div>`).join('')}</div><p class="hint">待确认 ${stats.interrupted||0} · 部分失败 ${stats.partial||0}</p>`:'';
-  const body=tab==='logs'?logsPanel(media):tab==='create'?Events.renderCreate():Events.render(tab);
+  const body=tab==='create'?Events.renderCreate()
+    : tab==='schedule'?Events.renderSchedule()
+    : tab==='monitor'?Events.renderMonitor()
+    : tab==='logs'?Events.renderLogs()
+    : Events.render('manage');
   const tabActions=`<div class="task-tabbar-actions">${tab==='monitor'?'<button type="button" class="btn sm" data-event-range="7">近 7 天报告</button>':''}<button type="button" class="btn sm ghost" data-task-refresh="1">刷新</button></div>`;
-  return `<header class="task-header"><div><h1>${title}</h1></div><div class="task-media-switch" role="group" aria-label="媒体类型"><button class="btn ${media==='video'?'primary':''}" data-task-media="video" aria-pressed="${media==='video'}">视频</button><button class="btn ${media==='image'?'primary':''}" data-task-media="image" aria-pressed="${media==='image'}">图像</button></div></header><section class="task-workspace"><div class="task-tabbar"><div class="task-tabs" role="tablist" aria-label="任务生命周期">${TASK_TABS.map(([id,label])=>`<button type="button" role="tab" id="task-tab-${id}" aria-controls="task-panel" data-task-tab="${id}" aria-selected="${tab===id}">${label}</button>`).join('')}</div>${tabActions}</div><div class="task-panel" id="task-panel" role="tabpanel" aria-labelledby="task-tab-${tab}">${monitor}${body}</div></section>`;
+  return `<header class="task-header"><div><h1>${title}</h1></div><div class="task-media-switch" role="group" aria-label="媒体类型"><button class="btn ${media==='video'?'primary':''}" data-task-media="video" aria-pressed="${media==='video'}">视频</button><button class="btn ${media==='image'?'primary':''}" data-task-media="image" aria-pressed="${media==='image'}">图像</button></div></header><section class="task-workspace"><div class="task-tabbar"><div class="task-tabs" role="tablist" aria-label="任务生命周期">${TASK_TABS.map(([id,label])=>`<button type="button" role="tab" id="task-tab-${id}" aria-controls="task-panel" data-task-tab="${id}" aria-selected="${tab===id}">${label}</button>`).join('')}</div>${tabActions}</div><div class="task-panel" id="task-panel" role="tabpanel" aria-labelledby="task-tab-${tab}">${body}</div></section>`;
 }
 
 async function loadTaskLogs(force=false){
@@ -5871,15 +5873,14 @@ function bindTasks(root){
     if(page&&!page.disabled){state.taskPages={...(state.taskPages||{}),[page.dataset.pageKey]:Number(page.dataset.taskPage)};if(page.dataset.pageKey==='events')await Events.load();else if(currentTaskTab()==='logs')await loadTaskLogs(true);render();return;}
     const refresh=event.target.closest('[data-task-refresh]');
     if(refresh){
-      if(currentTaskTab()==='logs'){await loadTaskLogs(true);render();}
-      else if(currentTaskTab()==='create'){try{state.assets=await api('/api/assets');}catch{/* 刷新素材失败时保持原列表 */}render();}
-      else await Events.load();
+      if(currentTaskTab()==='create'){try{state.assets=await api('/api/assets');}catch{/* 刷新素材失败时保持原列表 */}render();}
+      else {await Events.load();render();}
       return;
     }
     const button=event.target.closest('[data-task-tab]');
-    if(button){state.taskEventStatus=button.dataset.taskTab==='schedule'?'queued':'';state.taskPages={...(state.taskPages||{}),events:1};state.taskTab=button.dataset.taskTab;localStorage.setItem('h3.tasks.tab',state.taskTab);await Events.load();render();return;}
+    if(button){state.taskEventStatus='';state.taskPages={...(state.taskPages||{}),events:1};state.taskTab=button.dataset.taskTab;localStorage.setItem('h3.tasks.tab',state.taskTab);await Events.load();render();return;}
   });
-  if(currentTaskTab()==='logs'){bindLogs(root);loadTaskLogs();}else Events.bind(root);
+  Events.bind(root);
 }
 
 /* ------------------------------------------------------------------ settings */

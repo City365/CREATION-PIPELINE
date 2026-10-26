@@ -375,7 +375,7 @@ function normalizeImages(paths, notes, line, errors) {
     let exists = false;
     try { exists = !!resolved && fs.existsSync(resolved) && fs.statSync(resolved).isFile(); } catch { exists = false; }
     if (!exists) errors.push(`第 ${line} 行 参考图不存在：${original}`);
-    images.push({ path: resolved, name: String(noteList[index] || '').trim() || path.basename(resolved || original), note: String(noteList[index] || '').trim(), exists });
+    images.push({ path: resolved, name: path.basename(resolved || original), note: String(noteList[index] || '').trim(), exists });
   });
   if (images.length > MAX_IMAGES) errors.push(`第 ${line} 行 参考图超过 ${MAX_IMAGES} 张`);
   return images;

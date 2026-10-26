@@ -76,8 +76,7 @@ function hydrate(event, context = {}) {
       finishedAt: source.finishedAt || null,
     };
   });
-  if (event.draft) return {...event, items, status: 'draft', stats: { total: items.length, done: 0, success: 0, failed: 0, running: 0, queued: 0, unknown: 0, skipped: 0, canceled: 0 } };
-  if (!items.length) {
+  if (event.draft) return {...event, items, status: 'draft', stats: { total: items.length, done: 0, success: 0, failed: 0, running: 0, queued: 0, unknown: 0, skipped: 0, canceled: 0 } };  if (!items.length) {
     return { ...event, items, stats: { total: 0, queued: 0, running: 0, paused: 0, done: 0, success: 0, failed: 0, canceled: 0, skipped: 0, unknown: 0 }, status: 'draft', updatedAt: Date.now() };
   }
   const stats = { total: items.length, queued: 0, running: 0, paused: 0, done: 0, success: 0, failed: 0, canceled: 0, skipped: 0, unknown: 0 };
@@ -110,6 +109,12 @@ function hydrate(event, context = {}) {
   }
   if (event.canceled && !['running', 'queued'].includes(status)) status = 'canceled';
   if (event.paused && !['completed', 'failed', 'partial', 'canceled'].includes(status)) status = 'paused';
+  // 生命周期：待调度（未分配）→ 待执行（已分配但未到时间）→ 执行中。
+  const futureStart = event.schedule?.startAt && Date.parse(event.schedule.startAt) > Date.now();
+  if (!['completed', 'failed', 'partial', 'canceled', 'interrupted'].includes(status)) {
+    if (event.pendingSchedule) status = 'unscheduled';
+    else if (futureStart && stats.running === 0 && finished === null) status = 'scheduled';
+  }
   return {
     ...event,
     items,
@@ -192,10 +197,12 @@ function createFromJobInputs(inputs, meta = {}) {
   const event = create({ ...meta, kind, items: inputs.map(input => ({ ...input, params: input })) });
   event.requestKey=requestKey;event.inputHash=inputHash;
   event.paused = !!meta.paused;
-  event.draft = !!meta.draft;event.status=event.draft?'draft':'queued';
+  event.pendingSchedule = !!meta.pendingSchedule;
+  event.draft = !!meta.draft;
+  event.status = event.draft ? 'draft' : (event.pendingSchedule ? 'unscheduled' : 'queued');
   event.items = inputs.flatMap(input => Array.from({length: kind === 'video' ? Math.max(1,Math.min(20,Number(input.count)||1)) : 1}, () => ({ ...normalizeRef(kind === 'image' ? 'imageTask' : 'job', ''), title: input.title || input.prompt?.slice(0,60) || '生成任务', input: { ...input, count: 1 }, status: 'queued', dispatchState: 'pending' })));
   save();
-  if (!event.draft) materialize(event);
+  if (!event.draft && !event.pendingSchedule) materialize(event);
   save();
   setTimeout(safeTick, 50);
   return get(event.id);
@@ -290,6 +297,11 @@ const TERMINAL_ITEM = new Set(['success', 'failed', 'canceled', 'skipped', 'unkn
 
 function rawEvent(id){load();const raw=state.events.find(e=>e.id===id);if(!raw)throw Object.assign(new Error('事件不存在'),{status:404});return raw;}
 
+/** 调度/暂停/取消等配置操作留痕，监控页用来展示每一步操作。 */
+function audit(event, action, detail = '') {
+  event.audit = [...(event.audit || []), { at: Date.now(), action: String(action), detail: String(detail || '') }].slice(-200);
+}
+
 function jobMapNow() {
   return new Map(jobs.list().map((j) => [j.id, j]));
 }
@@ -333,7 +345,7 @@ function tick() {
   let imageOrder=0;for(const event of ordered)for(const item of event.items||[])if(item.refType==='imageTask'&&item.refId&&imageTasks()?.setOrder)imageTasks().setOrder(item.refId,imageOrder++);
   for (const event of ordered) {
     for (const item of event.items || []) capture(event,item,map);
-    if (event.legacy || event.paused || event.canceled || event.draft || !event.items?.length) continue;
+    if (event.legacy || event.paused || event.canceled || event.draft || event.pendingSchedule || !event.items?.length) continue;
     if (event.schedule?.startAt && Date.parse(event.schedule.startAt) > Date.now()) continue;
     if (event.items.some(i => i.dispatchState === 'pending')) { try { materialize(event); changed=true; } catch { continue; } }
     const statuses = event.items.map(item => itemStatusOf(item,map));
@@ -396,6 +408,7 @@ function pauseEvent(id) {
   for (const item of event.items) {
     if (['queued','paused'].includes(itemStatusOf(item,map))||(item.refType==='imageTask'&&itemStatusOf(item,map)==='running')) hold(item,true);
   }
+  audit(event, 'pause', '暂停后续派发');
   save();
   return get(id);
 }
@@ -404,6 +417,7 @@ function resumeEvent(id) {
   const event = rawEvent(id);
   event.paused = false;
   for(const item of event.items||[])if(item.refType==='imageTask'){const source=sourceOf(item,jobMapNow());if(source?.held&&source.status==='running')hold(item,false);}
+  audit(event, 'resume', '继续派发');
   save();
   tick();
   return get(id);
@@ -420,6 +434,7 @@ function cancelEvent(id) {
       item.override = 'canceled';
     }
   }
+  audit(event, 'cancel', '取消未提交条目');
   save();
   return get(id);
 }
@@ -476,12 +491,28 @@ function scheduleEvent(id, input={}) {
   for(const item of event.items||[]){const status=itemStatusOf(item,jobMapNow());if(['queued','paused'].includes(status)&&item.refId)hold(item,true);}
   event.schedule={...event.schedule,order:Number(input.order)||0,startAt:input.startAt||null};
   event.policy={...event.policy,concurrency:Math.max(1,Math.min(4,Number(input.concurrency)||1)),onItemFail:input.onItemFail==='stop'?'stop':'continue'};
-  save();return get(id);
+  event.pendingSchedule=false;event.draft=false;event.paused=false;event.finishedAt=null;
+  const future=!!event.schedule.startAt&&Date.parse(event.schedule.startAt)>Date.now();
+  if(future){
+    event.status='scheduled';
+    audit(event,'schedule','计划 '+new Date(event.schedule.startAt).toLocaleString('zh-CN',{hour12:false})+' 执行 · 并发 '+event.policy.concurrency);
+    save();
+    return get(id);
+  }
+  event.status='queued';
+  audit(event,'schedule','立即执行 · 并发 '+event.policy.concurrency);
+  save();
+  materialize(event);
+  save();
+  setTimeout(safeTick,50);
+  return get(id);
 }
 function lookupRef(refId){load();for(const event of state.events){const item=event.items?.find(i=>i.refId===refId);if(item)return {event,item};}const row=repository.open().prepare("SELECT event_id,item_id FROM task_attempts WHERE json_extract(payload,'$.refId')=? LIMIT 1").get(refId);if(row){const event=repository.get(row.event_id),item=event?.items.find(i=>i.id===row.item_id);if(item)return {event,item};}return null;}
 async function resumeOriginal(id,itemId){const event=rawEvent(id),item=event.items.find(i=>i.id===itemId);if(!item||item.refType!=='job')throw Object.assign(new Error('该任务不支持远端续查'),{status:409});const job=jobs.get(item.refId);if(job?.provider!=='manager'||!job.remotePromptId)throw Object.assign(new Error('没有可恢复的远端任务编号'),{status:409});capture(event,item,jobMapNow());event.legacy=false;event.status='queued';event.finishedAt=null;event.paused=false;event.canceled=false;save();await jobs.resume(item.refId);jobs.setHeld(item.refId,true);setTimeout(safeTick,50);return get(id);}
 function updateDraft(id,inputs,meta={}){const event=rawEvent(id);inputs=prepareInputs(inputs,event.kind);event.version=(event.version||1)+1;if(!event.draft)throw Object.assign(new Error('已入队任务不能修改提交快照，请复制为新任务'),{status:409});event.title=meta.title||event.title;event.spec.items=inputs.map(input=>({...input,params:input}));event.items=inputs.flatMap(input=>Array.from({length:event.kind==='video'?Math.max(1,Math.min(20,Number(input.count)||1)):1},()=>({...normalizeRef(event.kind==='image'?'imageTask':'job',''),title:input.title||input.prompt?.slice(0,60)||'生成任务',input:{...input,count:1},dispatchState:'pending'})));save();return get(id);}
-function queueEvent(id) {const event=rawEvent(id);event.draft=false;event.status='queued';event.paused=false;save();materialize(event);save();setTimeout(safeTick,50);return get(id);}
+function queueEvent(id) {const event=rawEvent(id);event.draft=false;event.pendingSchedule=false;event.paused=false;const future=event.schedule?.startAt&&Date.parse(event.schedule.startAt)>Date.now();if(future){event.status='scheduled';audit(event,'queue','按计划时间等待执行');save();return get(id);}event.status='queued';audit(event,'queue','加入队列');save();materialize(event);save();setTimeout(safeTick,50);return get(id);}
+/** 保存任务但先不调度：出现在调度页的「未分配」里。 */
+function prepareEvent(id) {const event=rawEvent(id);if(['running'].includes(event.status))throw Object.assign(new Error('执行中的任务不能重新调度'),{status:409});event.draft=false;event.pendingSchedule=true;event.status='unscheduled';event.paused=false;event.canceled=false;event.finishedAt=null;audit(event,'prepare','保存任务，等待调度');save();return get(id);}
 
 function percentile(values, ratio) {
   if (!values.length) return null;
@@ -624,4 +655,4 @@ function adoptLegacy(projectId) {
   return changed;
 }
 
-module.exports = { repository, materialize, importHistory, lookupRef, capture, scheduleEvent, queueEvent, updateDraft, resumeOriginal, moveItem, adoptLegacy, load, save, list, get, create, createFromJobInputs, recordJobs, recordSingleJob, recordSingleImage, itemLog, hydrate, tick, start, stop, pauseEvent, resumeEvent, cancelEvent, retryItem, skipItem, retryFailed, report, reportCsv, reportRange, state };
+module.exports = { repository, materialize, importHistory, lookupRef, capture, scheduleEvent, queueEvent, prepareEvent, updateDraft, resumeOriginal, moveItem, adoptLegacy, load, save, list, get, create, createFromJobInputs, recordJobs, recordSingleJob, recordSingleImage, itemLog, hydrate, tick, start, stop, pauseEvent, resumeEvent, cancelEvent, retryItem, skipItem, retryFailed, report, reportCsv, reportRange, state };

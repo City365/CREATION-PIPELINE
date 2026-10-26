@@ -4,7 +4,7 @@ const Events = (() => {
   let timer = null;
   let lastSignature = '';
   let modalEventId = null;
-  const STATUS = { draft: '草稿', queued: '排队', running: '执行中', paused: '暂停', completed: '完成', partial: '部分失败', failed: '失败', canceled: '已取消', interrupted: '待确认', unknown:'待确认' };
+  const STATUS = { draft: '待调度', unscheduled: '待调度', scheduled: '待执行', queued: '待执行', running: '执行中', paused: '暂停', completed: '完成', partial: '部分失败', failed: '失败', canceled: '已取消', interrupted: '待确认', unknown: '待确认' };
   const SOURCE = { batch: '批量导入', studio: '创作台', image: '图像台', api: '接口' };
   const ITEM = { queued: '排队', running: '执行中', success: '完成', failed: '失败', canceled: '已取消', skipped: '跳过', unknown: '未知', paused: '暂停' };
 
@@ -25,7 +25,7 @@ const Events = (() => {
       state.events = state.events || [];
       state.eventError = err.message;
     }
-    if (state.route === 'tasks' && ['manage','schedule','monitor'].includes(currentTaskTab())) window.render();
+    if (state.route === 'tasks' && ['manage','schedule','monitor','logs'].includes(currentTaskTab())) window.render();
   }
 
   const fmtMs = (ms) => ms == null ? '—' : (ms < 1000 ? Math.round(ms) + 'ms' : (ms / 1000).toFixed(1) + 's');
@@ -44,59 +44,84 @@ const Events = (() => {
     return Math.floor(seconds / 60) + 'm' + String(seconds % 60).padStart(2, '0') + 's';
   }
 
-  function render(mode='manage') {
+  function render(mode = 'manage') {
     const events = state.events || [];
     const page = taskPagination(events, 'events', state.eventPaging);
     const rows = page.rows.map((event) => {
       const s = event.stats || {};
       const progress = s.total ? Math.round(((s.done || 0) / s.total) * 100) : 0;
+      const when = event.schedule?.startAt ? new Date(event.schedule.startAt).toLocaleString('zh-CN', { hour12: false }) : (event.pendingSchedule ? '待调度' : '立即');
       return `<tr>
         <td>${badge(event.status)}</td>
         <td><div class="evt-title">${esc(event.title)}</div><div class="hint">${esc(event.id)}${event.status === 'interrupted' ? ' · 待对账' : ''}</div></td>
-        <td>${event.legacy?'历史记录':esc(SOURCE[event.source] || event.source)}${mode==='schedule'?`<div class="hint">次序 ${event.schedule?.order||0}<br>${event.schedule?.startAt?esc(event.schedule.startAt):'立即执行'}</div>`:''}</td>
+        <td class="hint">${esc(when)}</td>
         <td><div class="evt-progress"><span style="width:${progress}%"></span></div><div class="hint">${s.done || 0}/${s.total || 0} 已处理${s.failed ? ' · ' + s.failed + ' 失败' : ''}${s.running ? ' · ' + s.running + ' 执行中' : ''}</div></td>
         <td class="tnum">${duration(event)}</td>
         <td class="hint">${event.createdAt ? new Date(event.createdAt).toLocaleString('zh-CN', { hour12: false }) : '—'}</td>
-        <td class="evt-actions"><button class="btn sm" data-event-detail="${esc(event.id)}">详情</button>${event.status==='draft'?`<button class="btn sm" data-event-action="queue" data-id="${esc(event.id)}">加入队列</button>`:''}${mode==='schedule'&&['draft','queued','running','paused'].includes(event.status)?`<button class="btn sm" data-event-schedule="${esc(event.id)}">调度设置</button>`:''}${['queued', 'running'].includes(event.status) ? `<button class="btn sm ghost" data-event-action="pause" data-id="${esc(event.id)}">暂停后续</button>` : ''}${event.status === 'paused' ? `<button class="btn sm" data-event-action="resume" data-id="${esc(event.id)}">继续</button>` : ''}${['queued', 'running', 'paused'].includes(event.status) ? `<button class="btn sm ghost" data-event-action="cancel" data-id="${esc(event.id)}">取消未提交</button>` : ''}${(event.stats && event.stats.failed) ? `<button class="btn sm" data-event-action="retry-failed" data-id="${esc(event.id)}">重试失败</button>` : ''}</td>
+        <td class="evt-actions"><button class="btn sm" data-event-detail="${esc(event.id)}">详情</button></td>
       </tr>`;
     }).join('');
     return `
     <form class="task-search" data-events-search><label for="event-search">搜索任务</label><div><input class="input" id="event-search" name="query" value="${esc(state.taskEventQuery||'')}" placeholder="任务名称"><button class="btn" type="submit">搜索</button></div></form>
-    <div class="filters">${[['','全部'],['draft','草稿'],['queued','排队'],['running','执行中'],['paused','暂停'],['failed','失败'],['interrupted','待确认'],['completed','完成']].map(([value,label])=>`<button class="chip ${(state.taskEventStatus||'')===value?'active':''}" data-event-status="${value}">${label}</button>`).join('')}</div>
+    <div class="filters">${[['','全部'],['unscheduled','待调度'],['scheduled','待执行'],['running','执行中'],['completed','完成'],['failed','失败'],['interrupted','待确认']].map(([value,label])=>`<button class="chip ${(state.taskEventStatus||'')===value?'active':''}" data-event-status="${value}">${label}</button>`).join('')}</div>
     ${state.eventError ? `<div class="card" style="padding:12px;color:var(--h3-danger)">事件加载失败：${esc(state.eventError)}</div>` : ''}
     ${rows ? `<div class="table-wrap"><table class="jobs evt-table">
-      <thead><tr><th>状态</th><th>任务</th><th>来源</th><th>条目进度</th><th>耗时</th><th>创建</th><th>操作</th></tr></thead>
+      <thead><tr><th>状态</th><th>任务</th><th>调度</th><th>条目进度</th><th>耗时</th><th>创建</th><th>操作</th></tr></thead>
       <tbody>${rows}</tbody>
-    </table></div>${page.footer}` : `<div class="card"><div class="empty"><strong>还没有任务</strong><p>创建单条或批量任务；创作台提交的任务也会记录在这里。</p><button class="btn primary" data-event-create="1">创建任务</button></div></div>`}`;
+    </table></div>${page.footer}` : `<div class="card"><div class="empty"><strong>还没有任务</strong><p>在「创建任务」里上传分镜文件并保存，任务会先进入待调度。</p><button class="btn primary" data-event-create="1">去创建任务</button></div></div>`}`;
   }
 
-  /* ---------------- 创建任务页 ---------------- */
-  /* 创建只接受固定格式的 JSON / XLSX 文件：单条任务也用一份文件（一行），参考图路径写在文件里。 */
+  /* ---------------- 创建任务：名称 / 渠道 / 视频 / 分镜文件 → 可审阅表格 ---------------- */
 
   const createDrafts = { video: null, image: null };
+  const CREATE_RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4'];
   const FILE_KIND_LABEL = { json: 'JSON', xlsx: 'Excel', draft: '草稿' };
+  const AUDIT_LABEL = { prepare: '保存任务', schedule: '配置调度', queue: '加入队列', pause: '暂停', resume: '继续', cancel: '取消', retry: '重试' };
 
   function workflowFor(id) { return (state.workflows || []).find((w) => w.id === id) || null; }
 
-  function defaultChannelId(kind) {
-    if (kind === 'video') {
-      const active = (state.channels?.video || []).find((c) => c.active && c.enabled !== false);
-      const workflow = (active && (state.workflows || []).find((w) => w.channelId === active.id))
-        || (state.workflows || []).find((w) => w.id === state.studio?.workflowId)
-        || (state.workflows || [])[0];
-      return workflow ? workflow.id : '';
+  function videoChannelList() {
+    const list = [{ id: 'autodl', name: '官网 API' }];
+    for (const channel of state.channels?.video || []) {
+      if (channel.enabled === false) continue;
+      list.push({ id: 'ch:' + channel.id, name: channel.name });
     }
-    const list = (state.channels?.image || []).filter((c) => c.enabled !== false);
-    const channel = list.find((c) => c.active) || list[0];
-    return channel ? channel.id : '';
+    return list;
+  }
+
+  function videoWorkflows(channelId) {
+    const all = state.workflows || [];
+    if (channelId === 'autodl') return all.filter((w) => w.provider === 'autodl');
+    const raw = String(channelId || '').replace(/^ch:/, '');
+    return all.filter((w) => w.channelId === raw);
+  }
+
+  function imageChannelList() {
+    return (state.channels?.image || []).filter((c) => c.enabled !== false).map((c) => ({ id: c.id, name: c.name }));
+  }
+
+  function defaultVideoChannel() {
+    const list = videoChannelList();
+    const active = (state.channels?.video || []).find((c) => c.active && c.enabled !== false);
+    if (active && list.some((c) => c.id === 'ch:' + active.id)) return 'ch:' + active.id;
+    return list[0] ? list[0].id : 'autodl';
+  }
+
+  function defaultWorkflowId(channelId) {
+    const list = videoWorkflows(channelId);
+    const active = (state.channels?.video || []).find((c) => c.active && c.enabled !== false);
+    const match = list.find((w) => w.channelId === active?.id) || list[0];
+    return match ? match.id : '';
   }
 
   function newDraft(kind) {
+    const channelId = kind === 'video' ? defaultVideoChannel() : (imageChannelList()[0]?.id || '');
     return {
       kind,
       editId: '',
       title: '',
-      channel: defaultChannelId(kind),
+      channelId,
+      workflowId: kind === 'video' ? defaultWorkflowId(channelId) : '',
       file: null,
       busy: false,
       msg: '',
@@ -111,42 +136,9 @@ const Events = (() => {
     return draft;
   }
 
-  function channelOptions(draft) {
-    if (draft.kind === 'video') {
-      const list = state.workflows || [];
-      if (!list.length) return '<option value="">还没有可用的视频渠道</option>';
-      return list.map((w) => `<option value="${esc(w.id)}"${w.id === draft.channel ? ' selected' : ''}>${esc(w.display || w.label || w.id)}</option>`).join('');
-    }
-    const list = (state.channels?.image || []).filter((c) => c.enabled !== false);
-    if (!list.length) return '<option value="">还没有可用的图像渠道</option>';
-    return list.map((c) => `<option value="${esc(c.id)}"${c.id === draft.channel ? ' selected' : ''}>${esc(c.name)}</option>`).join('');
-  }
-
-  /** 渠道能力拆成「一句话来源 + 一排标签」，避免长句把表单撑得高低不一。 */
-  function channelInfo(draft) {
-    if (draft.kind === 'image') {
-      return {
-        summary: '图像渠道在 设置 → 图片生成 维护',
-        caps: ['画幅 4 种', '生成张数 1–4', '时长 / 分辨率忽略'],
-      };
-    }
-    const workflow = workflowFor(draft.channel);
-    if (!workflow) return { summary: '还没有可用的视频渠道，请先到 设置 → 视频生成 添加一条', caps: [] };
-    const caps = [];
-    const options = workflow.durationOptions || [];
-    if (options.length > 1) caps.push(`时长 ${options[0]}–${options[options.length - 1]} 秒`);
-    else if (options.length === 1) caps.push(`时长固定 ${options[0]} 秒`);
-    if (workflow.sizeMode === 'ratio' && (workflow.ratios || []).length) caps.push(`画幅 ${workflow.ratios.length} 种`);
-    if (workflow.sizeMode === 'resolution' && (workflow.resolutions || []).length) caps.push(`分辨率 ${workflow.resolutions.length} 档`);
-    if (workflow.images) caps.push(workflow.optionalImages ? `参考图 ≤${workflow.images} 张（可选）` : `参考图 ≤${workflow.images} 张`);
-    else caps.push('不需要参考图');
-    if (workflow.audios) caps.push(`音频 ≤${workflow.audios} 段`);
-    return { summary: String(workflow.providerLabel || workflow.provider || '已选渠道'), caps };
-  }
-
   function fileLabel(file) {
     const format = FILE_KIND_LABEL[file.format] || String(file.format || '文件');
-    return `${format} · ${file.stats.items} 条任务 · ${file.stats.images} 张参考图`;
+    return `${format} · ${file.stats.items} 个分镜 · ${file.stats.images} 张参考图`;
   }
 
   function renderIssues(file) {
@@ -156,53 +148,44 @@ const Events = (() => {
     const block = (list, cls, title) => (list.length
       ? `<div class="create-issues ${cls}"><b>${esc(title)}</b><ul>${list.map((text) => `<li>${esc(text)}</li>`).join('')}</ul></div>`
       : '');
-    return block(errors, '', `${errors.length} 个问题，修正文件后重新上传`) + block(warnings, 'is-warn', `${warnings.length} 个提醒`);
+    return block(errors, '', `${errors.length} 个错误，修正文件后重新上传`) + block(warnings, 'is-warn', `${warnings.length} 个提醒`);
   }
 
-  function previewTable(file) {
+  function draftModelLabel(draft) {
+    if (draft.kind !== 'video') return '';
+    const workflow = videoWorkflows(draft.channelId).find((w) => w.id === draft.workflowId);
+    return workflow ? (workflow.label || workflow.display || workflow.id) : '';
+  }
+
+  function renderShotTable(draft) {
+    const file = draft.file;
     if (!file || !(file.items || []).length) return '';
-    const shown = file.items.slice(0, 30);
-    const rows = shown.map((item) => {
-      const images = (item.images || []).length;
-      const audios = (item.audios || []).length;
+    const model = draftModelLabel(draft);
+    const ratios = (() => {
+      if (draft.kind === 'image') return CREATE_RATIOS;
+      const workflow = videoWorkflows(draft.channelId).find((w) => w.id === draft.workflowId);
+      return (workflow && (workflow.ratios || []).length) ? workflow.ratios : CREATE_RATIOS;
+    })();
+    const rows = file.items.map((item, index) => {
+      const refs = (item.images || []).map((image, order) => `<span class="shot-ref" title="${esc(image.path || '')}">
+        <b>${order + 1}</b><span class="shot-ref-name">${esc(image.name || String(image.path || '').split(/[\\/]/).pop() || '图片')}</span>${image.note ? `<i>${esc(image.note)}</i>` : ''}
+        <button type="button" class="shot-ref-x" data-ref-remove="${index}:${order}" title="移除这张参考图">×</button>
+      </span>`).join('');
       return `<tr>
-        <td class="tnum">${item.line}</td>
-        <td>${esc(item.title || '—')}</td>
-        <td><div class="create-prompt">${esc(item.prompt || '—')}</div></td>
-        <td>${images ? images + ' 张' : '—'}${audios ? ' · 音频 ' + audios : ''}</td>
-        <td>${item.duration ? item.duration + ' 秒' : '默认'}</td>
-        <td>${esc(item.ratio || '默认')}</td>
+        <td class="tnum">${index + 1}</td>
+        <td><input class="input" data-field="title" data-index="${index}" value="${esc(item.title || '')}" placeholder="分镜 ${index + 1}"></td>
+        <td><textarea class="textarea" data-field="prompt" data-index="${index}" rows="2" placeholder="这个分镜要生成什么">${esc(item.prompt || '')}</textarea></td>
+        <td><select class="select" data-field="ratio" data-index="${index}">${ratios.map((ratio) => `<option value="${esc(ratio)}" ${ratio === (item.ratio || ratios[0]) ? 'selected' : ''}>${esc(ratio)}</option>`).join('')}</select></td>
+        <td class="shot-model">${esc(model || '—')}</td>
+        <td><input class="input" type="number" min="1" max="15" data-field="duration" data-index="${index}" value="${item.duration || ''}" placeholder="默认"></td>
+        <td class="shot-refs">${refs || '<span class="hint">无</span>'}</td>
+        <td><button type="button" class="btn sm ghost" data-remove-row="${index}">删除</button></td>
       </tr>`;
     }).join('');
-    return `<div class="table-wrap create-preview-table"><table class="jobs">
-      <thead><tr><th>行</th><th>标题</th><th>提示词</th><th>参考素材</th><th>时长</th><th>画幅</th></tr></thead>
-      <tbody>${rows}</tbody></table></div>${file.items.length > shown.length ? `<p class="hint">只预览前 ${shown.length} 条，共 ${file.items.length} 条。</p>` : ''}`;
-  }
-
-  function summaryText(draft) {
-    const file = draft.file;
-    if (!file) return '还没有上传任务文件';
-    const parts = [fileLabel(file)];
-    if ((file.errors || []).length) parts.push(`${file.errors.length} 个问题待修正`);
-    else if (!(file.items || []).length) parts.push('文件里没有任务');
-    else parts.push('提交时创建一个事件');
-    return parts.join(' · ');
-  }
-
-  function formatDoc() {
-    return `<details class="create-advanced"><summary>文件格式说明（固定格式，不支持一行一条的文本）</summary>
-      <div class="create-doc">
-        <p><b>Excel</b>：第一张表，第一行表头必须完全一致——<code>任务标题</code><code>提示词</code><code>参考图路径</code><code>参考图说明</code><code>时长（秒）</code><code>画幅</code><code>分辨率</code><code>生成张数</code>。第二张表是填写说明，不会参与解析。</p>
-        <p><b>JSON</b>：<code>{"items":[{"title":"…","prompt":"…","duration":10,"ratio":"16:9","resolution":"","count":1,"images":[{"path":"D:/素材/a.png","note":"女主正面"}]}]}</code></p>
-        <ul>
-          <li>单条任务也放一行 / 一个 item，不再单独提供单条表单。</li>
-          <li>参考图路径写绝对路径，或相对素材库的路径；多个用英文分号 <code>;</code> 分隔，说明与路径一一对应。</li>
-          <li>时长 1–15 的整数；画幅 <code>16:9 / 9:16 / 1:1 / 4:3 / 3:4</code>；留空用渠道默认值。</li>
-          <li>图像任务用「画幅 / 生成张数」，时长与分辨率可留空；视频任务用「时长 / 分辨率」。</li>
-          <li>文件里写错参考图路径会按行号报出来，不会静默跳过。</li>
-        </ul>
-      </div>
-    </details>`;
+    return `<div class="table-wrap create-table-wrap"><table class="jobs create-table">
+      <thead><tr><th>#</th><th>分镜</th><th>提示词</th><th>画面比例</th><th>使用模型</th><th>时长</th><th>素材（文件 · 说明 · 顺序）</th><th></th></tr></thead>
+      <tbody>${rows}</tbody></table></div>
+      <div class="create-table-foot"><span class="hint">共 ${file.items.length} 个分镜 · 可直接修改</span><button type="button" class="btn sm ghost" data-tc-add-row>＋ 添加分镜</button></div>`;
   }
 
   function renderCreate() {
@@ -210,59 +193,49 @@ const Events = (() => {
     const kind = draft.kind;
     const file = draft.file;
     const busy = !!draft.busy;
-    const channel = channelInfo(draft);
+    const channels = kind === 'video' ? videoChannelList() : imageChannelList();
+    const models = kind === 'video' ? videoWorkflows(draft.channelId) : [];
+    const items = (file && file.items) || [];
     return `<div class="create-page">
-      <div class="task-panel-head">
-        <div><h2>创建${kind === 'image' ? '图像' : '视频'}任务</h2><p>任务内容全部来自上传的文件：先下载模板，按固定列填好再上传解析。</p></div>
-        <span class="task-panel-note">${draft.editId ? '正在编辑草稿' : '保存草稿不会自动执行'}</span>
-      </div>
       <form class="create-form" id="task-create-form" autocomplete="off">
-        <section class="create-section">
-          <div class="create-section-head"><span class="create-step">1</span><div><h3>任务与渠道</h3><p>任务名称可以留空，列表里会用首条提示词代替；渠道决定用哪条线路执行。</p></div></div>
-          <div class="create-grid create-grid-top">
-            <label class="create-field"><span>任务名称<em>可选</em></span><input class="input" id="tc-title" value="${esc(draft.title)}" placeholder="例如：第 3 集 · 雨夜街头"><small>留空时用首条提示词代替</small></label>
-            <label class="create-field"><span>${kind === 'video' ? '视频渠道' : '图像渠道'}</span><select class="select" id="tc-channel">${channelOptions(draft)}</select><small>${esc(channel.summary)}</small></label>
-          </div>
-          ${channel.caps.length ? `<div class="create-caps">${channel.caps.map((cap) => `<span class="create-cap">${esc(cap)}</span>`).join('')}<span class="create-cap is-note">文件里留空的参数用这里的默认值</span></div>` : ''}
-          </div>
-        </section>
-        <section class="create-section">
-          <div class="create-section-head"><span class="create-step">2</span><div><h3>任务文件</h3><p>只接受固定格式的 JSON 或 Excel（.xlsx）。先下载示例，照示例填写；单条任务也用一个文件，一行即可。</p></div></div>
-          <div class="create-templates">
-            <a class="btn" href="/api/task-import/template?format=json" download="task-template.json">下载 JSON 示例</a>
-            <a class="btn" href="/api/task-import/template?format=xlsx" download="task-template.xlsx">下载 Excel 示例</a>
-            <span class="hint">参考图路径、说明都写在文件里，不再单独选择素材。</span>
-          </div>
-          <label class="create-drop${busy ? ' is-busy' : ''}" id="tc-drop">
-            <input type="file" id="tc-file" accept=".json,.xlsx" hidden>
-            ${busy
-              ? '<span>正在解析文件…</span><small>只在本机解析，不会上传到外部</small>'
-              : file
-                ? `<span class="create-file-name">${esc(file.name)}</span><small>${esc(fileLabel(file))} · 点击或拖入别的文件可替换${file.format === 'draft' ? '（当前是已保存草稿的条目）' : ''}</small>`
-                : '<span>选择文件，或把文件拖到这里</span><small>支持 .json 与 .xlsx</small>'}
-          </label>
-          ${renderIssues(file)}
-          ${previewTable(file)}
-          ${formatDoc()}
-        </section>
-        <p class="create-msg" id="tc-msg">${esc(draft.msg || '')}</p>
-        <div class="create-actions">
-          <div class="create-summary" id="tc-summary">${esc(summaryText(draft))}</div>
-          <div class="create-action-buttons">
-            ${draft.editId ? '<button type="button" class="btn ghost" data-tc-cancel-edit>放弃修改</button>' : ''}
-            <button type="button" class="btn" data-tc-save ${busy ? 'disabled' : ''}>${draft.editId ? '保存修改' : '保存草稿'}</button>
-            <button type="button" class="btn primary" data-tc-submit ${busy ? 'disabled' : ''}>${draft.editId ? '保存并加入队列' : '加入队列并开始'}</button>
-          </div>
+        <div class="create-head">
+          <label class="create-field"><span>任务名称</span><input class="input" id="tc-title" value="${esc(draft.title)}" placeholder="例如：第 3 集 · 雨夜街头"></label>
+          <label class="create-field"><span>${kind === 'video' ? '视频生成渠道' : '图像渠道'}</span><select class="select" id="tc-channel">${channels.map((channel) => `<option value="${esc(channel.id)}" ${channel.id === draft.channelId ? 'selected' : ''}>${esc(channel.name)}</option>`).join('') || '<option value="">没有可用渠道</option>'}</select></label>
+          ${kind === 'video' ? `<label class="create-field"><span>视频模型</span><select class="select" id="tc-model">${models.map((model) => `<option value="${esc(model.id)}" ${model.id === draft.workflowId ? 'selected' : ''}>${esc(model.label || model.display || model.id)}</option>`).join('') || '<option value="">没有可用模型</option>'}</select></label>` : ''}
         </div>
+        <section class="create-import" id="tc-import">
+          <div class="create-import-head">
+            <b>分镜文件</b>
+            <a class="btn sm" href="/api/task-import/template?format=json" download="task-template.json">JSON 示例</a>
+            <a class="btn sm" href="/api/task-import/template?format=xlsx" download="task-template.xlsx">Excel 示例</a>
+            <label class="btn sm primary">选择文件<input type="file" id="tc-file" accept=".json,.xlsx" hidden></label>
+            <span class="hint">${busy ? '正在解析…' : (file ? esc(file.name) + ' · ' + esc(fileLabel(file)) : '支持 .json / .xlsx，解析后直接改表格')}</span>
+          </div>
+          ${file || busy ? '' : '<label class="create-drop" id="tc-drop"><span>把分镜文件拖到这里，或点「选择文件」</span><small>JSON / Excel 均可</small></label>'}
+          ${renderIssues(file)}
+          ${renderShotTable(draft)}
+          <p class="create-msg" id="tc-msg">${esc(draft.msg || '')}</p>
+          <div class="create-actions">
+            <div class="create-summary" id="tc-summary">${items.length ? `${items.length} 个分镜${draftModelLabel(draft) ? ' · ' + esc(draftModelLabel(draft)) : ''}` : '还没有上传分镜文件'}</div>
+            <div class="create-action-buttons">
+              ${draft.editId ? '<button type="button" class="btn ghost" data-tc-cancel-edit>放弃修改</button>' : ''}
+              <button type="button" class="btn primary" data-tc-save ${busy || !items.length ? 'disabled' : ''}>${draft.editId ? '保存修改' : '保存任务'}</button>
+            </div>
+          </div>
+        </section>
       </form>
     </div>`;
   }
 
-  function readCreateForm(root) {
+  function readCreateHead(root) {
     const draft = currentDraft();
-    const field = (selector) => root.querySelector(selector);
-    if (field('#tc-title')) draft.title = field('#tc-title').value;
-    if (field('#tc-channel')) draft.channel = field('#tc-channel').value;
+    const title = root.querySelector('#tc-title');
+    const channel = root.querySelector('#tc-channel');
+    const model = root.querySelector('#tc-model');
+    if (title) draft.title = title.value;
+    if (channel) draft.channelId = channel.value;
+    if (model) draft.workflowId = model.value;
+    if (!draft.workflowId && draft.channelId) draft.workflowId = defaultWorkflowId(draft.channelId);
     if (draft.msg) { draft.msg = ''; const box = root.querySelector('#tc-msg'); if (box) box.textContent = ''; }
     return draft;
   }
@@ -270,16 +243,13 @@ const Events = (() => {
   function fileToBase64(file) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.onload = () => {
-        const text = String(reader.result || '');
-        resolve(text.slice(text.indexOf(',') + 1));
-      };
+      reader.onload = () => { const text = String(reader.result || ''); resolve(text.slice(text.indexOf(',') + 1)); };
       reader.onerror = () => reject(new Error('读取文件失败'));
       reader.readAsDataURL(file);
     });
   }
 
-  async function loadImportFile(file, root) {
+  async function loadImportFile(file) {
     if (!/\.(json|xlsx)$/i.test(file.name || '')) { failCreate('只支持 .json 或 .xlsx 文件'); return; }
     const draft = currentDraft();
     draft.busy = true;
@@ -300,93 +270,81 @@ const Events = (() => {
     window.render();
   }
 
-  function buildCreatePayload(draft) {
+  function buildTaskPayload(draft) {
     const file = draft.file;
-    if (!file) throw new Error('先下载模板填写，再上传 .json 或 .xlsx 文件');
-    if ((file.errors || []).length) throw new Error(`文件还有 ${file.errors.length} 个问题，请修正后重新上传`);
+    if (!file) throw new Error('先上传分镜文件');
+    if ((file.errors || []).length) throw new Error(`文件还有 ${file.errors.length} 个错误，修正后重新上传`);
     const items = file.items || [];
-    if (!items.length) throw new Error('文件里没有任务');
-    if (!draft.channel) throw new Error(draft.kind === 'video' ? '请选择视频渠道' : '请选择图像渠道');
-    const workflow = draft.kind === 'video' ? workflowFor(draft.channel) : null;
+    if (!items.length) throw new Error('文件里没有分镜');
+    if (!draft.channelId) throw new Error(draft.kind === 'video' ? '请选择视频生成渠道' : '请选择图像渠道');
+    if (draft.kind === 'video' && !draft.workflowId) throw new Error('请选择视频模型');
+    const workflow = draft.kind === 'video' ? workflowFor(draft.workflowId) : null;
     const defaultDuration = Number(workflow?.durationDefault) || 10;
     const defaultResolution = String(workflow?.defaultResolution || '').trim();
-    const defaultRatio = String(workflow?.defaultRatio || (workflow?.ratios || [])[0] || '16:9');
-    const built = items.map((entry) => {
-      const prompt = String(entry.prompt || '').trim();
-      if (!prompt) throw new Error(`第 ${entry.line} 条没有提示词`);
-      const images = (entry.images || []).filter((image) => image && image.path && !image.audio)
+    const fallbackRatio = String(workflow?.defaultRatio || (workflow?.ratios || [])[0] || '16:9');
+    const rows = items.map((item, index) => {
+      const prompt = String(item.prompt || '').trim();
+      if (!prompt) throw new Error(`第 ${index + 1} 个分镜缺提示词`);
+      const images = (item.images || []).filter((image) => image && image.path)
         .map((image) => ({ path: image.path, name: image.name || '', note: image.note || '' }));
-      const audios = (entry.audios || []).filter((audio) => audio && audio.path)
-        .map((audio) => ({ path: audio.path, name: audio.name || '' }));
-      const base = { title: entry.title || undefined, prompt };
+      const title = String(item.title || '').trim() || undefined;
+      const ratio = item.ratio || fallbackRatio;
       if (draft.kind === 'image') {
-        return {
-          ...base,
-          refs: images,
-          imageRatio: entry.ratio || defaultRatio,
-          imageLayoutId: 'free',
-          aspectRatio: entry.ratio || defaultRatio,
-          count: Math.max(1, Math.min(4, Number(entry.count) || 1)),
-          channelId: draft.channel,
-        };
+        return { title, prompt, refs: images, imageRatio: ratio, aspectRatio: ratio, imageLayoutId: 'free', count: 1, channelId: draft.channelId };
       }
       return {
-        ...base,
-        images,
-        audios,
-        duration: Number(entry.duration) || defaultDuration,
-        aspectRatio: entry.ratio || defaultRatio,
-        resolution: entry.resolution || defaultResolution,
-        workflowId: draft.channel,
+        title, prompt, images,
+        duration: Math.max(1, Math.min(15, Number(item.duration) || defaultDuration)),
+        aspectRatio: ratio,
+        resolution: defaultResolution,
+        workflowId: draft.workflowId,
       };
     });
-    const title = String(draft.title || '').trim() || String(built[0].prompt || '').slice(0, 30);
+    const title = String(draft.title || '').trim() || String(rows[0].prompt || '').slice(0, 30);
     return {
       kind: draft.kind,
       title,
-      source: built.length > 1 ? 'batch' : (draft.kind === 'image' ? 'image' : 'studio'),
-      items: built,
-      draft: true,
+      source: rows.length > 1 ? 'batch' : (draft.kind === 'image' ? 'image' : 'studio'),
+      items: rows,
+      pendingSchedule: true,
+      draft: false,
       requestId: draft.requestId,
-      ...(draft.kind === 'video' ? { workflowId: draft.channel } : { channelId: draft.channel }),
+      ...(draft.kind === 'video' ? { workflowId: draft.workflowId } : { channelId: draft.channelId }),
       projectId: state.projectId || '',
     };
   }
 
-  async function submitCreate(root, mode) {
-    const draft = readCreateForm(root);
+  async function saveTask(root) {
+    const draft = readCreateHead(root);
     draft.msg = '';
     let payload;
-    try { payload = buildCreatePayload(draft); }
+    try { payload = buildTaskPayload(draft); }
     catch (err) { failCreate(err.message); return; }
-    const form = root.querySelector('#task-create-form');
-    if (form) form.querySelectorAll('button').forEach((button) => { button.disabled = true; });
+    const buttons = root.querySelectorAll('[data-tc-save]');
+    buttons.forEach((button) => { button.disabled = true; });
     try {
-      let event;
       if (draft.editId) {
-        event = await api('/api/events/' + encodeURIComponent(draft.editId) + '/draft', { method: 'POST', body: { title: payload.title, items: payload.items } });
-        if (mode === 'queue') event = await api('/api/events/' + encodeURIComponent(draft.editId) + '/queue', { method: 'POST', body: {} });
+        await api('/api/events/' + encodeURIComponent(draft.editId) + '/draft', { method: 'POST', body: { title: payload.title, items: payload.items } });
+        await api('/api/events/' + encodeURIComponent(draft.editId) + '/prepare', { method: 'POST', body: {} });
       } else {
-        event = await api('/api/events', { method: 'POST', body: { ...payload, draft: mode === 'draft' } });
+        await api('/api/events', { method: 'POST', body: payload });
       }
       createDrafts[draft.kind] = null;
       lastSignature = '';
-      toast(mode === 'draft' ? '已保存草稿，可在任务管理里继续编辑' : '已加入队列，开始执行');
-      state.taskTab = 'manage';
       state.taskEventStatus = '';
-      state.taskEventQuery = '';
       state.taskPages = { ...(state.taskPages || {}), events: 1 };
-      localStorage.setItem('h3.tasks.tab', 'manage');
+      state.taskTab = 'schedule';
+      localStorage.setItem('h3.tasks.tab', 'schedule');
       await load();
       window.render();
-      if (mode === 'queue' && event && event.id) openDetail(event.id).catch(() => {});
+      toast('任务已保存，去调度页设置运行时间');
     } catch (err) {
       failCreate(err.message);
     }
   }
 
   function failCreate(message) {
-    currentDraft().msg = String(message || '创建失败');
+    currentDraft().msg = String(message || '保存失败');
     window.render();
     const box = document.querySelector('#tc-msg');
     if (box) box.scrollIntoView({ block: 'center', behavior: 'smooth' });
@@ -397,30 +355,70 @@ const Events = (() => {
     if (!form) return;
     form.addEventListener('submit', (event) => event.preventDefault());
     form.addEventListener('input', (event) => {
-      if (event.target.id === 'tc-title' || event.target.id === 'tc-channel') readCreateForm(root);
+      const target = event.target;
+      const index = Number(target.dataset.index);
+      if (target.dataset.field && Number.isInteger(index)) {
+        const draft = currentDraft();
+        const item = draft.file?.items?.[index];
+        if (item) {
+          const field = target.dataset.field;
+          item[field] = field === 'duration' ? (target.value ? Number(target.value) : null) : target.value;
+        }
+        return;
+      }
+      if (target.id === 'tc-title' || target.id === 'tc-channel' || target.id === 'tc-model') readCreateHead(root);
     });
     form.addEventListener('change', (event) => {
-      if (event.target.id !== 'tc-channel') return;
-      readCreateForm(root);
-      window.render();
+      const target = event.target;
+      if (target.id === 'tc-channel') {
+        const draft = readCreateHead(root);
+        draft.channelId = target.value;
+        draft.workflowId = defaultWorkflowId(draft.channelId);
+        window.render();
+        return;
+      }
+      if (target.id === 'tc-model') {
+        readCreateHead(root);
+        window.render();
+      }
     });
     form.addEventListener('click', (event) => {
       const save = event.target.closest('[data-tc-save]');
-      if (save) { submitCreate(root, 'draft').catch((err) => failCreate(err.message)); return; }
-      const submit = event.target.closest('[data-tc-submit]');
-      if (submit) { submitCreate(root, 'queue').catch((err) => failCreate(err.message)); return; }
+      if (save) { saveTask(root).catch((err) => failCreate(err.message)); return; }
+      const add = event.target.closest('[data-tc-add-row]');
+      if (add) {
+        const draft = currentDraft();
+        if (!draft.file) return;
+        draft.file.items.push({ title: '', prompt: '', images: [], duration: null, ratio: '16:9' });
+        window.render();
+        return;
+      }
+      const removeRow = event.target.closest('[data-remove-row]');
+      if (removeRow) {
+        const draft = currentDraft();
+        draft.file.items.splice(Number(removeRow.dataset.removeRow), 1);
+        window.render();
+        return;
+      }
+      const removeRef = event.target.closest('[data-ref-remove]');
+      if (removeRef) {
+        const [row, order] = String(removeRef.dataset.refRemove).split(':').map(Number);
+        const draft = currentDraft();
+        const item = draft.file?.items?.[row];
+        if (item && item.images) item.images.splice(order, 1);
+        window.render();
+        return;
+      }
       const cancelEdit = event.target.closest('[data-tc-cancel-edit]');
       if (cancelEdit) { createDrafts[currentDraft().kind] = null; window.render(); }
     });
     const input = form.querySelector('#tc-file');
-    if (input) {
-      input.addEventListener('change', function onChange() {
-        const file = this.files && this.files[0];
-        if (file) loadImportFile(file, root).catch((err) => failCreate(err.message));
-        this.value = '';
-      });
-    }
-    const drop = form.querySelector('#tc-drop');
+    if (input) input.addEventListener('change', function onChange() {
+      const file = this.files && this.files[0];
+      if (file) loadImportFile(file).catch((err) => failCreate(err.message));
+      this.value = '';
+    });
+    const drop = form.querySelector('#tc-drop') || form.querySelector('#tc-import');
     if (drop) {
       drop.addEventListener('dragover', (event) => { event.preventDefault(); drop.classList.add('is-over'); });
       drop.addEventListener('dragleave', () => drop.classList.remove('is-over'));
@@ -428,41 +426,200 @@ const Events = (() => {
         event.preventDefault();
         drop.classList.remove('is-over');
         const file = event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0];
-        if (file) loadImportFile(file, root).catch((err) => failCreate(err.message));
+        if (file) loadImportFile(file).catch((err) => failCreate(err.message));
       });
     }
+  }
+
+  /* ---------------- 调度页：只分「未分配 / 已分配」 ---------------- */
+
+  function scheduleRows(events, assigned) {
+    if (!events.length) return `<div class="card"><div class="empty"><strong>${assigned ? '没有已分配的任务' : '没有待调度的任务'}</strong><p>${assigned ? '在未分配里配置运行时间后，任务会出现在这里。' : '在创建页保存任务后，它会出现在这里等待调度。'}</p></div></div>`;
+    const rows = events.map((event) => {
+      const when = event.schedule?.startAt ? new Date(event.schedule.startAt).toLocaleString('zh-CN', { hour12: false }) : (assigned ? '立即执行' : '未设置');
+      return `<tr>
+        <td><div class="evt-title">${esc(event.title)}</div><div class="hint">${esc(event.id)}</div></td>
+        <td>${event.stats?.total || event.itemCount || 0} 个分镜</td>
+        <td>${esc(when)}</td>
+        <td>${Number(event.policy?.concurrency) || 1}</td>
+        <td>${event.policy?.onItemFail === 'stop' ? '失败即停' : '继续'}</td>
+        <td><button class="btn sm" data-event-schedule="${esc(event.id)}">${assigned ? '修改调度' : '配置调度'}</button></td>
+      </tr>`;
+    }).join('');
+    return `<div class="table-wrap"><table class="jobs schedule-table"><thead><tr><th>任务</th><th>分镜</th><th>运行时间</th><th>并发</th><th>失败处理</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  }
+
+  function renderSchedule() {
+    const events = state.events || [];
+    const unassigned = events.filter((event) => ['unscheduled', 'draft'].includes(event.status));
+    const assigned = events.filter((event) => ['scheduled', 'queued', 'running', 'paused'].includes(event.status));
+    return `<div class="schedule-page">
+      <section class="schedule-block"><div class="task-panel-head"><div><h2>未分配 <span class="count">${unassigned.length}</span></h2><p>刚保存的任务，还没有运行时间。</p></div></div>${scheduleRows(unassigned, false)}</section>
+      <section class="schedule-block"><div class="task-panel-head"><div><h2>已分配 <span class="count">${assigned.length}</span></h2><p>已经排好运行时间的任务；这里不显示执行过程。</p></div></div>${scheduleRows(assigned, true)}</section>
+    </div>`;
+  }
+
+  /* ---------------- 监控页：配置操作 + 每个条目的执行记录 ---------------- */
+
+  function durationText(event) {
+    const start = event.startedAt;
+    if (!start) return '—';
+    const end = event.finishedAt || Date.now();
+    const seconds = Math.max(0, Math.round((end - start) / 1000));
+    if (seconds < 60) return seconds + 's';
+    return Math.floor(seconds / 60) + 'm' + String(seconds % 60).padStart(2, '0') + 's';
+  }
+
+  function firstError(event) {
+    const item = (event.items || []).find((row) => row.error);
+    return item ? String(item.error).slice(0, 80) : '';
+  }
+
+  function renderMonitor() {
+    const events = state.events || [];
+    if (!events.length) return `<div class="card"><div class="empty"><strong>还没有可监控的任务</strong><p>任务开始执行后，这里会记录每一步的配置和结果。</p></div></div>`;
+    const rows = events.map((event) => {
+      const when = event.schedule?.startAt ? new Date(event.schedule.startAt).toLocaleString('zh-CN', { hour12: false }) : '立即';
+      const error = firstError(event);
+      return `<tr>
+        <td><div class="evt-title">${esc(event.title)}</div><div class="hint">${esc(event.id)}</div></td>
+        <td><div class="hint">并发 ${Number(event.policy?.concurrency) || 1} · ${event.policy?.onItemFail === 'stop' ? '失败即停' : '失败继续'}</div><div class="hint">${esc(when)}</div></td>
+        <td>${event.startedAt ? new Date(event.startedAt).toLocaleString('zh-CN', { hour12: false }) : '—'}</td>
+        <td class="tnum">${durationText(event)}</td>
+        <td>${event.stats?.done || 0}/${event.stats?.total || 0}${event.stats?.failed ? ` · <span class="is-danger">失败 ${event.stats.failed}</span>` : ''}</td>
+        <td class="hint">${error ? esc(error) : '—'}</td>
+        <td><button class="btn sm" data-event-attempts="${esc(event.id)}">执行记录</button></td>
+      </tr>`;
+    }).join('');
+    return `<div class="table-wrap"><table class="jobs monitor-table"><thead><tr><th>任务</th><th>调度配置</th><th>开始时间</th><th>耗时</th><th>条目</th><th>错误 / 警告</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  }
+
+  async function openAttempts(id) {
+    const [event, data] = await Promise.all([
+      api('/api/events/' + encodeURIComponent(id)),
+      api('/api/events/' + encodeURIComponent(id) + '/attempts?page=1').catch(() => ({ items: [], total: 0 })),
+    ]);
+    const auditRows = (event.audit || []).map((entry) => `<li><span class="hint">${new Date(entry.at).toLocaleString('zh-CN', { hour12: false })}</span> ${esc(AUDIT_LABEL[entry.action] || entry.action)}${entry.detail ? ' · ' + esc(entry.detail) : ''}</li>`).join('') || '<li class="hint">还没有配置操作。</li>';
+    const attemptRows = (data.items || []).flatMap((group) => group.attempts.map((attempt) => `<tr>
+      <td>${esc(group.title)}</td>
+      <td>${esc(attempt.status)}</td>
+      <td class="hint">${attempt.startedAt ? new Date(attempt.startedAt).toLocaleString('zh-CN', { hour12: false }) : '—'}</td>
+      <td class="tnum">${attempt.startedAt ? Math.max(0, Math.round(((attempt.finishedAt || Date.now()) - attempt.startedAt) / 1000)) + 's' : '—'}</td>
+      <td class="hint">${esc(attempt.error || '')}</td>
+    </tr>`)).join('') || '<tr><td colspan="5" class="hint">还没有执行记录。</td></tr>';
+    openModal(`<div class="modal-head"><h2>执行记录 · ${esc(event.title)}</h2><button class="btn" data-close="1">关闭</button></div>
+      <div class="modal-body">
+        <div class="monitor-config"><span>运行时间：${event.schedule?.startAt ? new Date(event.schedule.startAt).toLocaleString('zh-CN', { hour12: false }) : '立即'}</span><span>并发：${Number(event.policy?.concurrency) || 1}</span><span>失败处理：${event.policy?.onItemFail === 'stop' ? '失败即停' : '继续'}</span></div>
+        <h3 class="monitor-h3">配置操作</h3><ul class="monitor-audit">${auditRows}</ul>
+        <h3 class="monitor-h3">执行记录</h3>
+        <div class="table-wrap"><table class="jobs"><thead><tr><th>分镜</th><th>状态</th><th>开始</th><th>耗时</th><th>错误</th></tr></thead><tbody>${attemptRows}</tbody></table></div>
+      </div>
+      <div class="modal-foot"><span class="grow"></span><button class="btn" data-close="1">关闭</button></div>`);
+  }
+
+  /* ---------------- 日志页：每个小任务的运行状态与结果 ---------------- */
+
+  function renderLogs() {
+    const events = state.events || [];
+    if (!events.length) return `<div class="card"><div class="empty"><strong>还没有任务日志</strong><p>任务执行后，每个分镜的状态和结果都会记录在这里。</p></div></div>`;
+    const rows = events.map((event) => `<tr>
+      <td><div class="evt-title">${esc(event.title)}</div><div class="hint">${esc(event.id)}</div></td>
+      <td>${esc(STATUS[event.status] || event.status)}</td>
+      <td>${event.stats?.done || 0}/${event.stats?.total || 0}</td>
+      <td>${event.stats?.success || 0} 成功 · ${event.stats?.failed || 0} 失败${event.stats?.unknown ? ` · ${event.stats.unknown} 未知` : ''}</td>
+      <td><button class="btn sm" data-event-log-view="${esc(event.id)}">查看分镜日志</button></td>
+    </tr>`).join('');
+    return `<div class="table-wrap"><table class="jobs log-table"><thead><tr><th>任务</th><th>状态</th><th>进度</th><th>结果</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  }
+
+  async function openLogs(id) {
+    const event = await api('/api/events/' + encodeURIComponent(id));
+    const rows = (event.items || []).map((item) => `<tr>
+      <td>${esc(item.title || item.refId)}<div class="hint">${esc(item.refType)} · ${esc(item.refId || '')}</div></td>
+      <td>${esc(STATUS[item.status] || item.status)}</td>
+      <td class="hint">${esc(item.error || '—')}</td>
+      <td><button class="btn sm" data-event-item-log="${esc(item.id)}" ${item.refId ? '' : 'disabled'}>日志</button></td>
+    </tr>`).join('');
+    const panel = openModal(`<div class="modal-head"><h2>分镜日志 · ${esc(event.title)}</h2><button class="btn" data-close="1">关闭</button></div>
+      <div class="modal-body"><div class="table-wrap"><table class="jobs"><thead><tr><th>分镜</th><th>状态</th><th>错误</th><th></th></tr></thead><tbody>${rows}</tbody></table></div><div id="evt-item-log"></div></div>
+      <div class="modal-foot"><span class="grow"></span><button class="btn" data-close="1">关闭</button></div>`);
+    const box = panel.querySelector('#evt-item-log');
+    panel.querySelectorAll('[data-event-item-log]').forEach((button) => {
+      button.onclick = async () => {
+        try {
+          const data = await api('/api/events/' + encodeURIComponent(id) + '/items/' + encodeURIComponent(button.dataset.eventItemLog) + '/log');
+          box.innerHTML = '<h3 class="monitor-h3">' + esc(data.item?.title || data.item?.refId || '') + '</h3>' + ((data.lines || []).length
+            ? '<pre class="evt-log">' + esc(data.lines.map((line) => (line.t ? new Date(line.t).toLocaleTimeString('zh-CN', { hour12: false }) + ' ' : '') + (line.level || 'info') + ' ' + (line.text || '')).join('\n')) + '</pre>'
+            : '<div class="hint">没有日志记录。</div>');
+        } catch (err) { toast(err.message, true); }
+      };
+    });
+  }
+
+  async function openSchedule(id) {
+    const event = await api('/api/events/' + encodeURIComponent(id));
+    const local = event.schedule?.startAt ? new Date(event.schedule.startAt) : null;
+    const pad = (n) => String(n).padStart(2, '0');
+    const value = local ? `${local.getFullYear()}-${pad(local.getMonth() + 1)}-${pad(local.getDate())}T${pad(local.getHours())}:${pad(local.getMinutes())}` : '';
+    openModal(`<div class="modal-head"><h2>配置调度</h2><button class="btn" data-close="1">关闭</button></div>
+      <div class="modal-body">
+        <div class="schedule-form">
+          <label>运行时间<input class="input" id="evt-start" type="datetime-local" value="${value}" placeholder="留空 = 立即执行"></label>
+          <label>并发数量<select class="select" id="evt-concurrency">${[1, 2, 3, 4].map((n) => `<option value="${n}" ${n === (event.policy?.concurrency || 1) ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
+          <label>失败处理<select class="select" id="evt-fail"><option value="continue" ${event.policy?.onItemFail !== 'stop' ? 'selected' : ''}>继续执行其它分镜</option><option value="stop" ${event.policy?.onItemFail === 'stop' ? 'selected' : ''}>失败即停止后续</option></select></label>
+          <label>执行次序<input class="input" id="evt-order" type="number" value="${event.schedule?.order || 0}"></label>
+        </div>
+        <p class="hint">运行时间留空表示保存后立即执行；指定时间则进入「待执行」，到点自动开始。</p>
+      </div>
+      <div class="modal-foot"><span class="grow"></span><button class="btn primary" id="evt-schedule-save">保存调度</button></div>`);
+    document.querySelector('#evt-schedule-save').onclick = async () => {
+      try {
+        const start = document.querySelector('#evt-start').value;
+        await api('/api/events/' + encodeURIComponent(id) + '/schedule', {
+          method: 'POST',
+          body: {
+            order: Number(document.querySelector('#evt-order').value) || 0,
+            startAt: start ? new Date(start).toISOString() : null,
+            concurrency: Number(document.querySelector('#evt-concurrency').value) || 1,
+            onItemFail: document.querySelector('#evt-fail').value,
+          },
+        });
+        closeModal();
+        lastSignature = '';
+        await load();
+        window.render();
+        toast('调度已保存');
+      } catch (err) { toast(err.message, true); }
+    };
   }
 
   function draftFromEvent(event) {
     const kind = event.kind === 'image' ? 'image' : 'video';
     const draft = newDraft(kind);
-    const spec = event.spec || {};
-    const inputs = (event.items || []).map((item) => item.input || {});
-    const first = inputs[0] || {};
     draft.editId = event.id;
     draft.title = event.title || '';
-    draft.channel = (kind === 'video' ? (spec.workflowId || first.workflowId) : (spec.channelId || first.channelId)) || draft.channel;
-    const items = inputs.map((input, index) => ({
-      line: index + 1,
-      title: input.title || '',
-      prompt: String(input.prompt || input.userPrompt || ''),
-      images: (Array.isArray(input.images) ? input.images : Array.isArray(input.refs) ? input.refs : [])
-        .map((image) => ({ path: image.path, name: image.name || '', note: image.note || '', exists: true })),
-      audios: (Array.isArray(input.audios) ? input.audios : [])
-        .map((audio) => ({ path: audio.path, name: audio.name || '', exists: true })),
-      duration: input.duration || null,
-      ratio: input.aspectRatio || input.imageRatio || null,
-      resolution: input.resolution || '',
-      count: input.count || null,
-    }));
-    const images = items.reduce((sum, item) => sum + item.images.length, 0);
+    const inputs = (event.items || []).map((item) => item.input || {})?.filter((input) => input && (input.prompt || input.userPrompt)) || [];
+    const first = inputs[0] || {};
+    const spec = event.spec || {};
+    if (kind === 'video') {
+      const workflowId = spec.workflowId || first.workflowId || '';
+      if (workflowId) { draft.workflowId = workflowId; draft.channelId = workflowFor(workflowId)?.channelId ? 'ch:' + workflowFor(workflowId).channelId : 'autodl'; }
+    } else {
+      draft.channelId = spec.channelId || first.channelId || draft.channelId;
+    }
     draft.file = {
       format: 'draft',
-      name: '已保存草稿 · ' + String(event.id).slice(0, 8),
-      items,
+      name: '已保存草稿',
+      stats: { items: inputs.length, images: inputs.reduce((sum, input) => sum + (input.images || input.refs || []).length, 0), ok: true },
       errors: [],
-      warnings: ['这是已保存草稿的条目；重新上传文件会整体替换它们'],
-      stats: { items: items.length, images, ok: true },
+      warnings: [],
+      items: inputs.map((input) => ({
+        title: input.title || '',
+        prompt: String(input.prompt || input.userPrompt || ''),
+        images: (Array.isArray(input.images) ? input.images : Array.isArray(input.refs) ? input.refs : []).map((image) => ({ path: image.path, name: image.name || '', note: image.note || '' })),
+        duration: input.duration || null,
+        ratio: input.aspectRatio || input.imageRatio || '16:9',
+      })),
     };
     return draft;
   }
@@ -558,24 +715,29 @@ const Events = (() => {
   function start() {
     if (timer) return;
     timer = setInterval(() => {
-      if (state.route === 'tasks' && currentTaskTab() === 'events' && !document.querySelector('#modal:not([hidden])')) load();
-    }, 3000);
+      if (state.route !== 'tasks' || document.querySelector('#modal:not([hidden])')) return;
+      if (['manage', 'schedule', 'monitor', 'logs'].includes(currentTaskTab())) load();
+    }, 5000);
   }
 
   function bind(root) {
     if (currentTaskTab() === 'create') { bindCreate(root); start(); return; }
     root.querySelector('[data-events-search]')?.addEventListener('submit',async e=>{e.preventDefault();state.taskEventQuery=new FormData(e.target).get('query')||'';state.taskPages={...(state.taskPages||{}),events:1};lastSignature='';await load();});
     root.addEventListener('click', (event) => {
-      const filter=event.target.closest('[data-event-status]');if(filter){state.taskEventStatus=filter.dataset.eventStatus;state.taskPages={...(state.taskPages||{}),events:1};lastSignature='';load();return;}
-      const schedule=event.target.closest('[data-event-schedule]');if(schedule){openSchedule(schedule.dataset.eventSchedule).catch(err=>toast(err.message,true));return;}
+      const filter=event.target.closest('[data-event-status]');
+      if(filter){state.taskEventStatus=filter.dataset.eventStatus;state.taskPages={...(state.taskPages||{}),events:1};lastSignature='';load();return;}
+      const schedule=event.target.closest('[data-event-schedule]');
+      if(schedule){openSchedule(schedule.dataset.eventSchedule).catch(err=>toast(err.message,true));return;}
       const create = event.target.closest('[data-event-create]');
       if (create) { openCreatePage().catch((err) => toast(err.message, true)); return; }
       const detail = event.target.closest('[data-event-detail]');
       if (detail) { openDetail(detail.dataset.eventDetail).catch((err) => toast(err.message, true)); return; }
+      const attempts = event.target.closest('[data-event-attempts]');
+      if (attempts) { openAttempts(attempts.dataset.eventAttempts).catch((err) => toast(err.message, true)); return; }
+      const logView = event.target.closest('[data-event-log-view]');
+      if (logView) { openLogs(logView.dataset.eventLogView).catch((err) => toast(err.message, true)); return; }
       const action = event.target.closest('[data-event-action]');
       if (action) { runAction(action.dataset.eventAction, action.dataset.id).catch((err) => toast(err.message, true)); return; }
-      const range = event.target.closest('[data-event-range]');
-      if (range) { openRangeReport(range.dataset.eventRange).catch((err) => toast(err.message, true)); return; }
       const itemAction = event.target.closest('[data-event-item-action]');
       if (itemAction) { runItemAction(itemAction.dataset.eventItemAction, itemAction.dataset.item).catch((err) => toast(err.message, true)); }
     });
@@ -583,11 +745,6 @@ const Events = (() => {
     if (!state.events) load();
   }
 
-  async function openSchedule(id){
-    const event=await api('/api/events/'+encodeURIComponent(id));
-    openModal(`<div class="modal-head"><h2>调度设置</h2><button class="btn" data-close="1">关闭</button></div><div class="modal-body"><label>执行次序（小值优先）<input class="input" id="evt-order" type="number" value="${event.schedule?.order||0}"></label><label>执行时间（留空立即）<input class="input" id="evt-start" type="datetime-local"></label><label>条目并发<select class="select" id="evt-concurrency">${[1,2,3,4].map(n=>`<option ${n===event.policy?.concurrency?'selected':''}>${n}</option>`).join('')}</select></label><label>失败处理<select class="select" id="evt-fail"><option value="continue">继续其他条目</option><option value="stop" ${event.policy?.onItemFail==='stop'?'selected':''}>停止后续条目</option></select></label><p class="hint">调整只影响尚未派发的条目，已提交请求继续接收结果。</p></div><div class="modal-foot"><button class="btn primary" id="evt-schedule-save">保存</button></div>`);
-    document.querySelector('#evt-schedule-save').onclick=async()=>{try{const start=document.querySelector('#evt-start').value;await api('/api/events/'+id+'/schedule',{method:'POST',body:{order:Number(document.querySelector('#evt-order').value),startAt:start?new Date(start).toISOString():event.schedule?.startAt||null,concurrency:Number(document.querySelector('#evt-concurrency').value),onItemFail:document.querySelector('#evt-fail').value}});closeModal();lastSignature='';await load();}catch(err){toast(err.message,true);}};
-  }
   async function runAction(action, id) {
     await api('/api/events/' + encodeURIComponent(id) + '/' + action, { method: 'POST', body: {} });
     await load();
@@ -621,5 +778,5 @@ const Events = (() => {
       <div class="modal-foot"><span class="grow"></span><button class="btn" data-close="1">关闭</button></div>`);
   }
 
-  return { render, renderCreate, load, bind, openCreatePage, openDetail, openRangeReport };
+  return { render, renderCreate, renderSchedule, renderMonitor, renderLogs, load, bind, openCreatePage, openDetail, openSchedule, openAttempts, openLogs };
 })();
