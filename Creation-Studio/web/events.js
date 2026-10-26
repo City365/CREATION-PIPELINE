@@ -357,8 +357,7 @@ const Events = (() => {
         workflowId: draft.workflowId,
       };
     });
-    const fileBase = String(draft.file?.name || '').replace(/\.[^.]+$/, '').trim();
-    const title = String(draft.title || '').trim() || fileBase || String(rows[0].prompt || '').slice(0, 30);
+    const title = String(draft.title || '').trim() || '未命名任务';
     return {
       kind: draft.kind,
       title,

@@ -456,9 +456,88 @@ function saveMaterialBuffer(projectId, type, fileName, buffer) {
   return { name: path.basename(target), rel, url: urlOf(rel), type: meta.id, typeLabel: meta.label };
 }
 
+function renameTask(projectId, taskInput, newTitle) {
+  const root = rootFor(projectId);
+  const found = findTask(root, taskInput?.id, taskInput?.title);
+  if (!found) throw new Error('任务不存在');
+  const title = safeName(newTitle, '');
+  if (!title) throw new Error('任务名称不能为空');
+  const base = storyboardRoot(root);
+  let target = path.join(base, title);
+  if (target !== found.dir) {
+    let suffix = 2;
+    while (fs.existsSync(target)) target = path.join(base, `${title}-${suffix++}`);
+    fs.renameSync(found.dir, target);
+  }
+  const data = { ...(found.data || {}), title, id: found.data?.id || '' };
+  writeTaskJson(target, data);
+  return { id: data.id, title, dir: path.basename(target) };
+}
+
+function deleteTask(projectId, taskInput) {
+  const root = rootFor(projectId);
+  const found = findTask(root, taskInput?.id, taskInput?.title);
+  if (!found) throw new Error('任务不存在');
+  fs.rmSync(found.dir, { recursive: true, force: true });
+  return { ok: true, title: found.data?.title || found.name };
+}
+
+function renameShot(projectId, taskInput, shotName, newName) {
+  const root = rootFor(projectId);
+  const found = findTask(root, taskInput?.id, taskInput?.title);
+  if (!found) throw new Error('任务不存在');
+  const oldDir = shotDir(found.dir, shotName);
+  if (!fs.existsSync(oldDir)) throw new Error('分镜不存在');
+  const clean = safeName(newName, '');
+  if (!clean) throw new Error('镜头名称不能为空');
+  const target = path.join(found.dir, clean);
+  if (target !== oldDir) {
+    if (fs.existsSync(target)) throw new Error('同名镜头已存在');
+    fs.renameSync(oldDir, target);
+  }
+  const file = path.join(target, SHOT_JSON);
+  if (fs.existsSync(file)) {
+    const data = readJson(file, {}) || {};
+    data.title = clean;
+    writeJson(file, data);
+  }
+  return { name: clean, taskId: found.data?.id || '', taskTitle: found.data?.title || found.name };
+}
+
+function renameMaterial(projectId, rel, newName) {
+  const root = rootFor(projectId);
+  const abs = path.resolve(root, String(rel || ''));
+  if (!abs.startsWith(path.resolve(root)) || !fs.existsSync(abs) || !fs.statSync(abs).isFile()) throw new Error('素材文件不存在');
+  const clean = safeName(newName, '');
+  if (!clean) throw new Error('文件名不能为空');
+  const ext = path.extname(abs);
+  const nextName = path.extname(clean) ? clean : clean + ext;
+  const target = path.join(path.dirname(abs), nextName);
+  if (target !== abs) {
+    if (fs.existsSync(target)) throw new Error('同名文件已存在');
+    fs.renameSync(abs, target);
+  }
+  return { rel: relOf(root, target), name: path.basename(target), url: urlOf(relOf(root, target)) };
+}
+
+function deleteMaterial(projectId, rel) {
+  const root = rootFor(projectId);
+  const abs = path.resolve(root, String(rel || ''));
+  if (!abs.startsWith(path.resolve(root)) || !fs.existsSync(abs) || !fs.statSync(abs).isFile()) throw new Error('素材文件不存在');
+  fs.unlinkSync(abs);
+  return { ok: true };
+}
+
+function createTask(projectId, title) {
+  const root = rootFor(projectId);
+  const task = ensureTask(root, { title });
+  return { id: task.data.id, title: task.data.title, dir: task.name };
+}
+
 module.exports = {
   MATERIALS, SLOT_LABELS, SHOT_JSON, TASK_JSON,
   rootFor, layoutOf, ensureLayout, scan, listTasks, listMaterial,
-  findTask, ensureTask, createShot, updateShot, saveSlotBuffer, copyToSlot, clearSlot, importShots, deleteShot, saveMaterialBuffer,
+  findTask, ensureTask, createTask, createShot, updateShot, saveSlotBuffer, copyToSlot, clearSlot, importShots, deleteShot, saveMaterialBuffer,
+  renameTask, deleteTask, renameShot, renameMaterial, deleteMaterial,
   materialMeta, urlOf, relOf,
 };

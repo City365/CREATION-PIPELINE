@@ -2202,16 +2202,29 @@ function renderAssetSidebar(data, view) {
       </button>`).join('')}
     </div>
     <div class="library-group">
-      <div class="library-group-title">分镜</div>
-      ${tasks.length ? tasks.map((task, index) => {
+      <div class="library-group-title"><span>分镜</span><button class="lib-add" data-act="new-task" title="新建任务">＋ 任务</button></div>
+      ${tasks.length ? tasks.map((task) => {
         const key = assetTaskKey(task);
-        const isOpen = expanded[key] ?? (activeTaskKey === key);
-        return `<button class="lib-item lib-task ${activeTaskKey === key ? 'active' : ''}" data-lib-task="${esc(key)}" title="任务 ID：${esc(task.id || '未记录')}">
-          <span class="lib-item-name">${esc(task.title)}</span><em>${task.count}</em>
-        </button>
-        ${isOpen ? `<div class="lib-sub">${(task.shots || []).map((shot) => `<button class="lib-item lib-shot ${view.kind === 'shot' && view.name === shot.name && (view.taskId || '') === (task.id || '') ? 'active' : ''}" data-lib-shot="${esc(shot.name)}" data-task-id="${esc(task.id || '')}" data-task-title="${esc(task.title)}">
-          <span class="lib-item-name">${esc(shot.name)}</span><em>${shot.count}/9</em>
-        </button>`).join('') || '<div class="lib-empty">这个任务还没有镜头</div>'}</div>` : ''}`;
+        const isOpen = expanded[key] === true;
+        return `<div class="lib-task-block">
+          <div class="lib-task-row">
+            <button class="lib-caret" data-lib-toggle="${esc(key)}" title="${isOpen ? '收起' : '展开'}">${isOpen ? '▾' : '▸'}</button>
+            <button class="lib-node lib-task ${activeTaskKey === key ? 'active' : ''}" data-lib-toggle="${esc(key)}" title="任务 ID：${esc(task.id || '未记录')}">
+              <span class="lib-node-main">${esc(task.title)}</span>
+              <small class="lib-node-id">${esc(task.id ? task.id.slice(-10) : '未保存')}</small>
+            </button>
+            <em class="lib-count">${task.count}</em>
+            <button class="lib-op" data-task-rename="${esc(key)}" data-task-id="${esc(task.id || '')}" data-task-title="${esc(task.title)}" title="重命名任务">✎</button>
+            <button class="lib-op" data-task-delete="${esc(key)}" data-task-id="${esc(task.id || '')}" data-task-title="${esc(task.title)}" title="删除任务">×</button>
+          </div>
+          ${isOpen ? `<div class="lib-sub">${(task.shots || []).map((shot) => `<div class="lib-shot-row">
+            <button class="lib-node lib-shot ${view.kind === 'shot' && view.name === shot.name && (view.taskId || '') === (task.id || '') ? 'active' : ''}" data-lib-shot="${esc(shot.name)}" data-task-id="${esc(task.id || '')}" data-task-title="${esc(task.title)}">
+              <span class="lib-node-main">${esc(shot.name)}</span><small class="lib-node-id">${shot.count}/9</small>
+            </button>
+            <button class="lib-op" data-shot-rename="${esc(shot.name)}" data-task-id="${esc(task.id || '')}" data-task-title="${esc(task.title)}" title="重命名镜头">✎</button>
+            <button class="lib-op" data-shot-delete="${esc(shot.name)}" data-task-id="${esc(task.id || '')}" data-task-title="${esc(task.title)}" title="删除镜头">×</button>
+          </div>`).join('') || '<div class="lib-empty">这个任务还没有镜头</div>'}</div>` : ''}
+        </div>`;
       }).join('') : '<div class="lib-empty">保存任务后会同步到这里</div>'}
     </div>
     ${(data.other || []).length ? `<div class="library-group">
@@ -2291,6 +2304,7 @@ function renderShotView(data, view) {
   return `<div class="library-main-head">
     <div><h2>${esc(shot.name)}</h2><p class="hint">任务 / ${esc(shot.taskTitle || task.title)}${shot.taskId ? ' · ' + esc(shot.taskId) : ''} · ${shot.count}/9 张参考图</p></div>
     <div class="library-actions">
+      <button class="btn" data-act="new-shot">新建镜头</button>
       <button class="btn ghost" data-act="reveal-shot">打开文件夹</button>
     </div>
   </div>
@@ -2318,12 +2332,33 @@ function renderAssets() {
   </div>`;
 }
 
+function assetConfirm(title, text, onConfirm) {
+  openModal(`<div class="modal-head"><h2>${esc(title)}</h2><button class="btn ghost sm" data-close="1">关闭</button></div>
+    <div class="modal-body"><p>${esc(text || '')}</p></div>
+    <div class="modal-foot"><span class="grow"></span><button class="btn" data-close="1">取消</button><button class="btn danger" id="asset-confirm-ok">删除</button></div>`);
+  document.querySelector('#asset-confirm-ok').onclick = async () => {
+    try {
+      await onConfirm();
+      if (document.querySelector('#modal:not([hidden])')) closeModal();
+    } catch (err) { toast(err.message, true); }
+  };
+}
+
 function assetDetailModal(item) {
-  openModal(`<div class="modal-head"><h2>${esc(item.name)}</h2><span class="grow"></span><button class="btn ghost sm" data-close="1">关闭</button></div>
+  const panel = openModal(`<div class="modal-head"><h2>${esc(item.name)}</h2><span class="grow"></span><button class="btn ghost sm" data-close="1">关闭</button></div>
     <div class="modal-body"><div class="asset-preview">${item.kind === 'image' ? `<img src="${item.url}" alt="" />` : `<audio src="${item.url}" controls></audio>`}</div>
     <div class="kv"><span>分类</span><span>${esc(item.typeLabel || item.type || '其他')}</span></div>
     <div class="kv"><span>路径</span><span class="mono">${esc(item.rel || '')}</span></div></div>
-    <div class="modal-foot"><span class="grow"></span><button class="btn" data-close="1">关闭</button></div>`);
+    <div class="modal-foot"><button class="btn" data-asset-rename="1">重命名</button><button class="btn ghost" data-asset-delete="1">删除</button><span class="grow"></span><button class="btn" data-close="1">关闭</button></div>`);
+  panel.querySelector('[data-asset-rename]').onclick = () => askText('重命名素材', item.name, '文件名', async (name) => {
+    if (!name) return;
+    await api('/api/assets/material/rename', { method: 'POST', body: { rel: item.rel, name } });
+    await loadAssetLibrary(); render(); toast('素材已重命名');
+  });
+  panel.querySelector('[data-asset-delete]').onclick = () => assetConfirm(`删除「${item.name}」？`, '文件会从素材库删除，不能恢复。', async () => {
+    await api('/api/assets/material/delete', { method: 'POST', body: { rel: item.rel } });
+    await loadAssetLibrary(); render(); toast('素材已删除');
+  });
 }
 
 function pickSlotFile(task, shotName, slot) {
@@ -2401,13 +2436,58 @@ function bindAssets(root) {
   root.addEventListener('click', async (event) => {
     const material = event.target.closest('[data-lib-material]');
     if (material) { state.assetView = { kind: 'material', type: material.dataset.libMaterial }; return render(); }
-    const taskBtn = event.target.closest('[data-lib-task]');
-    if (taskBtn) {
-      const key = taskBtn.dataset.libTask;
-      const task = (state.assetLibrary.tasks || []).find((row) => (row.id || row.title) === key);
+    const toggle = event.target.closest('[data-lib-toggle]');
+    if (toggle) {
+      const key = toggle.dataset.libToggle;
       state.assetExpanded = { ...(state.assetExpanded || {}), [key]: !(state.assetExpanded || {})[key] };
-      if (task && task.shots && task.shots.length) state.assetView = { kind: 'shot', taskId: task.id || '', taskTitle: task.title, name: task.shots[0].name };
       return render();
+    }
+    const taskAddShot = event.target.closest('[data-task-add-shot]');
+    if (taskAddShot) {
+      return askText('新建镜头', '', '例如：镜头16', async (name) => {
+        if (!name) return;
+        await api('/api/assets/shot', { method: 'POST', body: { taskId: taskAddShot.dataset.taskId, taskTitle: taskAddShot.dataset.taskTitle, name } });
+        state.assetExpanded = { ...(state.assetExpanded || {}), [taskAddShot.dataset.taskAddShot]: true };
+        state.assetView = { kind: 'shot', taskId: taskAddShot.dataset.taskId, taskTitle: taskAddShot.dataset.taskTitle, name };
+        await loadAssetLibrary(); render(); toast('镜头已创建');
+      });
+    }
+    const taskRename = event.target.closest('[data-task-rename]');
+    if (taskRename) {
+      const task = (state.assetLibrary.tasks || []).find((row) => (row.id || row.title) === taskRename.dataset.taskRename);
+      return askText('重命名任务', task?.title || taskRename.dataset.taskTitle || '', '任务名称', async (title) => {
+        if (!title) return;
+        await api('/api/assets/task/rename', { method: 'POST', body: { taskId: taskRename.dataset.taskId, taskTitle: taskRename.dataset.taskTitle, title } });
+        await loadAssetLibrary(); render(); toast('任务已重命名');
+      });
+    }
+    const taskDelete = event.target.closest('[data-task-delete]');
+    if (taskDelete) {
+      const task = (state.assetLibrary.tasks || []).find((row) => (row.id || row.title) === taskDelete.dataset.taskDelete);
+      return assetConfirm(`删除任务「${task?.title || taskDelete.dataset.taskTitle}」？`, '任务下的镜头目录和图片副本都会删除，素材库原图不受影响。', async () => {
+        await api('/api/assets/task/delete', { method: 'POST', body: { taskId: taskDelete.dataset.taskId, taskTitle: taskDelete.dataset.taskTitle } });
+        const view = currentAssetView();
+        if (view.kind === 'shot' && (view.taskId || '') === taskDelete.dataset.taskId) state.assetView = { kind: 'material', type: 'character' };
+        await loadAssetLibrary(); render(); toast('任务已删除');
+      });
+    }
+    const shotRename = event.target.closest('[data-shot-rename]');
+    if (shotRename) {
+      return askText('重命名镜头', shotRename.dataset.shotRename, '镜头名称', async (name) => {
+        if (!name) return;
+        await api('/api/assets/shot/rename', { method: 'POST', body: { taskId: shotRename.dataset.taskId, taskTitle: shotRename.dataset.taskTitle, shot: shotRename.dataset.shotRename, name } });
+        const view = currentAssetView();
+        if (view.kind === 'shot' && view.name === shotRename.dataset.shotRename) state.assetView = { ...view, name };
+        await loadAssetLibrary(); render(); toast('镜头已重命名');
+      });
+    }
+    const shotDelete = event.target.closest('[data-shot-delete]');
+    if (shotDelete) {
+      return assetConfirm(`删除镜头「${shotDelete.dataset.shotDelete}」？`, '这个镜头目录和其中的图片副本会删除。', async () => {
+        await api('/api/assets/shot/delete', { method: 'POST', body: { taskId: shotDelete.dataset.taskId, taskTitle: shotDelete.dataset.taskTitle, name: shotDelete.dataset.shotDelete } });
+        state.assetView = { kind: 'material', type: 'character' };
+        await loadAssetLibrary(); render(); toast('镜头已删除');
+      });
     }
     const shot = event.target.closest('[data-lib-shot]');
     if (shot) {
@@ -2464,6 +2544,25 @@ function bindAssets(root) {
         };
         input.click();
         return;
+      }
+      if (action.dataset.act === 'new-task') {
+        return askText('新建任务', '', '任务名称', async (title) => {
+          if (!title) return;
+          const task = await api('/api/assets/task', { method: 'POST', body: { title } });
+          state.assetExpanded = { ...(state.assetExpanded || {}), [task.id || task.title]: true };
+          await loadAssetLibrary(); render(); toast('任务已创建');
+        });
+      }
+      if (action.dataset.act === 'new-shot') {
+        const currentTask = (state.assetLibrary.tasks || []).find((row) => (view.taskId ? row.id === view.taskId : row.title === view.taskTitle));
+        if (!currentTask) return;
+        return askText('新建镜头', '', '镜头名称', async (name) => {
+          if (!name) return;
+          await api('/api/assets/shot', { method: 'POST', body: { taskId: currentTask.id, taskTitle: currentTask.title, name } });
+          state.assetExpanded = { ...(state.assetExpanded || {}), [currentTask.id || currentTask.title]: true };
+          state.assetView = { kind: 'shot', taskId: currentTask.id || '', taskTitle: currentTask.title, name };
+          await loadAssetLibrary(); render(); toast('镜头已创建');
+        });
       }
       if (action.dataset.act === 'reveal-shot') {
         const currentTask = (state.assetLibrary.tasks || []).find((row) => (view.taskId ? row.id === view.taskId : row.title === view.taskTitle));

@@ -1328,6 +1328,36 @@ function mediaPath(input) {
     return ok(res, assetLayout.saveMaterialBuffer(projectId, body.type, body.name || 'image.png', buffer));
   }
 
+  if (method === 'POST' && pathname === '/api/assets/task') {
+    const body = await readBody(req);
+    return ok(res, assetLayout.createTask(projectId, body.title || body.name));
+  }
+
+  if (method === 'POST' && pathname === '/api/assets/task/rename') {
+    const body = await readBody(req);
+    return ok(res, assetLayout.renameTask(projectId, { id: body.taskId, title: body.taskTitle }, body.title || body.name));
+  }
+
+  if (method === 'POST' && pathname === '/api/assets/task/delete') {
+    const body = await readBody(req);
+    return ok(res, assetLayout.deleteTask(projectId, { id: body.taskId, title: body.taskTitle }));
+  }
+
+  if (method === 'POST' && pathname === '/api/assets/shot/rename') {
+    const body = await readBody(req);
+    return ok(res, assetLayout.renameShot(projectId, { id: body.taskId, title: body.taskTitle }, body.shot, body.name));
+  }
+
+  if (method === 'POST' && pathname === '/api/assets/material/rename') {
+    const body = await readBody(req);
+    return ok(res, assetLayout.renameMaterial(projectId, body.rel, body.name));
+  }
+
+  if (method === 'POST' && pathname === '/api/assets/material/delete') {
+    const body = await readBody(req);
+    return ok(res, assetLayout.deleteMaterial(projectId, body.rel));
+  }
+
   if (method === 'POST' && pathname === '/api/assets/shot') {
     const body = await readBody(req);
     return ok(res, assetLayout.createShot(projectId, { id: body.taskId, title: body.taskTitle }, body.name));
