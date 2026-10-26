@@ -61,9 +61,12 @@ test('JSON 固定结构：参考图路径、说明、时长、画幅、张数都
   assert.equal(result.stats.images, 2);
 });
 
-test('JSON 不再接受一行一条的文本，也不接受缺 items 的结构', () => {
+test('JSON 兼容 tasks 数组；一行一条的文本和缺数组的结构仍拒绝', () => {
   assert.throws(() => taskImport.parseFile({ name: 'tasks.json', data: Buffer.from('第一行提示词\n第二行提示词') }), /JSON 解析失败/);
-  assert.throws(() => taskImport.parseFile({ name: 'tasks.json', data: jsonBuffer({ tasks: [{ prompt: 'a' }] }) }), /缺少 items 数组/);
+  const legacy = taskImport.parseFile({ name: 'tasks.json', data: jsonBuffer({ tasks: [{ prompt: 'a' }] }) });
+  assert.equal(legacy.items.length, 1);
+  assert.match(legacy.warnings.join(' '), /tasks 数组/);
+  assert.throws(() => taskImport.parseFile({ name: 'tasks.json', data: jsonBuffer({ list: [] }) }), /缺少 items 数组/);
   assert.throws(() => taskImport.parseFile({ name: 'tasks.json', data: jsonBuffer({ items: [] }) }), /items 数组是空的/);
 });
 
@@ -122,9 +125,22 @@ test('Excel 自定义行：多张参考图用分号分隔，留空列使用默�
   assert.equal(second.ratio, null);
 });
 
-test('Excel 表头必须与模板一致', () => {
-  const xlsx = taskImport.buildXlsx([{ name: '任务', rows: [['标题', '描述', '', '', '', '', '', ''], ['a', 'b', '', '', '', '', '', '']] }]);
-  assert.throws(() => taskImport.parseFile({ name: 'bad.xlsx', data: xlsx }), /表头必须依次为/);
+test('Excel 按列名识别，缺提示词列才报错，多余列会保留', () => {
+  const missing = taskImport.buildXlsx([{ name: '任务', rows: [['任务标题', '说明'], ['a', 'b']] }]);
+  assert.throws(() => taskImport.parseFile({ name: 'bad.xlsx', data: missing }), /表头缺少「提示词」/);
+  const tempAudio = tempImage('voice.mp3');
+  const xlsx = taskImport.buildXlsx([{ name: '任务', rows: [
+    ['提示词', '分镜', '画面比例', '参考音频路径', '参考音频说明', '景别'],
+    ['雨夜街头', '镜头 01', '16:9', tempAudio, '女主音色', '中景'],
+  ] }]);
+  const result = taskImport.parseFile({ name: 'extra.xlsx', data: xlsx });
+  assert.deepEqual(result.errors, []);
+  assert.equal(result.items[0].title, '镜头 01');
+  assert.equal(result.items[0].ratio, '16:9');
+  assert.equal(result.items[0].audios.length, 1);
+  assert.equal(result.items[0].audios[0].note, '女主音色');
+  assert.deepEqual(result.items[0].extra, { 景别: '中景' });
+  assert.match(result.warnings.join(' '), /未识别.*景别|景别.*保留/);
 });
 
 test('Excel 空表与空行处理', () => {

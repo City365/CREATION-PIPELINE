@@ -18,25 +18,30 @@ const batch = require('./batch');
 
 const RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4'];
 const MAX_IMAGES = 9;
+const MAX_AUDIOS = 3;
 
-const HEADERS = ['任务标题', '提示词', '参考图路径', '参考图说明', '时长（秒）', '画幅', '分辨率', '生成张数'];
+const HEADERS = ['任务标题', '提示词', '参考图路径', '参考图说明', '时长（秒）', '画幅', '分辨率', '生成张数', '参考音频路径', '参考音频说明'];
 const HEADER_ALIAS = {
-  任务标题: ['任务标题', '标题'],
-  提示词: ['提示词'],
-  参考图路径: ['参考图路径', '参考图'],
-  参考图说明: ['参考图说明', '素材说明'],
-  '时长（秒）': ['时长（秒）', '时长(秒)', '时长'],
-  画幅: ['画幅', '比例'],
-  分辨率: ['分辨率'],
-  生成张数: ['生成张数', '张数'],
+  title: ['任务标题', '标题', '分镜', '分镜名'],
+  prompt: ['提示词', '描述', '内容', '任务详情'],
+  images: ['参考图路径', '参考图', '图片'],
+  notes: ['参考图说明', '图片说明', '素材说明'],
+  duration: ['时长（秒）', '时长(秒)', '时长'],
+  ratio: ['画幅', '比例', '画面比例'],
+  resolution: ['分辨率'],
+  count: ['生成张数', '张数'],
+  audios: ['参考音频路径', '音频', '参考音频'],
+  audioNotes: ['参考音频说明', '音频说明'],
 };
 
 function normHeader(value) {
   return String(value == null ? '' : value).trim().replace(/\s+/g, '').replace(/（/g, '(').replace(/）/g, ')');
 }
 
-const EXPECT_HEADERS = HEADERS.map(normHeader);
-const ALIAS_HEADERS = Object.values(HEADER_ALIAS).map((list) => list.map(normHeader));
+const HEADER_LOOKUP = new Map();
+for (const [field, aliases] of Object.entries(HEADER_ALIAS)) {
+  for (const alias of aliases) HEADER_LOOKUP.set(normHeader(alias), field);
+}
 
 /* ------------------------------- 模板 ------------------------------- */
 
@@ -89,11 +94,13 @@ const XLSX_HELP = [
   ['参考图说明', '否', '与参考图路径一一对应，说明这张图是什么（角色 / 首帧 / 场景）'],
   ['时长（秒）', '否', '1–15 的整数；留空使用渠道默认值。图像任务忽略本列'],
   ['画幅', '否', '16:9 / 9:16 / 1:1 / 4:3 / 3:4；留空使用渠道默认值'],
-  ['分辨率', '否', '官网 API 渠道的分辨率，如 768p竖；留空使用渠道默认值'],
+  ['分辨率', '否', '渠道支持的分辨率，如 768p竖；留空使用渠道默认值'],
   ['生成张数', '否', '图像任务一次生成几张，1–4；视频忽略此列'],
+  ['参考音频路径', '否', '只给接收音频的视频渠道用，多个用分号 ; 分隔，最多 3 段'],
+  ['参考音频说明', '否', '与音频路径一一对应，例如「女主音色」'],
   [],
-  ['注意', '', '表头必须与第一行完全一致，不要增删列；一行一条任务，单条任务也只用一行'],
-  ['', '', '参考图路径写错、文件不存在时，解析会在页面上标出具体行号，不会静默忽略'],
+  ['注意', '', '表头按列名识别，顺序可以调整；多出来的列会原样保留并在页面上提示'],
+  ['', '', '参考图/音频路径不存在时，解析会在页面上标出具体行号，不会静默忽略'],
 ];
 
 function xlsxTemplate() {
@@ -381,6 +388,23 @@ function normalizeImages(paths, notes, line, errors) {
   return images;
 }
 
+function normalizeAudios(paths, notes, line, errors) {
+  const audios = [];
+  const list = Array.isArray(paths) ? paths : [];
+  const noteList = Array.isArray(notes) ? notes : [];
+  list.forEach((raw, index) => {
+    const original = String(raw || '').trim();
+    if (!original) return;
+    const resolved = normalizePath(original);
+    let exists = false;
+    try { exists = !!resolved && fs.existsSync(resolved) && fs.statSync(resolved).isFile(); } catch { exists = false; }
+    if (!exists) errors.push(`第 ${line} 行 参考音频不存在：${original}`);
+    audios.push({ path: resolved, name: path.basename(resolved || original), note: String(noteList[index] || '').trim(), exists });
+  });
+  if (audios.length > MAX_AUDIOS) errors.push(`第 ${line} 行 参考音频超过 ${MAX_AUDIOS} 段`);
+  return audios;
+}
+
 function normalizeItem(raw, line, errors, warnings) {
   const title = String(raw.title == null ? '' : raw.title).trim().slice(0, 120);
   const prompt = String(raw.prompt == null ? '' : raw.prompt).trim();
@@ -403,31 +427,73 @@ function normalizeItem(raw, line, errors, warnings) {
   }
   const resolution = raw.resolution == null ? '' : String(raw.resolution).trim();
   const images = normalizeImages(raw.images || [], raw.notes || [], line, errors);
+  const audios = normalizeAudios(raw.audios || [], raw.audioNotes || [], line, errors);
+  const extra = raw.extra && typeof raw.extra === 'object' ? raw.extra : {};
   void warnings;
-  return { line, title, prompt, images, duration, ratio, resolution, count };
+  return { line, title, prompt, images, audios, duration, ratio, resolution, count, extra };
+}
+
+const JSON_FIELD_ALIAS = {
+  title: ['title', 'name', 'shot', '分镜', '标题'],
+  prompt: ['prompt', 'content', 'description', '提示词', '描述'],
+  duration: ['duration', 'seconds', '时长'],
+  ratio: ['ratio', 'aspectRatio', 'aspect', '画幅', '比例'],
+  resolution: ['resolution', '分辨率'],
+  count: ['count', '张数', '生成张数'],
+  images: ['images', 'refs', '参考图'],
+  audios: ['audios', 'audio', '参考音频'],
+};
+const JSON_KNOWN_KEYS = new Set(Object.values(JSON_FIELD_ALIAS).flat());
+
+function pickJsonField(entry, field) {
+  for (const key of JSON_FIELD_ALIAS[field]) {
+    if (entry[key] !== undefined && entry[key] !== null && String(entry[key]).trim() !== '') return entry[key];
+  }
+  return undefined;
 }
 
 function parseJson(buffer) {
   let data;
   try { data = JSON.parse(buffer.toString('utf8')); } catch (err) { throw new Error('JSON 解析失败：' + err.message); }
   if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('JSON 顶层必须是对象，并包含 items 数组');
-  const list = Array.isArray(data.items) ? data.items : null;
+  const list = Array.isArray(data.items) ? data.items : (Array.isArray(data.tasks) ? data.tasks : null);
   if (!list) throw new Error('JSON 里缺少 items 数组；不支持一行一条的写法，请按模板填写');
   if (!list.length) throw new Error('items 数组是空的');
   const errors = [];
   const warnings = [];
+  if (!Array.isArray(data.items) && Array.isArray(data.tasks)) warnings.push('文件使用 tasks 数组，已按 items 解析');
   const items = list.map((entry, index) => {
     const line = index + 1;
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
       errors.push(`第 ${line} 条 item 必须是对象`);
-      return { line, title: '', prompt: '', images: [], duration: null, ratio: null, resolution: '', count: null };
+      return { line, title: '', prompt: '', images: [], audios: [], duration: null, ratio: null, resolution: '', count: null, extra: {} };
     }
-    const rawImages = Array.isArray(entry.images) ? entry.images : [];
-    const paths = rawImages.map((image) => (typeof image === 'string' ? image : image && image.path));
-    const notes = rawImages.map((image) => (typeof image === 'string' ? '' : image && image.note));
+    const rawImages = pickJsonField(entry, 'images');
+    const imageList = Array.isArray(rawImages) ? rawImages : [];
+    const paths = imageList.map((image) => (typeof image === 'string' ? image : image && image.path));
+    const notes = imageList.map((image) => (typeof image === 'string' ? '' : (image && (image.note || image.subject)) || ''));
+    const rawAudios = pickJsonField(entry, 'audios');
+    const audioList = Array.isArray(rawAudios) ? rawAudios : [];
+    const audioPaths = audioList.map((audio) => (typeof audio === 'string' ? audio : audio && audio.path));
+    const audioNotes = audioList.map((audio) => (typeof audio === 'string' ? '' : (audio && (audio.note || audio.subject)) || ''));
+    const extra = {};
+    if (entry.extra && typeof entry.extra === 'object' && !Array.isArray(entry.extra)) Object.assign(extra, entry.extra);
+    for (const [key, value] of Object.entries(entry)) {
+      if (key === 'extra' || JSON_KNOWN_KEYS.has(key)) continue;
+      if (value === undefined || value === null || String(value).trim() === '') continue;
+      extra[key] = value;
+    }
+    if (Object.keys(extra).length) warnings.push(`第 ${line} 条有未识别字段：${Object.keys(extra).join('、')}（已原样保留）`);
     return normalizeItem({
-      title: entry.title, prompt: entry.prompt, duration: entry.duration, ratio: entry.ratio,
-      resolution: entry.resolution, count: entry.count, images: paths, notes,
+      title: pickJsonField(entry, 'title'),
+      prompt: pickJsonField(entry, 'prompt'),
+      duration: pickJsonField(entry, 'duration'),
+      ratio: pickJsonField(entry, 'ratio'),
+      resolution: pickJsonField(entry, 'resolution'),
+      count: pickJsonField(entry, 'count'),
+      images: paths, notes,
+      audios: audioPaths, audioNotes,
+      extra,
     }, line, errors, warnings);
   });
   return { format: 'json', items, errors, warnings };
@@ -442,26 +508,45 @@ function parseXlsx(buffer) {
   if (!sheet) throw new Error('.xlsx 里没有工作表');
   const rows = readSheet(sheet.toString('utf8'), shared).filter((row) => !isBlankRow(row.cells));
   if (!rows.length) throw new Error('表格是空的，第一行必须是表头');
-  const header = rows[0].cells.map(normHeader);
+  const headerCells = rows[0].cells.map((cell) => String(cell == null ? '' : cell).trim());
   const errors = [];
   const warnings = [];
-  const matches = EXPECT_HEADERS.map((expected, index) => header[index] === expected ? index : ALIAS_HEADERS[index].indexOf(header[index]));
-  if (matches.some((index) => index < 0) || header.length > HEADERS.length && header.slice(HEADERS.length).some(Boolean)) {
-    throw new Error(`表头必须依次为：${HEADERS.join(' | ')}（当前：${header.filter(Boolean).join(' | ') || '空'}）`);
+  const mapping = {};
+  const extraHeaders = [];
+  headerCells.forEach((cell, index) => {
+    if (!cell) return;
+    const field = HEADER_LOOKUP.get(normHeader(cell));
+    if (field) {
+      if (mapping[field] == null) mapping[field] = index;
+    } else {
+      extraHeaders.push({ name: cell, index });
+    }
+  });
+  if (mapping.prompt == null) {
+    throw new Error(`表头缺少「提示词」列；可用列名：${HEADERS.join(' | ')}`);
   }
+  if (extraHeaders.length) warnings.push(`未识别的列会按原值保留：${extraHeaders.map((row) => row.name).join('、')}`);
   const items = rows.slice(1).map((row) => {
     const line = row.number;
     const cells = row.cells;
-    const cell = (headerIndex) => (headerIndex >= 0 ? String(cells[headerIndex] == null ? '' : cells[headerIndex]) : '');
+    const cell = (field) => (mapping[field] != null ? String(cells[mapping[field]] == null ? '' : cells[mapping[field]]) : '');
+    const extra = {};
+    for (const header of extraHeaders) {
+      const value = String(cells[header.index] == null ? '' : cells[header.index]).trim();
+      if (value) extra[header.name] = value;
+    }
     return normalizeItem({
-      title: cell(matches[0]),
-      prompt: cell(matches[1]),
-      images: splitList(cell(matches[2])),
-      notes: splitList(cell(matches[3])),
-      duration: cell(matches[4]),
-      ratio: cell(matches[5]),
-      resolution: cell(matches[6]),
-      count: cell(matches[7]),
+      title: cell('title'),
+      prompt: cell('prompt'),
+      images: splitList(cell('images')),
+      notes: splitList(cell('notes')),
+      audios: splitList(cell('audios')),
+      audioNotes: splitList(cell('audioNotes')),
+      duration: cell('duration'),
+      ratio: cell('ratio'),
+      resolution: cell('resolution'),
+      count: cell('count'),
+      extra,
     }, line, errors, warnings);
   });
   if (!items.length) throw new Error('表里只有表头，没有任务行');
@@ -477,13 +562,14 @@ function parseFile({ name = '', data } = {}) {
   else if (lower.endsWith('.xlsx')) parsed = parseXlsx(buffer);
   else throw new Error('只支持 .json 或 .xlsx；.xls、.csv、一行一条的文本都不接受');
   const images = parsed.items.reduce((sum, item) => sum + item.images.length, 0);
+  const audios = parsed.items.reduce((sum, item) => sum + (item.audios || []).length, 0);
   return {
     name: String(name || '').slice(0, 200),
     format: parsed.format,
     items: parsed.items,
     errors: parsed.errors,
     warnings: parsed.warnings,
-    stats: { items: parsed.items.length, images, ok: parsed.errors.length === 0 },
+    stats: { items: parsed.items.length, images, audios, ok: parsed.errors.length === 0 },
   };
 }
 

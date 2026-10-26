@@ -137,7 +137,9 @@ const Events = (() => {
 
   function fileLabel(file) {
     const format = FILE_KIND_LABEL[file.format] || String(file.format || '文件');
-    return `${format} · ${file.stats.items} 个分镜 · ${file.stats.images} 张参考图`;
+    const parts = [`${file.stats.items} 个分镜`, `${file.stats.images} 张参考图`];
+    if (file.stats.audios) parts.push(`${file.stats.audios} 段音频`);
+    return `${format} · ${parts.join(' · ')}`;
   }
 
   function renderIssues(file) {
@@ -181,8 +183,9 @@ const Events = (() => {
     const file = draft.file;
     if (!file || !(file.items || []).length) return '';
     const model = draftModelLabel(draft);
+    const isImage = draft.kind === 'image';
     const ratios = (() => {
-      if (draft.kind === 'image') return CREATE_RATIOS;
+      if (isImage) return CREATE_RATIOS;
       const workflow = videoWorkflows(draft.channelId).find((w) => w.id === draft.workflowId);
       return (workflow && (workflow.ratios || []).length) ? workflow.ratios : CREATE_RATIOS;
     })();
@@ -191,19 +194,26 @@ const Events = (() => {
         <b>${order + 1}</b><span class="shot-ref-name">${esc(image.name || String(image.path || '').split(/[\\/]/).pop() || '图片')}</span>${image.note ? `<i>${esc(image.note)}</i>` : ''}
         <button type="button" class="shot-ref-x" data-ref-remove="${index}:${order}" title="移除这张参考图">×</button>
       </span>`).join('');
+      const audios = (item.audios || []).map((audio, order) => `<span class="shot-ref is-audio" title="${esc(audio.path || '')}">
+        <b>♪${order + 1}</b><span class="shot-ref-name">${esc(audio.name || '音频')}</span>${audio.note ? `<i>${esc(audio.note)}</i>` : ''}
+        <button type="button" class="shot-ref-x" data-audio-remove="${index}:${order}" title="移除这段音频">×</button>
+      </span>`).join('');
+      const extras = Object.entries(item.extra || {}).filter(([, value]) => String(value).trim() !== '');
       return `<tr>
         <td class="tnum">${index + 1}</td>
         <td><input class="input" data-field="title" data-index="${index}" value="${esc(item.title || '')}" placeholder="分镜 ${index + 1}"></td>
         <td><textarea class="textarea" data-field="prompt" data-index="${index}" rows="2" placeholder="这个分镜要生成什么">${esc(item.prompt || '')}</textarea></td>
         <td><select class="select" data-field="ratio" data-index="${index}">${ratios.map((ratio) => `<option value="${esc(ratio)}" ${ratio === (item.ratio || ratios[0]) ? 'selected' : ''}>${esc(ratio)}</option>`).join('')}</select></td>
-        <td class="shot-model">${esc(model || '—')}</td>
+        ${isImage ? `<td><input class="input" type="number" min="1" max="4" data-field="count" data-index="${index}" value="${item.count || ''}" placeholder="1"></td>` : `<td><input class="input" data-field="resolution" data-index="${index}" value="${esc(item.resolution || '')}" placeholder="渠道默认"></td>`}
         <td><input class="input" type="number" min="1" max="15" data-field="duration" data-index="${index}" value="${item.duration || ''}" placeholder="默认"></td>
-        <td class="shot-refs">${refs || '<span class="hint">无</span>'}</td>
+        ${isImage ? '' : `<td class="shot-model">${esc(model || '—')}</td>`}
+        <td class="shot-refs">${refs}${audios}${extras.length ? `<div class="shot-extra">扩展：${esc(extras.map(([key, value]) => `${key}=${value}`).join(' · '))}</div>` : ''}${(refs || audios) ? '' : '<span class="hint">无</span>'}</td>
         <td><button type="button" class="btn sm ghost" data-remove-row="${index}">删除</button></td>
       </tr>`;
     }).join('');
-    return `<div class="table-wrap create-table-wrap"><table class="jobs create-table">
-      <thead><tr><th>#</th><th>分镜</th><th>提示词</th><th>画面比例</th><th>使用模型</th><th>时长</th><th>素材（文件 · 说明 · 顺序）</th><th></th></tr></thead>
+    const tableClass = isImage ? 'is-image' : 'is-video';
+    return `<div class="table-wrap create-table-wrap"><table class="jobs create-table ${tableClass}">
+      <thead><tr><th>#</th><th>分镜</th><th>提示词</th><th>画面比例</th>${isImage ? '<th>张数</th>' : '<th>分辨率</th>'}<th>时长</th>${isImage ? '' : '<th>使用模型</th>'}<th>素材（文件 · 说明 · 顺序）</th><th></th></tr></thead>
       <tbody>${rows}</tbody></table></div>
       <div class="create-table-foot"><span class="hint">共 ${file.items.length} 个分镜 · 可直接修改</span><button type="button" class="btn sm ghost" data-tc-add-row>＋ 添加分镜</button></div>`;
   }
@@ -309,16 +319,18 @@ const Events = (() => {
       if (!prompt) throw new Error(`第 ${index + 1} 个分镜缺提示词`);
       const images = (item.images || []).filter((image) => image && image.path)
         .map((image) => ({ path: image.path, name: image.name || '', note: image.note || '' }));
+      const audios = (item.audios || []).filter((audio) => audio && audio.path)
+        .map((audio) => ({ path: audio.path, name: audio.name || '', note: audio.note || '' }));
       const title = String(item.title || '').trim() || undefined;
       const ratio = item.ratio || fallbackRatio;
       if (draft.kind === 'image') {
-        return { title, prompt, refs: images, imageRatio: ratio, aspectRatio: ratio, imageLayoutId: 'free', count: 1, channelId: draft.channelId };
+        return { title, prompt, refs: images, imageRatio: ratio, aspectRatio: ratio, imageLayoutId: 'free', count: Math.max(1, Math.min(4, Number(item.count) || 1)), channelId: draft.channelId };
       }
       return {
-        title, prompt, images,
+        title, prompt, images, audios,
         duration: Math.max(1, Math.min(15, Number(item.duration) || defaultDuration)),
         aspectRatio: ratio,
-        resolution: defaultResolution,
+        resolution: String(item.resolution || '').trim() || defaultResolution,
         workflowId: draft.workflowId,
       };
     });
@@ -384,7 +396,7 @@ const Events = (() => {
         const item = draft.file?.items?.[index];
         if (item) {
           const field = target.dataset.field;
-          item[field] = field === 'duration' ? (target.value ? Number(target.value) : null) : target.value;
+          item[field] = ['duration', 'count'].includes(field) ? (target.value ? Number(target.value) : null) : target.value;
         }
         return;
       }
@@ -428,6 +440,15 @@ const Events = (() => {
         const draft = currentDraft();
         const item = draft.file?.items?.[row];
         if (item && item.images) item.images.splice(order, 1);
+        window.render();
+        return;
+      }
+      const removeAudio = event.target.closest('[data-audio-remove]');
+      if (removeAudio) {
+        const [row, order] = String(removeAudio.dataset.audioRemove).split(':').map(Number);
+        const draft = currentDraft();
+        const item = draft.file?.items?.[row];
+        if (item && item.audios) item.audios.splice(order, 1);
         window.render();
         return;
       }
@@ -636,15 +657,24 @@ const Events = (() => {
     draft.file = {
       format: 'draft',
       name: '已保存草稿',
-      stats: { items: inputs.length, images: inputs.reduce((sum, input) => sum + (input.images || input.refs || []).length, 0), ok: true },
+      stats: {
+        items: inputs.length,
+        images: inputs.reduce((sum, input) => sum + (input.images || input.refs || []).length, 0),
+        audios: inputs.reduce((sum, input) => sum + (input.audios || []).length, 0),
+        ok: true,
+      },
       errors: [],
       warnings: [],
       items: inputs.map((input) => ({
         title: input.title || '',
         prompt: String(input.prompt || input.userPrompt || ''),
         images: (Array.isArray(input.images) ? input.images : Array.isArray(input.refs) ? input.refs : []).map((image) => ({ path: image.path, name: image.name || '', note: image.note || '' })),
+        audios: (Array.isArray(input.audios) ? input.audios : []).map((audio) => ({ path: audio.path, name: audio.name || '', note: audio.note || '' })),
         duration: input.duration || null,
         ratio: input.aspectRatio || input.imageRatio || '16:9',
+        resolution: input.resolution || '',
+        count: input.count || null,
+        extra: input.extra || {},
       })),
     };
     return draft;
