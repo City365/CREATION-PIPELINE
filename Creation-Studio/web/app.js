@@ -6052,9 +6052,9 @@ function bindLogs(root) {
 
 /* ------------------------------------------------------------------ 任务管理（合并入口） */
 
-const TASK_TABS = [['manage','任务管理'],['create','创建任务'],['schedule','任务调度'],['monitor','任务监控'],['logs','日志']];
+const TASK_TABS = [['create','创建任务'],['manage','任务管理'],['schedule','任务调度'],['monitor','任务监控'],['logs','日志']];
 function taskMedia(){return state.taskMedia||localStorage.getItem('h3.tasks.media')||'video';}
-function currentTaskTab(){const value=state.taskTab||localStorage.getItem('h3.tasks.tab')||'manage';return TASK_TABS.some(([id])=>id===value)?value:'manage';}
+function currentTaskTab(){const value=state.taskTab||localStorage.getItem('h3.tasks.tab')||'create';return TASK_TABS.some(([id])=>id===value)?value:'create';}
 function taskPagination(rows,key,meta){
   const size=10,total=meta?.total??rows.length,pages=Math.max(1,Math.ceil(total/size));
   state.taskPages=state.taskPages||{};
