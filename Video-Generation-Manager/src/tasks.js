@@ -82,6 +82,7 @@ class TaskQueue extends EventEmitter {
           const next=[...new Set([...(t.excludedAccounts||[]),a.id])];
           this.update(t,{status:'queued',accountId:'',excludedAccounts:next,message:'账号「'+a.name+'」额度不足，换其他可用账号',quotaCharged:false});return;
         }
+        if (error.code === 'CANCELED') { this.update(t, { status: 'cancelled', message: '用户已通过聊天框取消视频生成', error: null, progress: 0 }); return; }
         if (!controller.signal.aborted) this.update(t, { status: 'failed', error: String(error.message || error), message: String(error.message || error), ...(error.uploadDiagnostics ? { uploadDiagnostics: error.uploadDiagnostics } : {}) });
       }).finally(() => { this.busy.delete(a.id); this.running.delete(t.id); this.kick(); });
     }

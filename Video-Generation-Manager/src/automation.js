@@ -292,13 +292,16 @@ function createExecutor({ pool, store, downloads, ffprobe, fixture=false, getDis
             }
             if(state.complete && Date.now()-stableSince>30000) throw new Error('平台视频已生成，下载失败：没有找到可确认归属的'+(task.removeWatermark?'无水印原片':'MP4')+'地址；已停止，未返回其他历史成片');
           }
+          if(state.canceled){
+            const canceled=new Error(task.stopRequestedAt?'已通过管理器取消视频生成':'平台已确认取消视频生成');canceled.code='CANCELED';throw canceled;
+          }
           if(state.quota) {
             const current=store.get(account.id);store.update(account.id,{quotaUsed:current.quota.limit,cooldownUntil:0});
             const error=new Error('平台额度不足，已标记该账号今日额度用完；平台原文：'+state.text.slice(-500));error.code='ACCOUNT_QUOTA_EXHAUSTED';throw error;
           }
           if(state.refusal) throw new Error('平台拒绝：'+state.text.slice(-1000));
           if(state.failure) throw new Error('平台生成失败：'+state.text.slice(-1000));
-          if(!generating && !state.responding && !state.confirmationSent && confirmations===0 && !task.confirmationSentAt && state.confirmation && Date.now()-stableSince>=15000 && state.text!==lastConfirmation) {
+          if(!generating && !state.responding && !state.confirmationSent && confirmations===0 && !task.confirmationSentAt && !task.stopRequestedAt && state.confirmation && Date.now()-stableSince>=15000 && state.text!==lastConfirmation) {
             confirmations++;update({confirmationSentAt:new Date().toISOString(),message:'方案回复已结束，正在确认生成视频'});
             update({status:'submitting',message:'平台方案已输出完成，确认并开始生成视频',progress:25});
             await submitText(page,'确认，开始生成视频',selectors,signal);lastConfirmation=state.text;

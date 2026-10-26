@@ -266,7 +266,8 @@ async function createService(options={}) {
             send(res,200,{...pub,remoteState,cancelCapability:'local'});return;
           }
           if(req.method==='POST' && taskRoute[2]==='stop'){
-            send(res,501,{error:'当前平台不支持远端停止（取消能力待真机取证）',code:'CAPABILITY_UNSUPPORTED'});return;
+            // 平台确认后额度已经消耗；聊天指令虽然能取消生成，但不退还额度，产品上不提供停止。
+            send(res,501,{error:'平台确认生成后额度已消耗，取消不退还额度；管理器不提供停止功能',code:'CAPABILITY_UNSUPPORTED'});return;
           }
           if(req.method==='POST' && taskRoute[2]==='resume'){
             const input=await body(req);

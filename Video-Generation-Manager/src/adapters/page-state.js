@@ -21,7 +21,7 @@ function readPageState({ selectors = {}, baseline = [], prompt = '', anchorKey =
   const stripTaskPrefix=s=>String(s||'').replace(/^生成视频[：:]\s*/,'');
   // Video mode rewrites typed text (prefix "生成视频：" and a parameter suffix).
   // Confirmation replies therefore must be recognised after that rewrite too.
-  const isTaskReply=s=>{const t=compact(stripTaskPrefix(s));return t==='生成视频'||/^确认[，,](?:开始)?生成视频$/.test(t);};
+  const isTaskReply=s=>{const t=compact(stripTaskPrefix(s));return t==='生成视频'||/^确认[，,](?:开始)?生成视频$/.test(t)||/^取消[，,]?(?:视频生成任务|生成任务|视频生成)$/.test(t);};
   const all = [...new Set(document.querySelectorAll([config.message,config.userMessage,config.assistantMessage].filter(Boolean).join(',')))];
   const elements = all.filter(e=>!all.some(parent=>parent!==e&&parent.contains(e)&&(parent.matches(config.userMessage)||parent.matches(config.assistantMessage))));
   const messages = elements.map(e => {
@@ -73,6 +73,7 @@ function readPageState({ selectors = {}, baseline = [], prompt = '', anchorKey =
     confirmationSent:messages.some(m=>m.role==='user'&&isTaskReply(m.text)),
     generating:/预计等待.{0,12}分钟|视频生成好后|本次生成将消耗|视频生成中|正在生成视频|排队中|生成任务已提交|generating video|in queue/i.test(text),
     complete:/视频生成好了|视频生成完成|视频已生成|video is ready|video generated/i.test(text),
+    canceled:/(?:已经?|已)(?:帮你)?取消[^。\n]{0,40}(?:视频生成|生成任务)|视频生成[^。\n]{0,12}已取消|取消(?:视频)?生成成功|不会消耗额度/i.test(text),
     quota:/额度用完|今日次数.*上限|额度不足|daily limit|quota exceeded/i.test(text),
     failure:/出了点问题|视频生成失败|服务异常|生成失败|generation failed/i.test(text),
     refusal:/无法.*(?:生成|提供).*(?:侵权|违规|版权)|违反.*(?:政策|规定)|content policy/i.test(text),
