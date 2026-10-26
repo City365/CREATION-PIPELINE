@@ -1363,6 +1363,7 @@ function renderStudio() {
           ${remote}
         </div>
 
+        ${generationPrefixHtml('video')}
         <div class="h3-slots" id="slot-strip">
           <div class="h3-slots-head">
             <span class="h3-eyebrow">图像参考</span>
@@ -1469,6 +1470,7 @@ function renderStudio() {
 
 
 function bindStudio(root) {
+  bindGenerationParameters(root,'video');
   const s = state.studio;
   const wf = currentWorkflow();
 
@@ -1960,6 +1962,7 @@ async function generate() {
       ...workbenchContext,
       workflowId: wf.id,
       prompt: s.prompt,
+      prefixPrompt:generationPrefixValue('video'),
       images: s.images.filter(Boolean).map((img) => ({ path: img.path, name: img.name, subject: img.subject || '' })),
       audios: s.audios.filter(Boolean).map((audio) => ({ path: audio.path, name: audio.name })),
       duration: s.duration,
@@ -2408,6 +2411,37 @@ function imageTabsHtml(tab) {
   </div>`;
 }
 
+function generationPrefixValue(kind) {
+  const value=kind==='video'?state.studio:state.image;
+  if(typeof value.prefixPrompt==='string')return value.prefixPrompt;
+  const style=state.styleDetail;if(!style)return '';
+  let layer=kind==='video'?'video':value.styleLayer||'auto';
+  if(layer==='auto'){const text=value.prompt||'';layer=/角色|人物|身份板|立绘|形象/.test(text)?'character':/场景|环境|背景|地点/.test(text)?'scene':/道具|物品|物件|武器/.test(text)?'prop':'video';}
+  return String(style[layer]||'').trim();
+}
+function generationPrefixHtml(kind) {
+  const value=kind==='video'?state.studio:state.image;
+  return '<div class="generation-parameter-field"><div class="generation-parameter-head"><label for="'+kind+'-prefix">前置提示词</label><button type="button" class="btn sm ghost" data-prefix-reset="'+kind+'">使用项目风格</button></div>'+(kind==='image'?'<select class="zs-select" id="image-style-layer" aria-label="前置词类型">'+[['auto','按正文自动选择'],['character','人物'],['scene','场景'],['prop','道具'],['video','通用 / 视频']].map(([id,title])=>'<option value="'+id+'" '+((value.styleLayer||'auto')===id?'selected':'')+'>'+title+'</option>').join('')+'</select>':'')+'<textarea id="'+kind+'-prefix" class="generation-parameter-text" rows="4" placeholder="填写要加在正文之前的风格要求；留空则不添加">'+esc(generationPrefixValue(kind))+'</textarea><small>'+esc(typeof value.prefixPrompt==='string'?'当前画面自定义前置词':state.styleDetail?'来自项目风格：'+state.styleDetail.name:'当前项目未设置前置词，可直接填写')+'</small></div>';
+}
+function imageLayoutParametersHtml() {
+  const im=state.image,ratio=im.imageRatio||'auto',selected=GenerationParams.layout(im.imageLayoutId||'free')||GenerationParams.layout('free');
+  const choices=ratio==='auto'?[GenerationParams.layout('free')]:GenerationParams.available(ratio);
+  const text=typeof im.layoutPrompt==='string'?im.layoutPrompt:selected.description;
+  const preview=selected.shape?'<div class="image-layout-diagram '+selected.shape+'" style="aspect-ratio:'+ratio.replace(':','/')+'">'+selected.cells.map((text,n)=>'<span class="layout-cell cell-'+n+'">'+esc(text)+'</span>').join('')+'</div>':'';
+  return '<div class="generation-parameter-field"><label for="image-ratio">图片比例</label><select class="zs-select" id="image-ratio">'+['auto',...GenerationParams.ratios].map(r=>'<option value="'+r+'" '+(r===ratio?'selected':'')+'>'+(r==='auto'?'由模型决定':r)+'</option>').join('')+'</select><label for="image-layout">图片样式 / 分区布局</label><select class="zs-select" id="image-layout" '+(ratio==='auto'?'disabled':'')+'>'+choices.map(l=>'<option value="'+l.id+'" '+(l.id===selected.id?'selected':'')+'>'+esc(l.name)+'</option>').join('')+'</select>'+preview+'<label for="image-layout-prompt">分区说明（可编辑）</label><textarea id="image-layout-prompt" class="generation-parameter-text" rows="5" '+(ratio==='auto'?'disabled':'')+' placeholder="自由构图，或填写每个小块放置的内容">'+esc(text)+'</textarea><small>比例和分区要求会加入生成提示词；像素尺寸使用下方渠道分辨率。</small></div>';
+}
+function bindGenerationParameters(root,kind) {
+  const value=kind==='video'?state.studio:state.image;
+  const prefix=root.querySelector('#'+kind+'-prefix');if(prefix)prefix.oninput=()=>{value.prefixPrompt=prefix.value;WB.schedule(kind);};
+  const reset=root.querySelector('[data-prefix-reset="'+kind+'"]');if(reset)reset.onclick=()=>{delete value.prefixPrompt;render();};
+  if(kind!=='image')return;
+  const layer=root.querySelector('#image-style-layer');if(layer)layer.onchange=()=>{value.styleLayer=layer.value;delete value.prefixPrompt;render();};
+  const ratio=root.querySelector('#image-ratio');if(ratio)ratio.onchange=()=>{value.imageRatio=ratio.value;const selected=GenerationParams.layout(value.imageLayoutId||'free');if(!selected?.ratios.includes(ratio.value)){value.imageLayoutId='free';delete value.layoutPrompt;}render();};
+  const layout=root.querySelector('#image-layout');if(layout)layout.onchange=()=>{value.imageLayoutId=layout.value;delete value.layoutPrompt;render();};
+  const description=root.querySelector('#image-layout-prompt');if(description)description.oninput=()=>{value.layoutPrompt=description.value;WB.schedule('image');};
+  root.addEventListener('input',e=>{if(e.target.id==='img-prompt'&&value.prefixPrompt===undefined&&prefix)prefix.value=generationPrefixValue('image');});
+}
+
 function imagePanelHtml(tab, ch) {
   const im = state.image;
   const sources = tab === 'edit' || tab === 'reverse';
@@ -2491,7 +2525,7 @@ function imagePanelHtml(tab, ch) {
       </div>`;
   }
 
-  return tabsBar + `
+  return tabsBar + generationPrefixHtml('image') + imageLayoutParametersHtml() + `
     ${tab === 'edit' ? `<div class="zs-field">
       <div class="zs-field-head"><span class="zs-field-label">源图</span></div>
       <div class="zs-row">
@@ -2516,7 +2550,7 @@ function imagePanelHtml(tab, ch) {
       </div>
     </div>
     <div class="zs-field">
-      <div class="zs-field-head"><span class="zs-field-label">比例 / 分辨率</span></div>
+      <div class="zs-field-head"><span class="zs-field-label">渠道分辨率 / 数量</span></div>
       <div class="zs-row">
         <div class="zs-select-wrap">
           <select class="zs-select" id="img-size">${sizes.map((s2) => `<option value="${esc(s2)}" ${s2 === im.size ? 'selected' : ''}>${esc(s2)}</option>`).join('')}</select>
@@ -3008,6 +3042,7 @@ function renderImage() {
 }
 
 function bindImage(root) {
+  bindGenerationParameters(root,'image');
   const im = state.image;
   const workbenchContext = WB.context("image");
   if (im.tab === 'scene') {
@@ -3142,7 +3177,7 @@ function bindImage(root) {
         if(IJ.active(workbenchContext.itemId))return toast('当前画面已有未结束的图像任务，请查看任务日志',true);
         if((im.tab||'generate')==='edit'&&!im.source)return toast('先选源图',true);
         await WB.flush('image');
-        const body={...workbenchContext,background:true,requestId:crypto.randomUUID(),channelId:ch.id,prompt:im.prompt,size:im.size,count:im.count,styleId:state.project?.styleId,refs:(im.tab||'generate')==='edit'&&im.source?[{path:im.source.path,name:im.source.name}]:(im.refs||[])};
+        const body={...workbenchContext,background:true,requestId:crypto.randomUUID(),channelId:ch.id,prompt:im.prompt,prefixPrompt:generationPrefixValue('image'),styleLayer:im.styleLayer||'auto',imageRatio:im.imageRatio||'auto',imageLayoutId:im.imageLayoutId||'free',layoutPrompt:im.layoutPrompt,size:im.size,count:im.count,styleId:state.project?.styleId,refs:(im.tab||'generate')==='edit'&&im.source?[{path:im.source.path,name:im.source.name}]:(im.refs||[])};
         im.busy=true;render();
         try{
           await api('/api/images/generate',{method:'POST',body});

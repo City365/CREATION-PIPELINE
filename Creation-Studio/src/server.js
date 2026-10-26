@@ -36,6 +36,7 @@ const AGENT_PROJECT = process.env.H3_AGENT_PROJECT || 'h3-studio';
 const STATIC = {
   '/': ['index.html', 'text/html; charset=utf-8'],
   '/index.html': ['index.html', 'text/html; charset=utf-8'],
+  '/generation-params.js': ['generation-params.js', 'text/javascript; charset=utf-8'],
   '/image-tasks.js': ['image-tasks.js', 'text/javascript; charset=utf-8'],
   '/workbench-manager.js': ['workbench-manager.js', 'text/javascript; charset=utf-8'],
   '/workbench.css': ['workbench.css', 'text/css; charset=utf-8'],
@@ -1125,8 +1126,8 @@ function mediaPath(input) {
     const body = await readBody(req);
     body.userPrompt = String(body.prompt||'');
     if (body.itemId) workbenchStore.store().get(body.itemId,body.projectId,'video');
-    if (body.styleId && body.applyStyle !== false) {
-      const stylePrefix = styles.promptFor(body.styleId, { layer: body.styleLayer || 'video', text: body.prompt });
+    if (body.applyStyle !== false && (typeof body.prefixPrompt==='string' || body.styleId)) {
+      const stylePrefix = typeof body.prefixPrompt==='string'?body.prefixPrompt.trim():styles.promptFor(body.styleId, { layer: body.styleLayer || 'video', text: body.prompt });
       if (stylePrefix) body.prompt = stylePrefix + '\n\n' + String(body.prompt || '');
     }
     const wf = workflows.get(body.workflowId);

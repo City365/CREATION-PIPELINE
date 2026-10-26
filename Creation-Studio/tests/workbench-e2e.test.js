@@ -13,7 +13,7 @@ test('正式 API：生成、另存、移动、历史提示词、隔离、重启�
  const ch=(await call('/api/channels','POST',{kind:'image',type:'openai-images',name:'mock',baseUrl:mock.url+'/v1',apiKey:'test',model:'mock-model'})).data;
  const item=(await call('/api/workbench/items','POST',{projectId:'p',kind:'image',draft:{prompt:'original'}})).data;
  const prompt='原始中文提示词\n<Picture 1> '+ '完整记录'.repeat(150);
- const result=await call('/api/images/generate','POST',{projectId:'p',itemId:item.id,channelId:ch.id,prompt,size:'auto',count:1});assert.equal(result.ok,true,JSON.stringify(result));
+ const result=await call('/api/images/generate','POST',{projectId:'p',itemId:item.id,channelId:ch.id,prompt,prefixPrompt:'图像前置风格',imageRatio:'16:9',imageLayoutId:'wide-character',size:'auto',count:1});assert.equal(result.ok,true,JSON.stringify(result));
  const src=result.data.items[0].path;
  await call('/api/workbench/items/'+item.id,'PATCH',{projectId:'p',kind:'image',revision:(await call('/api/workbench/items/'+item.id+'?projectId=p&kind=image')).data.revision,draft:{prompt:'后来修改'}});
  const copied=(await call('/api/assets/from-file','POST',{path:src})).data;
@@ -29,14 +29,14 @@ test('正式 API：生成、另存、移动、历史提示词、隔离、重启�
  const unknown=path.join(dir,'assets','unknown.png');fs.writeFileSync(unknown,Buffer.from('unique unknown image'));assert.equal((await call('/api/media/details?path='+encodeURIComponent(unknown))).data.missing,true);
  const videoItem=(await call('/api/workbench/items','POST',{projectId:'p',kind:'video'})).data;
  const videoChannel=(await call('/api/channels','POST',{kind:'video',type:'openai-video',name:'mock-video',baseUrl:mock.url+'/v1',apiKey:'test',model:'mock-video-model',options:{seconds:8,size:'1280x720'}})).data;
- const created=await call('/api/jobs','POST',{projectId:'p',itemId:videoItem.id,workflowId:'ch:'+videoChannel.id,prompt,images:[{path:src,name:'ref.png'}],duration:8,aspectRatio:'16:9 (Widescreen)',count:1});assert.equal(created.ok,true,JSON.stringify(created));
+ const created=await call('/api/jobs','POST',{projectId:'p',itemId:videoItem.id,workflowId:'ch:'+videoChannel.id,prompt,prefixPrompt:'视频前置参数',images:[{path:src,name:'ref.png'}],duration:8,aspectRatio:'16:9 (Widescreen)',count:1});assert.equal(created.ok,true,JSON.stringify(created));
  const jobId=created.data.jobs[0].id;
  const waitJob=async()=>{for(let n=0;n<100;n++){const j=(await call('/api/jobs')).data.jobs.find(j=>j.id===jobId);if(['success','failed'].includes(j.status)){assert.equal(j.status,'success',j.error);return j;}await new Promise(r=>setTimeout(r,150));}throw Error('video timeout');};
- const first=await waitJob(),firstPath=first.outputs[0].path;
+ const first=await waitJob(),firstPath=first.outputs[0].path;assert.ok(first.prompt.startsWith('视频前置参数\n\n'));assert.equal(first.prompt.split('视频前置参数').length-1,1);
  assert.equal((await call('/api/workbench/items/'+videoItem.id+'/runs?projectId=p&kind=video')).data[0].status,'success');
  await call('/api/jobs/'+jobId+'/retry','POST',{});const retried=await waitJob();assert.notEqual(retried.outputs[0].path,firstPath);assert.equal(fs.existsSync(firstPath),true);assert.equal((await call('/api/workbench/items/'+videoItem.id+'/runs?projectId=p&kind=video')).data.length,2);
  assert.equal((await call('/api/media/details?path='+encodeURIComponent(firstPath))).data.snapshot.userPrompt,prompt);
  await stop();await start();assert.equal((await call('/api/media/details?path='+encodeURIComponent(assetPath))).data.snapshot.userPrompt,prompt);assert.equal((await call('/api/workbench/items/'+item.id+'?projectId=p&kind=image')).data.draft.prompt,'后来修改');
- const runs=(await call('/api/workbench/items/'+item.id+'/runs?projectId=p&kind=image')).data;assert.equal(runs.length,1);assert.equal(runs[0].snapshot.prompt,prompt);
+ const runs=(await call('/api/workbench/items/'+item.id+'/runs?projectId=p&kind=image')).data;assert.equal(runs.length,1);assert.ok(runs[0].snapshot.prompt.endsWith(prompt));assert.equal(runs[0].snapshot.prefixPrompt,'图像前置风格');assert.equal(runs[0].snapshot.imageRatio,'16:9');assert.equal(mock.state.imageRequests[0].body.prompt.split('图像前置风格').length-1,1);
  const list=(await call('/api/media?kind=image')).data.items;assert.equal(list.filter(i=>i.path===src).length,1);
 });

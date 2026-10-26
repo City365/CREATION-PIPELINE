@@ -89,7 +89,7 @@ function createStore(file) {
   // Explicit allow-list prevents credentials or provider response blobs entering snapshots.
   function snapshot(input) {
     const out={};
-    for(const key of ['prompt','userPrompt','submittedPrompt','channelId','channelName','model','provider','workflowId','styleId','size','quality','count','duration','resolution','aspectRatio','seed','megapixels','megapixels2','tab','source','referenceBindings']) if(input[key]!==undefined)out[key]=input[key];
+    for(const key of ['prompt','userPrompt','submittedPrompt','prefixPrompt','styleLayer','imageRatio','imageLayoutId','layoutPrompt','channelId','channelName','model','provider','workflowId','styleId','size','quality','count','duration','resolution','aspectRatio','seed','megapixels','megapixels2','tab','source','referenceBindings']) if(input[key]!==undefined)out[key]=input[key];
     for(const key of ['images','refs','audios']) if(Array.isArray(input[key])) out[key]=input[key].filter(Boolean).map((v,i)=>({path:v.path,name:v.name,subject:v.subject||'',ordinal:i+1}));
     return out;
   }

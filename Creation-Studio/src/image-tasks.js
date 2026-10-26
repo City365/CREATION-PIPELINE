@@ -4,6 +4,7 @@ const {store}=require('./workbench-store');
 const channels=require('./channels');
 const imagegen=require('./imagegen');
 const styles=require('./styles');
+const generationParams=require('../web/generation-params');
 const fs=require('node:fs');
 const path=require('node:path');
 const config=require('./config');
@@ -36,11 +37,11 @@ function createImageTasks(options={}) {
     if(input.requestId){const existing=db().prepare('SELECT id FROM image_tasks WHERE request_key=?').get(String(input.requestId));if(existing)return get(existing.id);}
     const channel=resolveChannel(input.channelId);if(!channel)throw Error('没有启用的图像渠道，请先在设置里新增');
     if(!String(input.prompt||'').trim())throw Error('提示词不能为空');
-    const prefix=input.styleId&&input.applyStyle!==false?styles.promptFor(input.styleId,{layer:input.styleLayer||'auto',text:input.prompt}):'';
-    const prompt=finalOverride||(prefix?prefix+'\n\n'+input.prompt:input.prompt);
-    const snapshot={...input,channelId:channel.id,channelName:channel.name,model:channel.model,prompt,userPrompt:String(input.prompt),kind:'image',status:input.paused?'paused':'queued'};
+    const prefix=finalOverride?input.prefixPrompt||'':input.applyStyle===false?'':typeof input.prefixPrompt==='string'?input.prefixPrompt.trim():input.styleId?styles.promptFor(input.styleId,{layer:input.styleLayer||'auto',text:input.prompt}):'';
+    const prompt=finalOverride||generationParams.compose(input,prefix);
+    const snapshot={...input,prefixPrompt:prefix,channelId:channel.id,channelName:channel.name,model:channel.model,prompt,userPrompt:String(input.prompt),kind:'image',status:input.paused?'paused':'queued'};
     const id=data.begin(snapshot);
-    const request={...data.snapshot(input),prompt:String(input.prompt),channelId:channel.id,finalPrompt:prompt,projectId:input.projectId,itemId:input.itemId};
+    const request={...data.snapshot(input),prefixPrompt:prefix,prompt:String(input.prompt),channelId:channel.id,finalPrompt:prompt,projectId:input.projectId,itemId:input.itemId};
     db().prepare('INSERT INTO image_tasks(id,request_json,phase,held,request_key) VALUES(?,?,?,?,?)').run(id,JSON.stringify(request),input.paused?'已暂停，尚未发送':'排队中',input.paused?1:0,input.requestId?String(input.requestId):null);
     log(id,'info','已保存图像任务、完整提示词和参考素材快照');emit(id);setImmediate(pump);return get(id);
   }

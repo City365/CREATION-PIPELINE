@@ -153,7 +153,7 @@ async function openaiImages(channel, { prompt, count, size, quality, refs }) {
   return toBuffers(collectImages(payload));
 }
 
-async function geminiImage(channel, { prompt, count, refs, size }) {
+async function geminiImage(channel, { prompt, count, refs, size, imageRatio }) {
   const images = readRefs(refs);
   const parts = [{ text: prompt }];
   for (const img of images) parts.push({ inline_data: { mime_type: img.mime, data: img.buffer.toString('base64') } });
@@ -166,6 +166,7 @@ async function geminiImage(channel, { prompt, count, refs, size }) {
       generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
     };
     if (size && ['512px', '1K', '2K', '4K'].includes(size)) body.generationConfig.imageConfig = { imageSize: size };
+    if (['16:9','9:16','4:3','3:4'].includes(imageRatio)) body.generationConfig.imageConfig = {...(body.generationConfig.imageConfig||{}),aspectRatio:imageRatio};
     const res = await httpJson(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'x-goog-api-key': String(channel.apiKey || '').replace(/^\s*Bearer\s+/i, '').trim() },
@@ -222,6 +223,7 @@ async function generate(channel, input) {
     size: input.size || channel.options.size || 'auto',
     quality: input.quality || channel.options.quality || 'auto',
     refs: input.refs || [],
+    imageRatio: input.imageRatio,
   };
   let buffers;
   if (channel.type === 'gemini-image') buffers = await geminiImage(channel, args);

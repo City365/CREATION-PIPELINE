@@ -25,7 +25,7 @@ function details(file) {
   const dir=path.dirname(file),params=read(path.join(dir,'params.json'),null);
   if(params) {
     let prompt=params.prompt||'';try{prompt=fs.readFileSync(path.join(dir,'prompt.txt'),'utf8').trimEnd()||prompt;}catch{}
-    const id=db.begin({...params,recordId:'legacy-folder:'+dir,kind:'video',prompt,userPrompt:prompt,images:(params.refImages||[]).map(p=>({path:p,name:path.basename(p)})),status:'success'});
+    const id=db.begin({...params,recordId:'legacy-folder:'+dir,kind:'video',prompt,userPrompt:params.userPrompt??prompt,prefixPrompt:params.prefixPrompt,images:(params.refImages||[]).map(p=>({path:p,name:path.basename(p)})),status:'success'});
     db.finish(id,'success',[{path:file,kind:/\.(mp4|webm|mov|mkv)$/i.test(file)?'video':'image'}]);
     record=db.detail(file);
   }
