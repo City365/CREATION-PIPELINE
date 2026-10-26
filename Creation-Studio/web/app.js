@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 
 /* ------------------------------------------------------------------ utils */
 
@@ -2244,20 +2244,42 @@ function renderSlotCard(shot, slot) {
   </div>`;
 }
 
+function renderShotFacts(shot) {
+  const json = shot.json || {};
+  const images = Array.isArray(json.images) ? json.images : [];
+  const audios = Array.isArray(json.audios) ? json.audios : [];
+  const extras = Object.entries(json.extra || {}).filter(([, value]) => String(value).trim() !== '');
+  const notes = images.filter((image) => image.note).map((image) => `${image.slot || '图'} ${image.note}`);
+  const facts = [
+    ['分镜名称', shot.name],
+    ['参考图', `${shot.count} / 9`],
+    ['时长', json.duration ? `${json.duration} 秒` : '渠道默认'],
+    ['画面比例', json.ratio || '渠道默认'],
+    ['分辨率', json.resolution || '渠道默认'],
+    ['生成张数', json.count ? String(json.count) : '—'],
+    ['参考音频', audios.length ? `${audios.length} 段` : '无'],
+    ['来源文件', json.source || '手工创建'],
+    ['导入时间', json.importedAt ? new Date(json.importedAt).toLocaleString('zh-CN', { hour12: false }) : '—'],
+  ];
+  if (notes.length) facts.push(['素材说明', notes.join('；'), true]);
+  if (extras.length) facts.push(['扩展字段', extras.map(([key, value]) => `${key}：${value}`).join('；'), true]);
+  return `<section class="shot-facts">
+    <div class="shot-facts-head"><b>分镜资料</b><span class="hint">由 shot.json 解析</span></div>
+    <dl class="shot-facts-grid">${facts.map(([label, value, wide]) => `<div class="${wide ? 'wide' : ''}"><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`).join('')}</dl>
+  </section>`;
+}
+
 function renderShotView(data, view) {
   const shot = (data.shots || []).find((row) => row.name === view.name);
   if (!shot) return assetLibraryEmpty('分镜不存在', '它可能已经被删除。');
-  const json = shot.json ? JSON.stringify(shot.json, null, 2) : '';
   return `<div class="library-main-head">
-    <div><h2>${esc(shot.name)}</h2><p class="hint">分镜 / ${esc(shot.name)} · ${shot.count}/9 张参考图 · shot.json${shot.jsonRel ? '' : '（还没生成）'}</p></div>
+    <div><h2>${esc(shot.name)}</h2><p class="hint">分镜 / ${esc(shot.name)} · ${shot.count}/9 张参考图</p></div>
     <div class="library-actions">
-      <button class="btn" data-act="save-shot-prompt">保存提示词</button>
       <button class="btn ghost" data-act="reveal-shot">打开文件夹</button>
     </div>
   </div>
-  <label class="shot-prompt"><span>提示词</span><textarea class="textarea" id="shot-prompt" rows="4" placeholder="这个分镜的提示词">${esc(shot.prompt || '')}</textarea></label>
   <div class="slot-grid">${shot.slots.map((slot) => renderSlotCard(shot, slot)).join('')}</div>
-  <details class="shot-json"><summary>查看解析出的 JSON（shot.json）</summary><pre>${esc(json || '还没有 JSON 文件')}</pre></details>`;
+  ${renderShotFacts(shot)}`;
 }
 
 function renderAssets() {
@@ -2419,13 +2441,6 @@ function bindAssets(root) {
           render();
           toast('分镜已创建');
         });
-      }
-      if (action.dataset.act === 'save-shot-prompt') {
-        const view = currentAssetView();
-        const prompt = ($('#shot-prompt') || {}).value || '';
-        await api('/api/assets/shot/json', { method: 'POST', body: { shot: view.name, prompt } });
-        await loadAssetLibrary(); render(); toast('提示词已保存');
-        return;
       }
       if (action.dataset.act === 'reveal-shot') {
         const view = currentAssetView();
