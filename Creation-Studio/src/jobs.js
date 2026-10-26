@@ -153,8 +153,20 @@ function slots() {
   for (const key of cfg.autodlKeys.filter((k) => k.enabled)) out.push({ key: 'key:' + key.id, provider: 'autodl', id: key.id, name: key.name });
   for (const ch of (cfg.channels.video || []).filter((c) => c.enabled !== false)) {
     if (ch.type === 'manager-video') {
-      out.push({ key: 'ch:' + ch.id + ':doubao', provider: 'manager', id: ch.id, platform: 'doubao', name: ch.name + ' · 豆包' });
-      out.push({ key: 'ch:' + ch.id + ':gemini', provider: 'manager', id: ch.id, platform: 'gemini', name: ch.name + ' · Gemini' });
+      // 管理器自己按账号排队：并发几个任务就开几个账号窗口，这里给每个平台留出同样多的槽位。
+      const perPlatform = Math.max(1, Math.min(8, Number(cfg.concurrency) || 3));
+      for (const platform of ['doubao', 'gemini']) {
+        const label = platform === 'doubao' ? '豆包' : 'Gemini';
+        for (let index = 1; index <= perPlatform; index += 1) {
+          out.push({
+            key: `ch:${ch.id}:${platform}:${index}`,
+            provider: 'manager',
+            id: ch.id,
+            platform,
+            name: ch.name + ' · ' + label + (perPlatform > 1 ? ` #${index}` : ''),
+          });
+        }
+      }
     } else {
       out.push({ key: 'ch:' + ch.id, provider: 'generic', id: ch.id, name: ch.name });
     }

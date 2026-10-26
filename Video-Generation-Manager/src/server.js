@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -114,12 +114,17 @@ async function createService(options={}) {
   const doubaoExecutor=createExecutor({pool,store,downloads:currentDownloads,ffprobe,fixture:Boolean(options.testBaseURL),getDispatcher});
   const geminiExecutor=createGeminiExecutor({pool,store,downloads:currentDownloads,ffprobe,getDispatcher});
   const mappings=require('./prompt-mappings').createMappings(directory);
-  const execute=options.execute || ((task,account,signal,update)=>{
+  const defaultExecute=(task,account,signal,update)=>{
     const conversion=task.resume && task.promptMapping ? {text:task.convertedPrompt,config:task.promptMapping,warnings:task.conversionWarnings||[]} : mappings.convert(task.prompt,task.platform);
     const prepared={...task,prompt:conversion.text};
     const patch={convertedPrompt:conversion.text,promptMapping:conversion.config,conversionWarnings:conversion.warnings};
     Object.assign(prepared,patch);update(patch);
     return (task.platform==='gemini'?geminiExecutor:doubaoExecutor)(prepared,account,signal,p=>{Object.assign(prepared,p);update(p);});
+  };
+  // 每个任务用独立账号窗口跑；跑完立刻关掉窗口，队列里的下一个再开新窗口。
+  const execute=options.execute || (async (task,account,signal,update)=>{
+    try { return await defaultExecute(task,account,signal,update); }
+    finally { try { await pool.closeAccount(account.id); } catch { /* 窗口可能已被用户手动关闭 */ } }
   });
   const concurrency=Math.max(1,Math.min(10,Number(process.env.DBM_CONCURRENCY)||3));
   const queue=new TaskQueue({directory,store,execute,concurrency});
