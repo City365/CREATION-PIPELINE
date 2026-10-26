@@ -779,7 +779,7 @@ const Events = (() => {
       warnings: [],
       items: inputs.map((input) => ({
         title: input.title || '',
-        prompt: String(input.prompt || input.userPrompt || ''),
+        prompt: String(input.userPrompt || input.prompt || ''),
         images: (Array.isArray(input.images) ? input.images : Array.isArray(input.refs) ? input.refs : []).map((image) => ({ path: image.path, name: image.name || '', note: image.note || '' })),
         duration: input.duration || null,
         ratio: input.aspectRatio || input.imageRatio || '16:9',
@@ -808,6 +808,7 @@ const Events = (() => {
   async function openDetail(id) {
     const event = await api('/api/events/' + encodeURIComponent(id) + '?paged=1&page=' + ((state.taskPages || {}).detail || 1));
     modalEventId = id;
+    const detailItems = new Map((event.items || []).map((item) => [item.id, item]));
     const s = event.stats || {};
     const detailPage = taskPagination(event.items || [], 'detail', event.itemPaging);
     const offset = ((detailPage.page || 1) - 1) * 10;
@@ -830,6 +831,7 @@ const Events = (() => {
         actions.push(`<button class="btn sm" data-event-item-action="resume-original" data-item="${esc(item.id)}">继续查询</button>`);
       }
       if (['failed', 'canceled', 'skipped'].includes(item.status)) {
+        actions.push(`<button class="btn sm ghost" data-event-item-revise="${esc(item.id)}">改提示词</button>`);
         actions.push(`<button class="btn sm" data-event-item-action="retry" data-item="${esc(item.id)}">重试</button>`);
       }
       if (['queued', 'paused'].includes(item.status) && item.refId) {
@@ -894,6 +896,12 @@ const Events = (() => {
     }).catch(() => {});
 
     panel.addEventListener('click', async (e) => {
+      const revise = e.target.closest('[data-event-item-revise]');
+      if (revise) {
+        const item = detailItems.get(revise.dataset.eventItemRevise);
+        if (item) openReviseModal(id, item);
+        return;
+      }
       const page = e.target.closest('[data-task-page]');
       if (page) {
         state.taskPages = { ...(state.taskPages || {}), [page.dataset.pageKey]: Number(page.dataset.taskPage) };
@@ -949,6 +957,53 @@ const Events = (() => {
             : '<div class="hint">没有日志记录。</div>');
       };
     });
+  }
+
+  function openReviseModal(eventId, item) {
+    const input = item.input || {};
+    const prefix = String(input.prefixPrompt || '');
+    let body = input.userPrompt == null ? '' : String(input.userPrompt);
+    if (!body) {
+      body = String(input.prompt || '');
+      if (prefix && body.startsWith(prefix)) body = body.slice(prefix.length).replace(/^\s*\n+/, '');
+    }
+    const panel = openModal(`<div class="modal-head">
+        <div><h2>改提示词 · ${esc(item.title || item.refId || '分镜')}</h2><div class="hint">只影响这一条，不会改动其它分镜</div></div>
+        <button class="btn ghost sm" id="revise-back">返回详情</button>
+      </div>
+      <div class="modal-body revise-form">
+        <p class="hint">这里改的是真正发给豆包的提示词。保存后不会自动提交；点「保存并重试」才会按新内容重新生成这一条。</p>
+        <label>视频前置提示词<em>会拼在视频提示词前面；只影响这一条</em><textarea class="textarea" id="revise-prefix" rows="3" placeholder="留空表示不加前置">${esc(prefix)}</textarea></label>
+        <label>视频提示词<em>删掉触发违禁的字句即可，不用重传整个文件</em><textarea class="textarea" id="revise-prompt" rows="14" placeholder="这一条要生成什么">${esc(body)}</textarea></label>
+      </div>
+      <div class="modal-foot"><span class="grow"></span><button class="btn ghost" id="revise-cancel">取消</button><button class="btn" id="revise-save">仅保存</button><button class="btn primary" id="revise-retry">保存并重试</button></div>`);
+    panel.classList.add('modal-wide');
+    const back = () => openDetail(eventId).catch((err) => toast(err.message, true));
+    panel.querySelector('#revise-back').onclick = back;
+    panel.querySelector('#revise-cancel').onclick = back;
+    const submit = async (retry) => {
+      const prompt = String(panel.querySelector('#revise-prompt').value || '');
+      const prefixPrompt = String(panel.querySelector('#revise-prefix').value || '');
+      if (!prompt.trim()) { toast('视频提示词不能为空', true); return; }
+      const buttons = panel.querySelectorAll('#revise-save,#revise-retry');
+      buttons.forEach((button) => { button.disabled = true; });
+      try {
+        await api('/api/events/' + encodeURIComponent(eventId) + '/items/' + encodeURIComponent(item.id) + '/revise', {
+          method: 'POST',
+          body: { prompt, prefixPrompt },
+        });
+        if (retry) {
+          await api('/api/events/' + encodeURIComponent(eventId) + '/items/' + encodeURIComponent(item.id) + '/retry', { method: 'POST', body: {} });
+        }
+        await openDetail(eventId);
+        toast(retry ? '已保存并重新排队' : '提示词已保存；点「重试」按新内容重新提交');
+      } catch (err) {
+        buttons.forEach((button) => { button.disabled = false; });
+        toast(err.message, true);
+      }
+    };
+    panel.querySelector('#revise-save').onclick = () => submit(false);
+    panel.querySelector('#revise-retry').onclick = () => submit(true);
   }
 
   function start() {

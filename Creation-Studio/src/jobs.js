@@ -406,6 +406,24 @@ function retry(id) {
   return job;
 }
 
+/**
+ * 修改一条已结束任务的提示词，供「失败后改词重试」使用。
+ * 只改本地提交快照；真正重新提交仍由 retry() 负责，避免误触发生成。
+ */
+function revisePrompt(id, patch = {}) {
+  const job = get(id);
+  if (!job) throw new Error('任务记录不存在');
+  if (job.status === 'queued' || job.status === 'running') throw new Error('任务正在执行，不能修改提示词');
+  const before = String(job.prompt || '').length;
+  if (patch.prompt != null) job.prompt = String(patch.prompt);
+  if (patch.userPrompt != null) job.userPrompt = String(patch.userPrompt);
+  if (patch.prefixPrompt != null) job.prefixPrompt = String(patch.prefixPrompt);
+  job.excerpt = deriveExcerpt(job.prompt);
+  log(job, 'info', `提示词已修改（${before} → ${String(job.prompt || '').length} 字），等待重试`);
+  touch(job);
+  return publicJob(job);
+}
+
 function remove(id) {
   const idx = state.jobs.findIndex((j) => j.id === id);
   if (idx < 0) throw new Error('任务不存在');
@@ -761,6 +779,7 @@ module.exports = {
   addJobs,
   cancel,
   retry,
+  revisePrompt,
   resume,
   remove,
   setHeld,

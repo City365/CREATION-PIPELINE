@@ -1284,6 +1284,30 @@ function mediaPath(input) {
     return ok(res, events.skipItem(eventItemAction[1], eventItemAction[2]));
   }
 
+  const eventItemRevise = /^\/api\/events\/([^/]+)\/items\/([^/]+)\/revise$/.exec(pathname);
+  if (method === 'POST' && eventItemRevise) {
+    const body = await readBody(req);
+    const eventId = eventItemRevise[1];
+    const itemId = eventItemRevise[2];
+    const updated = events.reviseItem(eventId, itemId, body);
+    const item = (updated.items || []).find((row) => row.id === itemId);
+    // 素材库只是展示副本；有对应分镜时同步提示词，避免两处内容不一致。
+    try {
+      const pid = updated.spec?.projectId || projectId;
+      if (pid && item?.title && item.input) {
+        const library = assetLayout.scan(pid);
+        const task = (library.tasks || []).find((row) => row.id === eventId);
+        const shot = task && (task.shots || []).find((row) => row.name === item.title);
+        if (shot) {
+          assetLayout.updateShot(pid, { id: eventId, title: updated.title }, shot.name, {
+            json: { prompt: String(item.input.userPrompt || ''), prefixPrompt: String(item.input.prefixPrompt || '') },
+          });
+        }
+      }
+    } catch { /* 素材库同步失败不影响提示词已经保存 */ }
+    return ok(res, { event: updated, item });
+  }
+
   const eventItemLog = /^\/api\/events\/([^/]+)\/items\/([^/]+)\/log$/.exec(pathname);
   if (method === 'GET' && eventItemLog) return ok(res, events.itemLog(eventItemLog[1], eventItemLog[2]));
 

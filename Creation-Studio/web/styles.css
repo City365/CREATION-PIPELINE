@@ -2321,3 +2321,9 @@ body.is-pane-resizing * { user-select: none !important; }
 }
 #evt-attempts:empty,#evt-item-log:empty{display:none}
 .evt-detail-actions .btn{min-height:30px}
+/* 失败分镜改提示词：只改一条，保存后再决定是否重试 */
+.revise-form{display:grid;gap:12px}
+.revise-form label{display:grid;gap:6px;font-size:12px;font-weight:600;color:var(--h3-text-1)}
+.revise-form label em{font-style:normal;font-size:11px;font-weight:400;color:var(--h3-text-3)}
+.revise-form .textarea{width:100%;resize:vertical;line-height:1.6;font-size:12px}
+.revise-form #revise-prompt{min-height:320px}

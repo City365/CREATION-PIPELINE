@@ -8,6 +8,7 @@ const path = require('node:path');
 // 事件存储写到临时目录，避免污染真实 data/events.json
 process.env.H3_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'h3-events-'));
 const events = require('../src/events');
+const jobs = require('../src/jobs');
 
 function fakeEvent(items) {
   return { id: 'evt_test', title: 't', source: 'batch', status: 'queued', spec: { items: [] }, items, createdAt: 1, startedAt: null, finishedAt: null };
@@ -128,3 +129,42 @@ test('报告 CSV 带表头和条目行', () => {
  test('失败和跳过分别计数，已处理进度包含所有明确终态',()=>{const result=events.hydrate(fakeEvent([{id:'i1',refType:'job',refId:'a'},{id:'i2',refType:'job',refId:'b',override:'skipped'}]),{jobMap:new Map([['a',job('a','failed')],['b',job('b','canceled')]]),worker:null});assert.equal(result.stats.done,2);assert.equal(result.stats.failed,1);assert.equal(result.stats.skipped,1);assert.equal(result.status,'failed');});
 
 test('超过200条事件重载仍完整，分页不会丢弃历史',()=>{for(let i=0;i<205;i++)events.create({title:'archive-'+i,kind:'image'});const total=events.repository.read().filter(e=>e.title.startsWith('archive-')).length;assert.equal(total,205);const page=events.list({kind:'image',page:21});assert.equal(page.events.length,5);assert.equal(page.total,205);});
+
+test('改提示词只动这一条，并同步到执行任务记录', () => {
+  const originalList = jobs.list;
+  const originalRevise = jobs.revisePrompt;
+  const calls = [];
+  jobs.list = () => [{ id: 'j-revise', status: 'failed' }];
+  jobs.revisePrompt = (id, patch) => { calls.push({ id, patch }); return patch; };
+  try {
+    const event = events.create({ title: 'revise', source: 'batch', items: [{ prompt: 'x' }] });
+    event.items.push({
+      id: 'i-revise', refType: 'job', refId: 'j-revise', status: 'failed', title: '镜头 02',
+      input: { prompt: '旧前置\n\n旧提示词', userPrompt: '旧提示词', prefixPrompt: '旧前置', images: [] },
+    });
+    events.save();
+    const out = events.reviseItem(event.id, 'i-revise', { prompt: '新提示词', prefixPrompt: '新前置' });
+    assert.equal(out.items[0].input.prompt, '新前置\n\n新提示词');
+    assert.equal(out.items[0].input.userPrompt, '新提示词');
+    assert.equal(out.items[0].input.prefixPrompt, '新前置');
+    assert.equal(out.items[0].input.images.length, 0);
+    assert.deepEqual(calls, [{ id: 'j-revise', patch: { prompt: '新前置\n\n新提示词', userPrompt: '新提示词', prefixPrompt: '新前置' } }]);
+    assert.equal(out.items[0].status, 'failed');
+  } finally {
+    jobs.list = originalList;
+    jobs.revisePrompt = originalRevise;
+  }
+});
+
+test('改提示词拒绝空内容', () => {
+  const originalList = jobs.list;
+  jobs.list = () => [{ id: 'j-empty', status: 'failed' }];
+  try {
+    const event = events.create({ title: 'empty', source: 'batch', items: [{ prompt: 'x' }] });
+    event.items.push({ id: 'i-empty', refType: 'job', refId: 'j-empty', status: 'failed', title: 's', input: { prompt: 'old', userPrompt: 'old' } });
+    events.save();
+    assert.throws(() => events.reviseItem(event.id, 'i-empty', { prompt: '   ' }), /提示词不能为空/);
+  } finally {
+    jobs.list = originalList;
+  }
+});

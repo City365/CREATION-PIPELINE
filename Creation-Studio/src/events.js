@@ -440,6 +440,49 @@ function cancelEvent(id) {
   return get(id);
 }
 
+/**
+ * 只改一条已结束分镜的提示词，不改其它分镜，也不自动提交。
+ * 保存后由用户点「重试」按新提示词重新生成。
+ */
+function reviseItem(id, itemId, patch = {}) {
+  const event = rawEvent(id);
+  const item = (event.items || []).find((i) => i.id === itemId);
+  if (!item) { const error = new Error('条目不存在'); error.status = 404; throw error; }
+  const map = jobMapNow();
+  const status = itemStatusOf(item, map);
+  if (!['failed', 'canceled', 'skipped'].includes(status)) {
+    throw Object.assign(new Error('只能修改已失败、已取消或已跳过的分镜；运行中的任务请先取消'), { status: 409 });
+  }
+  const input = { ...(item.input || {}) };
+  const currentPrefix = String(input.prefixPrompt || '').trim();
+  let body;
+  if (patch.prompt != null) {
+    body = String(patch.prompt);
+  } else {
+    body = input.userPrompt == null ? '' : String(input.userPrompt);
+    if (!body) {
+      body = String(input.prompt || '');
+      if (currentPrefix && body.startsWith(currentPrefix)) body = body.slice(currentPrefix.length).replace(/^\s*\n+/, '');
+    }
+  }
+  if (!body.trim()) throw Object.assign(new Error('提示词不能为空'), { status: 400 });
+  const prefix = patch.prefixPrompt != null ? String(patch.prefixPrompt).trim() : currentPrefix;
+  const full = prefix ? prefix + '\n\n' + body : body;
+  item.input = { ...input, prompt: full, userPrompt: body, prefixPrompt: prefix, applyStyle: false };
+  if (item.refType === 'job' && item.refId) jobs.revisePrompt(item.refId, { prompt: full, userPrompt: body, prefixPrompt: prefix });
+  const index = event.items.indexOf(item);
+  const snapshot = event.spec && Array.isArray(event.spec.items) ? event.spec.items[index] : null;
+  if (snapshot) {
+    snapshot.prompt = full;
+    if (snapshot.params && typeof snapshot.params === 'object') {
+      snapshot.params = { ...snapshot.params, prompt: full, userPrompt: body, prefixPrompt: prefix, applyStyle: false };
+    }
+  }
+  audit(event, 'revise', `修改分镜提示词 ${item.title || item.id}（${String(full).length} 字）`);
+  save();
+  return get(id);
+}
+
 function retryItem(id, itemId) {
   const event = rawEvent(id);
   const item = (event.items || []).find((i) => i.id === itemId);
@@ -679,4 +722,4 @@ function adoptLegacy(projectId) {
   return changed;
 }
 
-module.exports = { repository, materialize, importHistory, lookupRef, capture, scheduleEvent, queueEvent, prepareEvent, removeEvent, updateDraft, resumeOriginal, moveItem, adoptLegacy, load, save, list, get, create, createFromJobInputs, recordJobs, recordSingleJob, recordSingleImage, itemLog, hydrate, tick, start, stop, pauseEvent, resumeEvent, cancelEvent, retryItem, skipItem, retryFailed, report, reportCsv, reportRange, state };
+module.exports = { repository, materialize, importHistory, lookupRef, capture, scheduleEvent, queueEvent, prepareEvent, removeEvent, updateDraft, resumeOriginal, moveItem, adoptLegacy, load, save, list, get, create, createFromJobInputs, recordJobs, recordSingleJob, recordSingleImage, itemLog, hydrate, tick, start, stop, pauseEvent, resumeEvent, cancelEvent, reviseItem, retryItem, skipItem, retryFailed, report, reportCsv, reportRange, state };
