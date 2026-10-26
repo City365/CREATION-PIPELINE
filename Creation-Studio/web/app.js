@@ -2131,34 +2131,54 @@ async function openJobDetail(id) {
 
 /* ------------------------------------------------------------------ assets */
 
+function assetTypeMeta(id) {
+  const list = (state.assets && state.assets.types) || [];
+  return list.find((t) => t.id === id) || { id, label: id || '其他', count: 0 };
+}
+
+function visibleAssetItems() {
+  const folder = state.assetFolder || '全部';
+  const type = state.assetType || 'all';
+  const query = (state.assetQuery || '').toLowerCase();
+  return ((state.assets && state.assets.items) || []).filter((i) => (type === 'all' || i.type === type)
+    && (folder === '全部' || i.folder === folder)
+    && (!query || i.name.toLowerCase().includes(query) || (i.subject || '').toLowerCase().includes(query) || String(i.typeLabel || '').toLowerCase().includes(query)));
+}
+
 function renderAssets() {
   const data = state.assets;
   if (!data) return `<div class="empty"><span class="spinner"></span></div>`;
   const folder = state.assetFolder || '全部';
-  const query = (state.assetQuery || '').toLowerCase();
-  const items = data.items.filter((i) => (folder === '全部' || i.folder === folder) && (!query || i.name.toLowerCase().includes(query) || (i.subject || '').toLowerCase().includes(query)));
+  const type = state.assetType || 'all';
+  const items = visibleAssetItems();
+  const types = data.types || [];
+  const typeTotal = types.reduce((sum, t) => sum + t.count, 0);
   return `
   <div class="page-head">
     <div><h1>素材库</h1><p class="mono">${esc(data.root)} · ${data.items.length} 个文件</p></div>
     <div class="page-actions">
-      <input class="input" id="asset-search" placeholder="搜索文件名 / 主体" value="${esc(state.assetQuery || '')}" style="width:200px" />
+      <input class="input" id="asset-search" placeholder="搜索文件名 / 主体 / 类型" value="${esc(state.assetQuery || '')}" style="width:220px" />
       <button class="btn" data-act="new-folder">新建文件夹</button>
       <button class="btn" data-act="upload-asset">上传</button>
       <button class="btn" data-act="open-assets">打开目录</button>
       <button class="btn" data-act="refresh-assets">重新扫描</button>
     </div>
   </div>
+  <div class="asset-type-chips" role="group" aria-label="素材业务类型">
+    <button class="chip ${type === 'all' ? 'active' : ''}" data-asset-type="all">全部类型 ${typeTotal}</button>
+    ${types.map((t) => `<button class="chip ${type === t.id ? 'active' : ''}" data-asset-type="${esc(t.id)}" title="${esc(t.hint || '')}">${esc(t.label)} ${t.count}</button>`).join('')}
+  </div>
   <div class="folder-chips" style="margin-bottom:12px">
-    <button class="chip ${folder === '全部' ? 'active' : ''}" data-folder="全部">全部 ${data.items.length}</button>
+    <button class="chip ${folder === '全部' ? 'active' : ''}" data-folder="全部">全部文件夹 ${data.items.length}</button>
     ${data.folders.map((f) => `<button class="chip ${folder === f.name ? 'active' : ''}" data-folder="${esc(f.name)}">${esc(f.name)} ${f.count}</button>`).join('')}
   </div>
-  <div class="hint" style="margin-bottom:10px">选中图片后在详情里改名、命名主体、移动到文件夹；创作台会直接读取这里的图与音频。</div>
+  <div class="hint" style="margin-bottom:10px">业务类型写在数据里（不靠目录名区分），批量 JSON 可以按类型导出；文件夹只用于整理。选中素材后在详情里改类型、命名主体或移动文件夹。</div>
   ${items.length ? `<div class="grid-cards">${items.map((item, i) => `
     <div class="asset-card" data-asset="${i}">
       <div class="asset-thumb">${item.kind === 'image' ? `<img src="${item.url}" alt="" loading="lazy" />` : '♪'}</div>
       <div class="asset-meta">
         <span class="name" title="${esc(item.name)}">${esc(item.name)}</span>
-        <span class="sub">${esc(item.folder)}${item.subject ? ' · ' + esc(item.subject) : ''}${item.width ? ' · ' + item.width + '×' + item.height : ''}</span>
+        <span class="sub"><span class="asset-type-tag" title="${esc(assetTypeMeta(item.type).hint || '')}">${esc(item.typeLabel || assetTypeMeta(item.type).label)}</span>${esc(item.folder)}${item.subject ? ' · ' + esc(item.subject) : ''}${item.width ? ' · ' + item.width + '×' + item.height : ''}</span>
       </div>
     </div>`).join('')}</div>` : `<div class="card"><div class="empty"><strong>没有匹配的素材</strong><p>把参考图放进素材库目录，或点「上传」。</p></div></div>`}
   `;
@@ -2174,11 +2194,13 @@ function bindAssets(root) {
     };
   }
   root.addEventListener('click', async (event) => {
+    const typeBtn = event.target.closest('[data-asset-type]');
+    if (typeBtn) { state.assetType = typeBtn.dataset.assetType; return render(); }
     const folderBtn = event.target.closest('[data-folder]');
     if (folderBtn) { state.assetFolder = folderBtn.dataset.folder; return render(); }
     const card = event.target.closest('[data-asset]');
     if (card) {
-      const item = state.assets.items.filter((i) => (state.assetFolder || '全部') === '全部' || i.folder === (state.assetFolder || '全部')).filter((i) => !state.assetQuery || i.name.toLowerCase().includes(state.assetQuery.toLowerCase()) || (i.subject || '').toLowerCase().includes(state.assetQuery.toLowerCase()))[Number(card.dataset.asset)];
+      const item = visibleAssetItems()[Number(card.dataset.asset)];
       if (item) return openAssetDetail(item);
     }
     const target = event.target.closest('[data-act]');
@@ -2207,7 +2229,7 @@ function bindAssets(root) {
               reader.onerror = () => reject(new Error('读取失败'));
               reader.readAsDataURL(file);
             });
-            await api('/api/assets/upload', { method: 'POST', body: { name: file.name, data } });
+            await api('/api/assets/upload', { method: 'POST', body: { name: file.name, data, folder: state.assetFolder && state.assetFolder !== '全部' ? state.assetFolder : '', type: state.assetType && state.assetType !== 'all' ? state.assetType : undefined } });
           }
           state.assets = await api('/api/assets');
           render();
@@ -2232,6 +2254,7 @@ function openAssetDetail(item) {
           <div class="kv"><span>尺寸</span><span>${item.width ? item.width + ' × ' + item.height : '—'}</span></div>
           <div class="kv"><span>大小</span><span>${fmtBytes(item.bytes)}</span></div>
           <div class="kv"><span>文件夹</span><span>${esc(item.folder)}</span></div>
+          <div class="field"><label>业务类型</label><select class="select" id="asset-type">${((state.assets && state.assets.types) || []).map((t) => `<option value="${esc(t.id)}" ${t.id === item.type ? 'selected' : ''}>${esc(t.label)} — ${esc(t.hint || '')}</option>`).join('')}</select></div>
           <div class="field"><label>命名主体（用于 &lt;Subject N&gt;）</label><input class="input" id="asset-subject" value="${esc(item.subject)}" placeholder="例如：护法武僧" /></div>
           <div class="field"><label>移动到</label><select class="select" id="asset-folder">${folders.map((f) => `<option value="${esc(f)}" ${f === item.folder ? 'selected' : ''}>${esc(f)}</option>`).join('')}</select></div>
         </div>
@@ -2251,7 +2274,11 @@ function openAssetDetail(item) {
     try {
       const subject = $('#asset-subject').value.trim();
       const folder = $('#asset-folder').value;
+      const type = $('#asset-type') ? $('#asset-type').value : item.type;
       let rel = item.rel;
+      if (type && type !== item.type) {
+        await api('/api/assets/type', { method: 'POST', body: { rel, type } });
+      }
       if (subject !== (item.subject || '')) {
         await api('/api/assets/subject', { method: 'POST', body: { rel, subject } });
       }
@@ -5927,6 +5954,7 @@ function openSettings(tab = 'text') {
   state.settingsTab = alias[tab] || tab;
   state.settingsDraft = {
     autodlKeys: JSON.parse(JSON.stringify(state.config.autodlKeys || [])),
+    projectRoot: state.config.projectRoot || '',
     saveFolder: state.config.saveFolder,
     assetFolder: state.config.assetFolder,
     concurrency: state.config.concurrency,
@@ -5956,8 +5984,14 @@ function renderSettings() {
     pane = `
       <div class="settings-block">
         <h3>存储目录</h3>
-        <div class="field"><label>成片保存目录（媒体库）</label><input class="input mono" id="save-folder" value="${esc(d.saveFolder)}" /></div>
-        <div class="field"><label>素材库目录</label><input class="input mono" id="asset-folder" value="${esc(d.assetFolder)}" /></div>
+        <div class="field"><label>项目根目录</label><input class="input mono" id="project-root" value="${esc(d.projectRoot || '')}" /></div>
+        <p class="hint">每个项目会在这里自动生成独立子目录：<span class="mono">assets/ media/ uploads/ exports/</span>。项目激活时，素材、成片、上传都只读写该项目目录。修改根目录不会搬动已存在的项目文件。</p>
+        <div class="workspace-migrate">
+          <button type="button" class="btn" id="workspace-migrate">把旧数据迁入当前项目</button>
+          <span class="hint">旧版散落的 <span class="mono">data/assets、uploads、media</span> 不会自动搬动。点击后会先备份到 <span class="mono">data/backups</span>，再迁入当前项目。</span>
+        </div>
+        <div class="field"><label>未归档成片目录（旧数据）</label><input class="input mono" id="save-folder" value="${esc(d.saveFolder)}" /></div>
+        <div class="field"><label>未归档素材目录（旧数据）</label><input class="input mono" id="asset-folder" value="${esc(d.assetFolder)}" /></div>
         <div class="field"><label>克隆参考音色库（800+ 音色目录）</label><input class="input mono" id="voice-folder" value="${esc(d.voiceLibraryFolder || '')}" placeholder="D:\\notebook\\AIGC\\Comic-drama\\资产文档\\800+音色" /></div>
         <div class="field" style="width:200px"><label>并发上限</label><input class="input" id="concurrency" type="number" min="1" max="8" value="${d.concurrency}" /></div>
         <p class="hint">每个 Key / 每个自定义视频渠道各占 1 个工位；并发上限控制同时执行的任务总数。</p>
@@ -6229,6 +6263,7 @@ function bindSettings() {
     try {
       const payload = {
         autodlKeys: d.autodlKeys,
+        projectRoot: $('#project-root') ? $('#project-root').value.trim() : d.projectRoot,
         saveFolder: $('#save-folder') ? $('#save-folder').value.trim() : d.saveFolder,
         assetFolder: $('#asset-folder') ? $('#asset-folder').value.trim() : d.assetFolder,
         concurrency: $('#concurrency') ? Number($('#concurrency').value) || 3 : d.concurrency,
@@ -6241,6 +6276,28 @@ function bindSettings() {
       closeModal();
       render();
       toast('设置已保存');
+    } catch (err) { toast(err.message, true); }
+  };
+
+  const migrate = $('#workspace-migrate');
+  if (migrate) migrate.onclick = async () => {
+    try {
+      const info = await api('/api/workspace');
+      const counts = info.migration.counts || {};
+      const total = info.migration.total || 0;
+      if (info.migration.marker) {
+        toast('已经迁移过了，备份在：' + ((info.migration.marker.backups || []).join('、') || '无'));
+        return;
+      }
+      if (!total) { toast('没有需要迁移的旧文件'); return; }
+      const ok = confirm(`将把旧目录里的 ${total} 个文件（素材 ${counts.assets || 0} / 上传 ${counts.uploads || 0} / 成片 ${counts.media || 0}）先备份，再迁入当前项目「${info.project ? info.project.name : ''}」。继续？`);
+      if (!ok) return;
+      const record = await api('/api/workspace/migrate', { method: 'POST', body: {} });
+      const moved = Object.values(record.moved || {}).reduce((sum, value) => sum + (Number(value) || 0), 0);
+      state.assets = await api('/api/assets');
+      state.media = await api('/api/media');
+      toast('迁移完成：' + moved + ' 项');
+      render();
     } catch (err) { toast(err.message, true); }
   };
 }
@@ -6710,11 +6767,16 @@ async function setActiveProject(id, opts = {}) {
   state.project = project;
   try { localStorage.setItem('h3.projectId', id); } catch { /* ignore */ }
   state.styleDetail = await api('/api/styles/' + encodeURIComponent(project.styleId)).catch(() => null);
-  fetch('/api/auth/project', {
+  // 必须先等服务端记住当前项目，再重新读素材/媒体/任务，否则会读到上一个项目的数据。
+  await fetch('/api/auth/project', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ projectId: id }),
   }).catch(() => {});
+  state.assets = await api('/api/assets').catch(() => state.assets);
+  state.media = await api('/api/media').catch(() => state.media);
+  const jobData = await api('/api/jobs').catch(() => null);
+  if (jobData && Array.isArray(jobData.jobs)) state.jobs = jobData.jobs;
   await studioLoadForProject(id);
   if(state.projectId!==id)return null;
   await WB.load(id);
@@ -6747,6 +6809,7 @@ function renderProjects() {
       <div class="project-body">
         <b>${esc(p.name)}</b>
         <small>${p.style ? '🎨 ' + esc(p.style.name) : '🧭 探索模式'}</small>
+        ${p.dir ? `<small class="mono project-dir" title="${esc(p.dir)}">📁 ${esc(p.dir)}</small>` : ''}
         ${p.description ? `<small>${esc(p.description)}</small>` : ''}
         <div class="row">
           <button type="button" class="h3-btn h3-btn-sm ${p.id === state.projectId ? 'h3-btn-ghost' : 'h3-btn-primary'}" data-act="open-project" data-id="${esc(p.id)}">${p.id === state.projectId ? '当前项目' : '进入'}</button>

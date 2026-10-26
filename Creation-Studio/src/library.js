@@ -1,21 +1,137 @@
 'use strict';
 const fs = require('node:fs');
-const fsp = require('node:fs/promises');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const config = require('./config');
+const projects = require('./projects');
+const workspace = require('./workspace');
 const generationStore = require('./generation-store');
 const { readJson, writeJson, ensureDir, sanitizeFilename, safeSegment, kindOf, formatBytes, mimeFor } = require('./util');
 
 const META_FILE = path.join(config.DATA, 'assets.json');
 
-function meta() {
-  return readJson(META_FILE, { subjects: {} });
+/* ------------------------------- 业务类型 ------------------------------- */
+
+const ASSET_TYPES = [
+  { id: 'scene', label: '场景', hint: '环境、地点、背景' },
+  { id: 'character', label: '人物', hint: '角色外形、服装、身份板' },
+  { id: 'prop', label: '道具', hint: '物件、武器、关键物品' },
+  { id: 'firstFrame', label: '首帧', hint: '视频第一帧参考' },
+  { id: 'lastFrame', label: '尾帧', hint: '视频最后一帧参考' },
+  { id: 'blend', label: '溶图参考', hint: '构图、光影、色调融合' },
+  { id: 'storyboard', label: '分镜参考', hint: '镜头拆解、构图分镜' },
+  { id: 'other', label: '其他', hint: '暂未归类' },
+];
+const TYPE_IDS = new Set(ASSET_TYPES.map((t) => t.id));
+const FOLDER_TYPE_DEFAULT = {
+  场景: 'scene', 环境: 'scene', 背景: 'scene',
+  人物: 'character', 角色: 'character', 身份板: 'character',
+  道具: 'prop', 物品: 'prop',
+  首帧: 'firstFrame', 尾帧: 'lastFrame', 首尾帧: 'firstFrame',
+  溶图: 'blend', 溶图参考: 'blend',
+  分镜: 'storyboard', 分镜参考: 'storyboard',
+};
+
+function typeMeta(id) {
+  return ASSET_TYPES.find((t) => t.id === id) || ASSET_TYPES[ASSET_TYPES.length - 1];
 }
 
-function saveMeta(data) {
+function assertType(id) {
+  const value = String(id || '').trim();
+  if (!TYPE_IDS.has(value)) throw new Error('未知的素材类型：' + (value || '空'));
+  return value;
+}
+
+function defaultTypeForFolder(folder) {
+  return FOLDER_TYPE_DEFAULT[String(folder || '').trim()] || 'other';
+}
+
+/* ------------------------------- 元数据 ------------------------------- */
+
+function normalizeMeta(raw) {
+  if (raw && raw.projects && typeof raw.projects === 'object') {
+    const data = { version: 2, projects: {} };
+    for (const [key, row] of Object.entries(raw.projects)) {
+      data.projects[key] = {
+        subjects: { ...((row && row.subjects) || {}) },
+        types: { ...((row && row.types) || {}) },
+      };
+    }
+    return data;
+  }
+  const data = { version: 2, projects: {} };
+  const subjects = raw && raw.subjects && typeof raw.subjects === 'object' ? raw.subjects : {};
+  if (Object.keys(subjects).length) data.projects[''] = { subjects: { ...subjects }, types: {} };
+  return data;
+}
+
+function metaData() {
+  return normalizeMeta(readJson(META_FILE, null));
+}
+
+function projectRow(data, projectId) {
+  const key = String(projectId || '');
+  if (!data.projects[key]) data.projects[key] = { subjects: {}, types: {} };
+  return data.projects[key];
+}
+
+function metaFor(projectId) {
+  const row = projectRow(metaData(), projectId);
+  return { subjects: { ...row.subjects }, types: { ...row.types } };
+}
+
+function updateMeta(projectId, mutate) {
+  const data = metaData();
+  mutate(projectRow(data, projectId));
   writeJson(META_FILE, data);
 }
+
+/** 迁移用：把旧（无项目）元数据整体挪到目标项目。 */
+function moveProjectMeta(fromId, toId) {
+  if (String(fromId) === String(toId)) return 0;
+  let moved = 0;
+  const data = metaData();
+  const from = projectRow(data, fromId);
+  const to = projectRow(data, toId);
+  for (const [rel, subject] of Object.entries(from.subjects)) { to.subjects[rel] = subject; moved++; }
+  for (const [rel, type] of Object.entries(from.types)) { to.types[rel] = type; moved++; }
+  delete data.projects[String(fromId || '')];
+  writeJson(META_FILE, data);
+  return moved;
+}
+
+/* ------------------------------- 目录 ------------------------------- */
+
+function projectOrNull(projectId) {
+  if (!projectId) return null;
+  try { return projects.get(String(projectId)); } catch { return null; }
+}
+
+function assetRoot(projectId) {
+  const project = projectOrNull(projectId);
+  if (project) return workspace.pathsFor(project).assets;
+  return ensureDir(config.load().assetFolder);
+}
+
+function mediaRoot(projectId) {
+  const project = projectOrNull(projectId);
+  if (project) return workspace.pathsFor(project).media;
+  return ensureDir(config.load().saveFolder);
+}
+
+function uploadRoot(projectId) {
+  const project = projectOrNull(projectId);
+  if (project) return workspace.pathsFor(project).uploads;
+  return ensureDir(config.load().uploadFolder);
+}
+
+function exportsRoot(projectId) {
+  const project = projectOrNull(projectId);
+  if (project) return workspace.pathsFor(project).exports;
+  return ensureDir(path.join(config.load().saveFolder, 'exports'));
+}
+
+/* ------------------------------- 扫描 ------------------------------- */
 
 function relOf(root, abs) {
   return path.relative(root, abs).split(path.sep).join('/');
@@ -62,17 +178,11 @@ function imageSize(file) {
   return { width: null, height: null };
 }
 
-/* ------------------------------------ 素材库 ------------------------------------ */
+const FOLDER_ORDER = ['全部', '角色', '场景', '道具', '首帧', '尾帧', '溶图参考', '分镜参考', '未归类'];
 
-function assetRoot() {
-  return ensureDir(config.load().assetFolder);
-}
-
-const FOLDER_ORDER = ['全部', '角色', '场景', '道具', '未归类'];
-
-function scanAssets() {
-  const root = assetRoot();
-  const data = meta();
+function scanAssets(projectId) {
+  const root = assetRoot(projectId);
+  const data = metaFor(projectId);
   const items = [];
   const folders = new Map();
   const walk = (dir, depth) => {
@@ -93,12 +203,16 @@ function scanAssets() {
       folders.set(folder, folders.get(folder) + 1);
       const size = imageSize(abs);
       const st = fs.statSync(abs);
+      const type = TYPE_IDS.has(data.types[rel]) ? data.types[rel] : defaultTypeForFolder(folder);
+      const meta = typeMeta(type);
       items.push({
         name: entry.name,
         rel,
         path: abs,
         folder,
         kind,
+        type,
+        typeLabel: meta.label,
         subject: (data.subjects && data.subjects[rel]) || '',
         width: size.width,
         height: size.height,
@@ -110,9 +224,15 @@ function scanAssets() {
   };
   walk(root, 0);
   items.sort((a, b) => b.mtime - a.mtime);
+  const typeCounts = ASSET_TYPES.map((type) => ({
+    ...type,
+    count: items.filter((item) => item.type === type.id).length,
+  }));
   return {
     root,
+    projectId: String(projectId || ''),
     items,
+    types: typeCounts,
     folders: [...folders.entries()].map(([name, count]) => ({ name, count })).sort((a, b) => {
       const ia = FOLDER_ORDER.indexOf(a.name);
       const ib = FOLDER_ORDER.indexOf(b.name);
@@ -120,6 +240,8 @@ function scanAssets() {
     }),
   };
 }
+
+/* ------------------------------- 写入 ------------------------------- */
 
 function uniquePath(dir, name) {
   const ext = path.extname(name);
@@ -133,86 +255,106 @@ function uniquePath(dir, name) {
   return candidate;
 }
 
-function saveAssetUpload(fileName, buffer, folder) {
-  const root = assetRoot();
+function saveAssetUpload(projectId, fileName, buffer, folder, type) {
+  const root = assetRoot(projectId);
   const dir = folder && folder !== '全部' && folder !== '未归类' ? ensureDir(path.join(root, safeSegment(folder))) : root;
   const target = uniquePath(dir, sanitizeFilename(fileName || 'image.png'));
   fs.writeFileSync(target, buffer);
-  return { path: target, rel: relOf(root, target) };
+  const rel = relOf(root, target);
+  if (type) {
+    const value = assertType(type);
+    if (value !== 'other') updateMeta(projectId, (row) => { row.types[rel] = value; });
+  }
+  return { path: target, rel, type: type ? assertType(type) : defaultTypeForFolder(rel.includes('/') ? rel.split('/')[0] : '未归类') };
 }
 
-function setSubject(rel, subject) {
-  const data = meta();
-  data.subjects = data.subjects || {};
+function setSubject(projectId, rel, subject) {
   const key = String(rel);
-  if (subject) data.subjects[key] = String(subject).slice(0, 80);
-  else delete data.subjects[key];
-  saveMeta(data);
+  updateMeta(projectId, (row) => {
+    row.subjects = row.subjects || {};
+    if (subject) row.subjects[key] = String(subject).slice(0, 80);
+    else delete row.subjects[key];
+  });
   return true;
 }
 
-function renameAsset(rel, newName) {
-  const root = assetRoot();
-  const abs = path.resolve(root, rel);
-  if (path.relative(path.resolve(root),abs).startsWith('..') || path.isAbsolute(path.relative(path.resolve(root),abs))) throw new Error('非法路径');
+function setType(projectId, rel, type) {
+  const key = String(rel);
+  const value = assertType(type);
+  updateMeta(projectId, (row) => {
+    row.types = row.types || {};
+    row.types[key] = value;
+  });
+  return { rel: key, type: value };
+}
+
+function assetFile(projectId, rel) {
+  const root = path.resolve(assetRoot(projectId));
+  const abs = path.resolve(root, String(rel));
+  workspace.assertInside(root, abs);
+  if (!fs.existsSync(abs)) throw new Error('文件不存在');
+  return abs;
+}
+
+function moveMetaRel(projectId, fromRel, toRel, row) {
+  if (row.subjects && row.subjects[fromRel]) {
+    row.subjects[toRel] = row.subjects[fromRel];
+    delete row.subjects[fromRel];
+  }
+  if (row.types && row.types[fromRel]) {
+    row.types[toRel] = row.types[fromRel];
+    delete row.types[fromRel];
+  }
+}
+
+function renameAsset(projectId, rel, newName) {
+  const root = assetRoot(projectId);
+  const abs = assetFile(projectId, rel);
   const clean = sanitizeFilename(newName || '');
   if (!clean) throw new Error('文件名不能为空');
   const target = path.join(path.dirname(abs), clean);
   if (fs.existsSync(target) && target !== abs) throw new Error('同名文件已存在');
   fs.renameSync(abs, target);
-  generationStore.link(abs,target,true);
-  const data = meta();
-  if (data.subjects && data.subjects[rel]) {
-    data.subjects[relOf(root, target)] = data.subjects[rel];
-    delete data.subjects[rel];
-    saveMeta(data);
-  }
-  return relOf(root, target);
+  generationStore.link(abs, target, true);
+  const nextRel = relOf(root, target);
+  updateMeta(projectId, (row) => moveMetaRel(projectId, String(rel), nextRel, row));
+  return nextRel;
 }
 
-function moveAsset(rel, folder) {
-  const root = assetRoot();
-  const abs = path.resolve(root, rel);
-  if (path.relative(path.resolve(root),abs).startsWith('..') || path.isAbsolute(path.relative(path.resolve(root),abs))) throw new Error('非法路径');
+function moveAsset(projectId, rel, folder) {
+  const root = assetRoot(projectId);
+  const abs = assetFile(projectId, rel);
   const destDir = !folder || folder === '全部' || folder === '未归类' ? root : ensureDir(path.join(root, safeSegment(folder)));
   const target = uniquePath(destDir, path.basename(abs));
   fs.renameSync(abs, target);
-  generationStore.link(abs,target,true);
-  const data = meta();
-  if (data.subjects && data.subjects[rel]) {
-    data.subjects[relOf(root, target)] = data.subjects[rel];
-    delete data.subjects[rel];
-    saveMeta(data);
-  }
-  return relOf(root, target);
+  generationStore.link(abs, target, true);
+  const nextRel = relOf(root, target);
+  updateMeta(projectId, (row) => moveMetaRel(projectId, String(rel), nextRel, row));
+  return nextRel;
 }
 
-function createFolder(name) {
+function createFolder(projectId, name) {
   const clean = safeSegment(name);
   if (!clean) throw new Error('文件夹名不能为空');
-  ensureDir(path.join(assetRoot(), clean));
+  ensureDir(path.join(assetRoot(projectId), clean));
   return clean;
 }
 
-function fileForAsset(rel) {
-  const root = path.resolve(assetRoot());
-  const abs = path.resolve(root, rel);
-  if (!abs.startsWith(root)) throw new Error('非法路径');
-  if (!fs.existsSync(abs)) throw new Error('文件不存在');
-  return abs;
+function fileForAsset(projectId, rel) {
+  return assetFile(projectId, rel);
 }
 
 /* ------------------------------------ 媒体库 ------------------------------------ */
 
-function listMedia(kind) {
-  const root = path.resolve(ensureDir(config.load().saveFolder));
+function listMedia(kind, projectId) {
+  const root = path.resolve(mediaRoot(projectId));
   const items = [];
   let days = [];
   try {
     days = fs.readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
   } catch { days = []; }
   for (const day of days) {
-    if(day === 'images') continue;
+    if (day === 'images') continue;
     const dayDir = path.join(root, day);
     const jobs = fs.readdirSync(dayDir, { withFileTypes: true }).filter((d) => d.isDirectory());
     for (const jobEntry of jobs) {
@@ -243,7 +385,6 @@ function listMedia(kind) {
       }
     }
   }
-  // Generated images live under images/<date>/ instead of a job folder.
   const imagesRoot = path.join(root, 'images');
   if (!kind || kind === 'image') {
     let imageDays = [];
@@ -273,13 +414,13 @@ function listMedia(kind) {
     }
   }
   items.sort((a, b) => b.mtime - a.mtime);
-  return { root, items };
+  return { root, projectId: String(projectId || ''), items };
 }
 
-function mediaFile(file) {
-  const root = path.resolve(ensureDir(config.load().saveFolder));
-  const abs = path.resolve(file);
-  if (!abs.startsWith(root)) throw new Error('非法路径');
+function mediaFile(projectId, file) {
+  const root = path.resolve(mediaRoot(projectId));
+  const abs = path.resolve(String(file || ''));
+  workspace.assertInside(root, abs);
   if (!fs.existsSync(abs)) throw new Error('文件不存在');
   return abs;
 }
@@ -319,17 +460,29 @@ function openWithSystemPlayer(file) {
 }
 
 module.exports = {
+  ASSET_TYPES,
+  typeMeta,
+  defaultTypeForFolder,
+  assertType,
+  assetRoot,
+  mediaRoot,
+  uploadRoot,
+  exportsRoot,
   scanAssets,
   saveAssetUpload,
   setSubject,
+  setType,
   renameAsset,
   moveAsset,
   createFolder,
   fileForAsset,
   listMedia,
   mediaFile,
+  moveProjectMeta,
+  metaFor,
   openPath,
   openWithSystemPlayer,
   imageSize,
   openUrl,
+  relOf,
 };

@@ -83,7 +83,8 @@ function createImageTasks(options={}) {
   function retry(id,options={}){const task=get(id);if(['queued','running','paused'].includes(task.status))throw Error('任务尚未结束，不能重复提交');const row=db().prepare('SELECT request_json FROM image_tasks WHERE id=?').get(id);log(id,'info','用户手动请求重新生成，新建独立任务');const input=JSON.parse(row.request_json);delete input.requestId;return enqueue({...input,paused:!!options.paused,applyStyle:false},input.finalPrompt);}
   async function wait(id){for(;;){const task=get(id);if(['success','failed','interrupted'].includes(task.status))return task;await new Promise(r=>setTimeout(r,100));}}
   function close(){stopping=true;return Promise.all([...active.values()]);}
-  return {initialize,enqueue,get,list,page,pump,pause,resume,retry,setOrder,cancelPending,wait,close,activeCount:()=>active.size,on:fn=>{listeners.add(fn);return()=>listeners.delete(fn);}};
+  function adoptLegacy(projectId){initialize();const target=String(projectId||'');if(!target)return 0;const info=db().prepare("UPDATE generation_runs SET project_id=? WHERE kind='image' AND (project_id IS NULL OR project_id='' OR project_id='unassigned')").run(target);return info.changes;}
+  return {initialize,enqueue,get,list,page,pump,pause,resume,retry,setOrder,cancelPending,wait,close,adoptLegacy,activeCount:()=>active.size,on:fn=>{listeners.add(fn);return()=>listeners.delete(fn);}};
 }
 function remember(entry){try{const file=path.join(config.load().dataDir||config.DATA,'image-history.json');let rows=[];try{rows=JSON.parse(fs.readFileSync(file,'utf8'));}catch{}fs.writeFileSync(file,JSON.stringify([entry,...rows].slice(0,80),null,2));}catch{}}
 let singleton;function tasks(){return singleton||(singleton=createImageTasks());}

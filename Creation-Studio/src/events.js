@@ -607,4 +607,21 @@ function reportRange(days = 7, kind) {
 
 load();
 
-module.exports = { repository, materialize, importHistory, lookupRef, capture, scheduleEvent, queueEvent, updateDraft, resumeOriginal, moveItem, load, save, list, get, create, createFromJobInputs, recordJobs, recordSingleJob, recordSingleImage, itemLog, hydrate, tick, start, stop, pauseEvent, resumeEvent, cancelEvent, retryItem, skipItem, retryFailed, report, reportCsv, reportRange, state };
+/** 迁移：把没有项目归属的历史事件归到目标项目，避免切换项目后旧任务彻底不可见。 */
+function adoptLegacy(projectId) {
+  const target = String(projectId || '');
+  if (!target) return 0;
+  load();
+  let changed = 0;
+  for (const event of state.events) {
+    const current = event.spec?.projectId || '';
+    if (current && current !== 'unassigned') continue;
+    event.spec = { ...(event.spec || {}), projectId: target };
+    for (const item of event.items || []) if (item.input) item.input.projectId = target;
+    changed++;
+  }
+  if (changed) save();
+  return changed;
+}
+
+module.exports = { repository, materialize, importHistory, lookupRef, capture, scheduleEvent, queueEvent, updateDraft, resumeOriginal, moveItem, adoptLegacy, load, save, list, get, create, createFromJobInputs, recordJobs, recordSingleJob, recordSingleImage, itemLog, hydrate, tick, start, stop, pauseEvent, resumeEvent, cancelEvent, retryItem, skipItem, retryFailed, report, reportCsv, reportRange, state };

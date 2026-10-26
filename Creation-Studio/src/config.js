@@ -8,9 +8,17 @@ const ROOT = path.resolve(__dirname, '..');
 const DATA = process.env.H3_DATA_DIR ? path.resolve(process.env.H3_DATA_DIR) : path.join(ROOT, 'data');
 const CONFIG_FILE = path.join(DATA, 'config.json');
 
+function defaultProjectRoot() {
+  if (process.env.H3_PROJECT_ROOT) return path.resolve(process.env.H3_PROJECT_ROOT);
+  if (process.env.H3_DATA_DIR) return path.join(DATA, 'projects');
+  // 默认放在工程仓库旁边（同一个盘、空间充足），而不是仓库内部。
+  return path.join(path.dirname(path.dirname(ROOT)), 'H3-Projects');
+}
+
 const DEFAULTS = {
   port: Number(process.env.H3_PORT || 17821),
   concurrency: 3,
+  projectRoot: defaultProjectRoot(),
   saveFolder: path.join(DATA, 'media'),
   assetFolder: path.join(DATA, 'assets'),
   uploadFolder: path.join(DATA, 'uploads'),
@@ -41,6 +49,8 @@ function legacyConfigDir() {
 }
 
 function importLegacy() {
+  // 隔离测试/自定义数据目录：不读取本机旧版应用的配置，避免测试把真实目录当作数据目录。
+  if (process.env.H3_DATA_DIR) return null;
   const dir = legacyConfigDir();
   const legacy = readJson(path.join(dir, 'config.json'), null);
   if (!legacy) return null;
@@ -115,6 +125,7 @@ function normalize(input) {
   cfg.dataDir = DATA;
   cfg.port = Number(cfg.port) || DEFAULTS.port;
   cfg.concurrency = Math.max(1, Math.min(8, Number(cfg.concurrency) || 3));
+  cfg.projectRoot = String(cfg.projectRoot || DEFAULTS.projectRoot).trim() || DEFAULTS.projectRoot;
   cfg.saveFolder = String(cfg.saveFolder || DEFAULTS.saveFolder);
   cfg.assetFolder = String(cfg.assetFolder || DEFAULTS.assetFolder);
   cfg.uploadFolder = String(cfg.uploadFolder || DEFAULTS.uploadFolder);
@@ -201,6 +212,7 @@ function publicView() {
     port: cfg.port,
     dataDir: DATA,
     concurrency: cfg.concurrency,
+    projectRoot: cfg.projectRoot,
     saveFolder: cfg.saveFolder,
     assetFolder: cfg.assetFolder,
     uploadFolder: cfg.uploadFolder,

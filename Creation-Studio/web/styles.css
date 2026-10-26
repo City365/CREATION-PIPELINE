@@ -2025,3 +2025,10 @@ body.is-pane-resizing * { user-select: none !important; }
 @media(max-width:540px){.create-section{padding:14px}.create-actions{flex-direction:column;align-items:stretch}.create-action-buttons{width:100%}.create-action-buttons .btn{flex:1}}
 
 @media(max-width:540px){.tasks-page .task-tabbar{padding-right:8px}.tasks-page .task-tabbar-actions .btn{min-height:28px;padding:4px 8px;font-size:11px}}
+
+/* 素材业务类型 */
+.asset-type-chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+.asset-type-tag{display:inline-block;padding:1px 6px;margin-right:6px;border-radius:4px;border:1px solid var(--h3-border);background:var(--h3-bg-0);color:var(--h3-info,#4a78b3);font-size:10px;font-weight:600;vertical-align:1px}
+.project-dir{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.75}
+
+.workspace-migrate{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:6px 0 10px}

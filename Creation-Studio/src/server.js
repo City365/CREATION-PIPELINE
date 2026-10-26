@@ -12,6 +12,8 @@ const library = require('./library');
 const auth = require('./auth');
 const internalAuth = require('./internal-auth');
 const projects = require('./projects');
+const workspace = require('./workspace');
+const workspaceMigrate = require('./workspace-migrate');
 const styles = require('./styles');
 const jobs = require('./jobs');
 const batch = require('./batch');
@@ -112,7 +114,13 @@ async function readBody(req, limit = 120 * 1024 * 1024) {
 
 function allowedRoots() {
   const cfg = config.load();
-  return [cfg.saveFolder, cfg.assetFolder, cfg.uploadFolder, path.join(cfg.dataDir, 'frames')].map((p) => path.resolve(p));
+  const roots = [cfg.saveFolder, cfg.assetFolder, cfg.uploadFolder, path.join(cfg.dataDir, 'frames')];
+  try {
+    for (const project of projects.list()) {
+      try { roots.push(workspace.pathsFor(project).dir); } catch { /* 单个项目目录异常不影响其它路径 */ }
+    }
+  } catch { /* ignore */ }
+  return roots.map((p) => path.resolve(p));
 }
 
 function isAllowed(file) {
@@ -155,17 +163,17 @@ function serveFile(req, res, file, { download = false } = {}) {
   fs.createReadStream(abs).pipe(res);
 }
 
-function saveBase64Upload(name, base64, folder) {
+function saveBase64Upload(name, base64, folder, projectId, type) {
   const clean = sanitizeFilename(name || 'upload');
   const data = String(base64 || '').replace(/^data:[^;]+;base64,/, '');
   if (!data) throw new Error('文件内容为空');
   const buf = Buffer.from(data, 'base64');
   if (!buf.length) throw new Error('文件内容为空');
   if (folder === 'assets') {
-    const saved = library.saveAssetUpload(clean, buf, '');
+    const saved = library.saveAssetUpload(projectId || '', clean, buf, '', type);
     return { ...saved, name: path.basename(saved.path), bytes: buf.length, kind: kindOf(saved.path) };
   }
-  const dir = ensureDir(config.load().uploadFolder);
+  const dir = library.uploadRoot(projectId || '');
   const target = path.join(dir, `${Date.now().toString(36)}-${clean}`);
   fs.writeFileSync(target, buf);
   return { path: target, rel: target, name: clean, bytes: buf.length, kind: kindOf(clean) };
@@ -427,6 +435,11 @@ async function route(req, res) {
     currentUser = auth.userByToken(token);
     if (!currentUser) return json(res, 401, { ok: false, error: '请先登录', auth: true });
   }
+  // 当前项目：所有素材、媒体、任务查询都默认带上这个条件，避免跨项目串数据。
+  let activeProject = null;
+  try { activeProject = currentUser && currentUser.activeProjectId ? projects.get(currentUser.activeProjectId) : null; } catch { activeProject = null; }
+  const projectId = activeProject ? activeProject.id : '';
+  const scoped = (value) => value || projectId;
 
   if (await workbenchRoutes(req,res,url,{ok,readBody,mediaPath:(input)=>{const abs=mediaPath(input);if(!isAllowed(abs)||!allowedRoots().some(root=>{try{const rel=path.relative(fs.realpathSync(root),fs.realpathSync(abs));return rel===''||(!rel.startsWith('..'+path.sep)&&rel!=='..'&&!path.isAbsolute(rel));}catch{return false;}}))throw Error("文件不在素材目录内");return abs;}})) return;
   if (await creativeRoutes(req, res, url, {ok, bad, readBody, mediaPath, imageDataUrl, user:currentUser})) return;
@@ -507,6 +520,29 @@ async function route(req, res) {
     if (method === 'DELETE') {
       projects.remove(id);
       return ok(res, true);
+    }
+  }
+
+  if (method === 'GET' && pathname === '/api/workspace') {
+    const preview = workspaceMigrate.preview();
+    const paths = activeProject ? workspace.pathsFor(activeProject) : null;
+    return ok(res, {
+      projectRoot: config.load().projectRoot,
+      projectId,
+      project: activeProject ? projects.publicProject(activeProject) : null,
+      dirs: paths ? { dir: paths.dir, assets: paths.assets, media: paths.media, uploads: paths.uploads, exports: paths.exports } : null,
+      migration: preview,
+    });
+  }
+
+  if (method === 'POST' && pathname === '/api/workspace/migrate') {
+    // 本机脚本可以用内部凭据触发；普通请求仍要求已进入某个项目。
+    const targetProject = projectId || (internalCall ? workspaceMigrate.preview().projectId : '');
+    if (!targetProject) return bad(res, '先进入一个项目，再迁移旧数据');
+    try {
+      return ok(res, workspaceMigrate.run());
+    } catch (err) {
+      return bad(res, '迁移失败：' + (err.message || err));
     }
   }
 
@@ -625,9 +661,12 @@ async function controlService(name, action) {
   if (method === 'GET' && pathname === '/api/state') {
     return ok(res, {
       config: config.publicView(),
+      projectId,
+      project: activeProject ? projects.publicProject(activeProject) : null,
+      projectRoot: config.load().projectRoot,
       workflows: workflows.publicList(),
       defaultWorkflowId: workflows.defaultWorkflow().id,
-      jobs: jobs.list(),
+      jobs: projectId ? jobs.list(projectId) : jobs.list(),
       stats: jobs.slotStats(),
       channels: {
         llm: channels.list('llm', { includeSecrets: true }),
@@ -886,8 +925,9 @@ function rememberImageBatch(entry) {
   }
 
   if (method === 'GET' && pathname === '/api/images/tasks') {
-    if(url.searchParams.has('page'))return ok(res,imageTasks.tasks().page(url.searchParams.get('projectId')||undefined,Number(url.searchParams.get('page'))||1));
-    return ok(res,{tasks:imageTasks.tasks().list(url.searchParams.get('projectId')||undefined)});
+    const imageProject = scoped(url.searchParams.get('projectId'));
+    if(url.searchParams.has('page'))return ok(res,imageTasks.tasks().page(imageProject||undefined,Number(url.searchParams.get('page'))||1));
+    return ok(res,{tasks:imageTasks.tasks().list(imageProject||undefined)});
   }
   const imageAction=/^\/api\/images\/tasks\/([^/]+)(?:\/(pause|resume|retry))?$/.exec(pathname);
   if(imageAction){
@@ -898,7 +938,7 @@ function rememberImageBatch(entry) {
   }
   if (method === 'POST' && pathname === '/api/images/generate') {
     const body=await readBody(req),worker=imageTasks.tasks();
-    const event=events.createFromJobInputs([body],{kind:'image',source:'image',title:body.prompt?.slice(0,60),projectId:body.projectId||'',paused:body.paused});
+    const event=events.createFromJobInputs([body],{kind:'image',source:'image',title:body.prompt?.slice(0,60),projectId:scoped(body.projectId),paused:body.paused});
     const task=worker.get(event.items[0].refId),eventId=event.id;
     if(body.background)return ok(res,{taskId:task.id,runId:task.id,status:task.status,eventId});
     const result=await worker.wait(task.id);
@@ -908,13 +948,12 @@ function rememberImageBatch(entry) {
 
   if (method === 'POST' && pathname === '/api/images/save-copy') {
     const body = await readBody(req);
-    const cfg = config.load();
     const target = String(body.target || 'assets');
     const paths = (Array.isArray(body.paths) ? body.paths : [body.path]).filter(Boolean);
     if (!paths.length) return bad(res, '没有要保存的图片');
     let dir;
-    if (target === 'assets') dir = cfg.assetFolder;
-    else if (target === 'media') dir = path.join(cfg.saveFolder, 'images', new Date().toISOString().slice(0, 10));
+    if (target === 'assets') dir = library.assetRoot(scoped(body.projectId));
+    else if (target === 'media') dir = path.join(library.mediaRoot(scoped(body.projectId)), 'images', new Date().toISOString().slice(0, 10));
     else if (target === 'custom') {
       dir = String(body.dir || '').trim();
       if (!dir || !path.isAbsolute(dir)) return bad(res, '自定义目录必须是绝对路径');
@@ -965,9 +1004,10 @@ function rememberImageBatch(entry) {
   if (method === 'PUT' && pathname === '/api/config') {
     const body = await readBody(req);
     const patch = {};
-    for (const key of ['concurrency', 'saveFolder', 'assetFolder', 'voiceLibraryFolder', 'autodlKeys', 'llm', 'prompt', 'ui']) {
+    for (const key of ['concurrency', 'projectRoot', 'saveFolder', 'assetFolder', 'voiceLibraryFolder', 'autodlKeys', 'llm', 'prompt', 'ui']) {
       if (body[key] !== undefined) patch[key] = body[key];
     }
+    if (patch.projectRoot) ensureDir(patch.projectRoot);
     if (patch.saveFolder) ensureDir(patch.saveFolder);
     if (patch.assetFolder) ensureDir(patch.assetFolder);
     if (Array.isArray(patch.autodlKeys)) {
@@ -1039,7 +1079,7 @@ function rememberImageBatch(entry) {
       req.resume();
       return bad(res, '文件超过上传大小限制', 413);
     }
-    const target = path.join(ensureDir(config.load().uploadFolder), `${uid()}-${name}`);
+    const target = path.join(ensureDir(library.uploadRoot(projectId)), `${uid()}-${name}`);
     const partial = target + '.part';
     let handle, bytes = 0;
     try {
@@ -1067,7 +1107,7 @@ function rememberImageBatch(entry) {
 
   if (method === 'POST' && pathname === '/api/upload') {
     const body = await readBody(req);
-    const saved = saveBase64Upload(body.name, body.data, body.folder);
+    const saved = saveBase64Upload(body.name, body.data, body.folder, scoped(body.projectId), body.type);
     return ok(res, saved);
   }
 
@@ -1122,7 +1162,7 @@ function mediaPath(input) {
 
   if (method === 'GET' && pathname === '/api/jobs') {
     const { status, provider } = collectJobFilters(url);
-    let list = jobs.list();
+    let list = projectId ? jobs.list(projectId) : jobs.list();
     if (status) list = list.filter((j) => j.status === status);
     if (provider) list = list.filter((j) => j.provider === provider);
     if(url.searchParams.has('page')){const total=list.length,page=Math.max(1,Math.min(Math.ceil(total/10)||1,Number(url.searchParams.get('page'))||1));list=list.slice().sort((a,b)=>b.createdAt-a.createdAt).slice((page-1)*10,page*10).map(({logs,prompt,...summary})=>summary);return ok(res,{jobs:list,total,page,pageSize:10});}
@@ -1132,8 +1172,8 @@ function mediaPath(input) {
   if (method === 'POST' && pathname === '/api/jobs') {
     const body = await readBody(req);
     if(body.itemId)workbenchStore.store().get(body.itemId,body.projectId,'video');
-    const inputs=prepareEventVideos([body]);
-    const event=events.createFromJobInputs(inputs,{kind:'video',source:'studio',title:body.title,projectId:body.projectId||'',policy:body.policy,schedule:body.schedule});
+    const inputs=prepareEventVideos([{ ...body, projectId: scoped(body.projectId) }]);
+    const event=events.createFromJobInputs(inputs,{kind:'video',source:'studio',title:body.title,projectId:scoped(body.projectId),policy:body.policy,schedule:body.schedule});
     return ok(res,{jobs:event.items.map(i=>({id:i.refId})),eventId:event.id,warnings:[]});
   }
 
@@ -1181,7 +1221,7 @@ function mediaPath(input) {
   }
 
   if (method === 'GET' && pathname === '/api/events') {
-    return ok(res, events.list({ status: url.searchParams.get('status') || '', source: url.searchParams.get('source') || '', kind:url.searchParams.get('kind')||'',projectId:url.searchParams.get('projectId')||'',page:url.searchParams.get('page'),query:url.searchParams.get('query')||'' }));
+    return ok(res, events.list({ status: url.searchParams.get('status') || '', source: url.searchParams.get('source') || '', kind:url.searchParams.get('kind')||'',projectId:url.searchParams.get('projectId')||projectId,page:url.searchParams.get('page'),query:url.searchParams.get('query')||'' }));
   }
 
   if (method === 'POST' && pathname === '/api/events/import') {
@@ -1189,7 +1229,7 @@ function mediaPath(input) {
     const parsed = batch.parseBatch(body.json, { baseDir: body.baseDir, fileDir: body.fileDir, name: body.name });
     const inputs = batch.toJobInputs(parsed, body.workflowId);
     if (!inputs.length) return bad(res, '没有可导入的任务：' + (parsed.errors.join('；') || '请检查 JSON'));
-    const event = events.createFromJobInputs(prepareEventVideos(inputs), { kind:'video', policy:body.policy,schedule:body.schedule,draft:body.draft, title: body.title || parsed.name || '', source: 'batch', workflowId: body.workflowId, projectId: body.projectId || '', channelId: body.channelId || '' });
+    const event = events.createFromJobInputs(prepareEventVideos(inputs), { kind:'video', policy:body.policy,schedule:body.schedule,draft:body.draft, title: body.title || parsed.name || '', source: 'batch', workflowId: body.workflowId, projectId: scoped(body.projectId), channelId: body.channelId || '' });
     return ok(res, event);
   }
 
@@ -1197,8 +1237,8 @@ function mediaPath(input) {
     const body = await readBody(req);
     const items = Array.isArray(body.items) ? body.items : [];
     if (!items.length) return bad(res, '事件没有条目');
-    const inputs = items.map((item) => ({ ...item, workflowId: item.workflowId || body.workflowId, count: item.count || 1, projectId: body.projectId || item.projectId, itemId: body.itemId || item.itemId }));
-    const event = events.createFromJobInputs(body.kind==='image'?inputs:prepareEventVideos(inputs), { kind:body.kind,requestId:body.requestId||req.headers['idempotency-key'],policy:body.policy,schedule:body.schedule,draft:body.draft, title: body.title, source: ['batch', 'studio', 'image', 'api'].includes(body.source) ? body.source : 'api', workflowId: body.workflowId, projectId: body.projectId || '', channelId: body.channelId || '' });
+    const inputs = items.map((item) => ({ ...item, workflowId: item.workflowId || body.workflowId, count: item.count || 1, projectId: scoped(body.projectId) || item.projectId, itemId: body.itemId || item.itemId }));
+    const event = events.createFromJobInputs(body.kind==='image'?inputs:prepareEventVideos(inputs), { kind:body.kind,requestId:body.requestId||req.headers['idempotency-key'],policy:body.policy,schedule:body.schedule,draft:body.draft, title: body.title, source: ['batch', 'studio', 'image', 'api'].includes(body.source) ? body.source : 'api', workflowId: body.workflowId, projectId: scoped(body.projectId), channelId: body.channelId || '' });
     return ok(res, event);
   }
 
@@ -1270,44 +1310,49 @@ function mediaPath(input) {
   }
 
   if (method === 'GET' && pathname === '/api/assets') {
-    return ok(res, library.scanAssets());
+    return ok(res, library.scanAssets(projectId));
   }
 
   if (method === 'POST' && pathname === '/api/assets/upload') {
     const body = await readBody(req);
-    return ok(res, saveBase64Upload(body.name, body.data, 'assets'));
+    return ok(res, saveBase64Upload(body.name, body.data, 'assets', projectId, body.type));
+  }
+
+  if (method === 'POST' && pathname === '/api/assets/type') {
+    const body = await readBody(req);
+    return ok(res, library.setType(projectId, body.rel, body.type || body.value));
   }
 
   if (method === 'POST' && pathname === '/api/assets/move') {
     const body = await readBody(req);
-    return ok(res, { rel: library.moveAsset(body.rel, body.folder) });
+    return ok(res, { rel: library.moveAsset(projectId, body.rel, body.folder) });
   }
 
   if (method === 'POST' && pathname === '/api/assets/rename') {
     const body = await readBody(req);
-    return ok(res, { rel: library.renameAsset(body.rel, body.name) });
+    return ok(res, { rel: library.renameAsset(projectId, body.rel, body.name) });
   }
 
   if (method === 'POST' && pathname === '/api/assets/subject') {
     const body = await readBody(req);
-    return ok(res, library.setSubject(body.rel, body.subject));
+    return ok(res, library.setSubject(projectId, body.rel, body.subject));
   }
 
   if (method === 'POST' && pathname === '/api/assets/folder') {
     const body = await readBody(req);
-    return ok(res, { name: library.createFolder(body.name) });
+    return ok(res, { name: library.createFolder(projectId, body.name) });
   }
 
   if (method === 'GET' && pathname === '/api/assets/file') {
-    return serveFile(req, res, library.fileForAsset(url.searchParams.get('rel') || ''));
+    return serveFile(req, res, library.fileForAsset(projectId, url.searchParams.get('rel') || ''));
   }
 
   if (method === 'GET' && pathname === '/api/media') {
-    return ok(res, library.listMedia(url.searchParams.get('kind') || ''));
+    return ok(res, library.listMedia(url.searchParams.get('kind') || '', projectId));
   }
 
   if (method === 'GET' && pathname === '/api/media/file') {
-    return serveFile(req, res, library.mediaFile(url.searchParams.get('path') || ''));
+    return serveFile(req, res, library.mediaFile(projectId, url.searchParams.get('path') || ''));
   }
 
   if (method === 'POST' && pathname === '/api/media/open') {

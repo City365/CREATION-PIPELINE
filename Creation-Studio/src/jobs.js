@@ -3,6 +3,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { EventEmitter } = require('node:events');
 const config = require('./config');
+const projects = require('./projects');
+const workspace = require('./workspace');
 const workbenchStore = require('./workbench-store');
 const workflows = require('./workflows');
 const providers = require('./providers');
@@ -61,12 +63,53 @@ function flushState() {
   writeJson(STATE_FILE, { jobs: state.jobs });
 }
 
-function list() {
-  return state.jobs.map((j) => ({ ...j, logs: undefined }));
+function sameProject(job, projectId) {
+  const value = String(projectId == null ? '' : projectId);
+  if (!value) return !job.projectId || job.projectId === 'unassigned';
+  return String(job.projectId || '') === value;
+}
+
+/**
+ * 不带参数时返回全部任务（调度器内部使用）；带 projectId 时只返回该项目的任务。
+ * 传空字符串表示「未归档」。
+ */
+function list(projectId) {
+  const rows = arguments.length ? state.jobs.filter((job) => sameProject(job, projectId)) : state.jobs;
+  return rows.map((j) => ({ ...j, logs: undefined }));
 }
 
 function get(id) {
   return state.jobs.find((j) => j.id === id) || null;
+}
+
+function jobProjectRoot(job) {
+  const project = job && job.projectId ? projects.get(job.projectId) : null;
+  if (project) return workspace.pathsFor(project).media;
+  return ensureDir(config.load().saveFolder);
+}
+
+function listByProjectPage(projectId, page = 1, size = 10) {
+  const rows = list(projectId);
+  const total = rows.length;
+  const pageSize = Math.max(1, Number(size) || 10);
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  const current = Math.max(1, Math.min(pages, Number(page) || 1));
+  const sorted = rows.slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  return { jobs: sorted.slice((current - 1) * pageSize, current * pageSize), total, page: current, pageSize };
+}
+
+/** 迁移：把没有项目归属的历史任务归到目标项目。 */
+function adoptLegacy(projectId) {
+  const target = String(projectId || '');
+  if (!target) return 0;
+  let changed = 0;
+  for (const job of state.jobs) {
+    if (job.projectId && job.projectId !== 'unassigned') continue;
+    job.projectId = target;
+    changed += 1;
+  }
+  if (changed) flushState();
+  return changed;
 }
 
 function log(job, level, text) {
@@ -437,8 +480,7 @@ async function run(job, slot) {
 /* ------------------------------- 落盘 ------------------------------- */
 
 function jobDir(job) {
-  const cfg = config.load();
-  const dir = path.join(ensureDir(cfg.saveFolder), dayFolder(), job.id + (job.outputVersion ? '-'+job.outputVersion : ''));
+  const dir = path.join(jobProjectRoot(job), dayFolder(), job.id + (job.outputVersion ? '-'+job.outputVersion : ''));
   ensureDir(dir);
   return dir;
 }
@@ -700,6 +742,9 @@ module.exports = {
   emitter,
   loadState,
   list,
+  listByProjectPage,
+  adoptLegacy,
+  jobProjectRoot,
   get,
   addJobs,
   cancel,
