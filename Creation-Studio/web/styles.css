@@ -1876,3 +1876,9 @@ body.is-pane-resizing * { user-select: none !important; }
 .evt-progress>span{display:block;height:100%;background:var(--h3-accent,#5189ca)}
 .evt-table td{vertical-align:top}
 .evt-log{margin:0;max-height:320px;overflow:auto;background:var(--h3-bg-1);border:1px solid var(--h3-border);padding:10px;font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-word}
+
+/* 事件报告 */
+.evt-report{display:grid;gap:8px;margin-top:12px;padding:12px;border:1px solid var(--h3-border);background:var(--h3-bg-1)}
+.evt-report-row{display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;font-size:13px}
+.evt-report-row>b{min-width:72px;color:var(--h3-text-3);font-weight:500}
+.evt-failures{margin:0;padding-left:18px;line-height:1.6;font-size:12px;color:var(--h3-text-2)}

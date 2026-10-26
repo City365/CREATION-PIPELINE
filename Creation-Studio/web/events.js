@@ -25,6 +25,8 @@ const Events = (() => {
     if (state.route === 'tasks' && currentTaskTab() === 'events') window.render();
   }
 
+  const fmtMs = (ms) => ms == null ? '—' : (ms < 1000 ? Math.round(ms) + 'ms' : (ms / 1000).toFixed(1) + 's');
+
   function badge(status) {
     const cls = status === 'completed' ? 'ok' : status === 'failed' ? 'bad' : status === 'running' ? 'info' : '';
     return `<span class="badge ${cls}">${esc(STATUS[status] || status)}</span>`;
@@ -59,6 +61,7 @@ const Events = (() => {
     <div class="evt-toolbar">
       <button class="btn primary" data-event-create="1">创建事件</button>
       <button class="btn" data-event-refresh="1">刷新</button>
+      <button class="btn" data-event-range="7">近 7 天报告</button>
       <span class="grow"></span>
       ${stats ? `<span class="hint">事件 ${stats.total} · 执行中 ${stats.running} · 排队 ${stats.queued} · 完成 ${stats.completed} · 部分失败 ${stats.partial} · 失败 ${stats.failed}</span>` : ''}
     </div>
@@ -130,11 +133,22 @@ const Events = (() => {
           <span>未知：${s.unknown || 0}</span>
         </div>
         ${items ? `<div class="table-wrap"><table class="jobs"><thead><tr><th>状态</th><th>条目</th><th>错误</th><th>操作</th></tr></thead><tbody>${items}</tbody></table></div>` : '<div class="hint">这个事件还没有条目。</div>'}
+        <div id="evt-report"></div>
         <div id="evt-item-log"></div>
       </div>
       <div class="modal-foot"><span class="grow"></span><button class="btn" data-close="1">关闭</button></div>`);
     panel.classList.add('modal-wide');
     const logBox = document.querySelector('#evt-item-log');
+    const reportBox = document.querySelector('#evt-report');
+    api('/api/events/' + encodeURIComponent(id) + '/report').then((report) => {
+      const failures = (report.failures || []).map((f) => `<li>${esc(f.provider || '未知')} · ${esc(f.channelId || '-')} · ${esc(f.error.slice(0, 120))} ×${f.count}</li>`).join('');
+      reportBox.innerHTML = `<div class="evt-report">
+        <div class="evt-report-row"><b>成功率</b><span>${report.successRate == null ? '—' : report.successRate + '%'}</span><span class="hint">成功 ${report.success} / 失败 ${report.failed} / 取消 ${report.canceled} / 跳过 ${report.skipped} / 未知 ${report.unknown}</span></div>
+        <div class="evt-report-row"><b>耗时</b><span>P50 ${fmtMs(report.durationMs.p50)} · P90 ${fmtMs(report.durationMs.p90)} · 最长 ${fmtMs(report.durationMs.max)}</span></div>
+        ${failures ? `<div class="evt-report-row"><b>失败归因</b><ul class="evt-failures">${failures}</ul></div>` : ''}
+        <div class="evt-report-row"><a class="btn sm" href="/api/events/${encodeURIComponent(id)}/report?format=csv" download>导出 CSV</a></div>
+      </div>`;
+    }).catch(() => { reportBox.innerHTML = ''; });
     document.querySelectorAll('[data-event-item-probe]').forEach((button) => {
       button.onclick = async () => {
         try {
@@ -176,6 +190,8 @@ const Events = (() => {
       if (detail) { openDetail(detail.dataset.eventDetail).catch((err) => toast(err.message, true)); return; }
       const action = event.target.closest('[data-event-action]');
       if (action) { runAction(action.dataset.eventAction, action.dataset.id).catch((err) => toast(err.message, true)); return; }
+      const range = event.target.closest('[data-event-range]');
+      if (range) { openRangeReport(range.dataset.eventRange).catch((err) => toast(err.message, true)); return; }
       const itemAction = event.target.closest('[data-event-item-action]');
       if (itemAction) { runItemAction(itemAction.dataset.eventItemAction, itemAction.dataset.item).catch((err) => toast(err.message, true)); }
     });
@@ -204,5 +220,16 @@ const Events = (() => {
     runAction(action.dataset.eventAction, action.dataset.id).catch((err) => toast(err.message, true));
   });
 
-  return { render, load, bind, openCreate, openDetail };
+  async function openRangeReport(days) {
+    const report = await api('/api/events/report?days=' + encodeURIComponent(days));
+    const daily = (report.daily || []).map((d) => `<tr><td>${esc(d.day)}</td><td>${d.events}</td><td>${d.items}</td><td>${d.success}</td><td>${d.failed}</td></tr>`).join('');
+    openModal(`<div class="modal-head"><h2>近 ${report.days} 天报告</h2><button class="btn" data-close="1">关闭</button></div>
+      <div class="modal-body">
+        <div class="evt-report-row"><b>成功率</b><span>${report.successRate == null ? '—' : report.successRate + '%'}</span><span class="hint">事件 ${report.events} · 条目 ${report.items} · 成功 ${report.success} · 失败 ${report.failed} · 未知 ${report.unknown}</span></div>
+        ${daily ? `<div class="table-wrap"><table class="jobs"><thead><tr><th>日期</th><th>事件</th><th>条目</th><th>成功</th><th>失败</th></tr></thead><tbody>${daily}</tbody></table></div>` : '<div class="hint">这段时间还没有事件。</div>'}
+      </div>
+      <div class="modal-foot"><span class="grow"></span><button class="btn" data-close="1">关闭</button></div>`);
+  }
+
+  return { render, load, bind, openCreate, openDetail, openRangeReport };
 })();

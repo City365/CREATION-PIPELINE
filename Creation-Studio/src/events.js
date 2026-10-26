@@ -429,6 +429,128 @@ function retryFailed(id) {
   return { event: get(id), retried };
 }
 
+function percentile(values, ratio) {
+  if (!values.length) return null;
+  const position = (values.length - 1) * Math.min(1, Math.max(0, ratio));
+  const low = Math.floor(position);
+  const high = Math.ceil(position);
+  return Math.round(values[low] + (values[high] - values[low]) * (position - low));
+}
+
+function report(id, context = {}) {
+  const event = get(id);
+  const jobMap = context.jobMap instanceof Map ? context.jobMap : new Map(jobs.list().map((j) => [j.id, j]));
+  const rows = (event.items || []).map((item) => {
+    const job = item.refType === 'job' ? jobMap.get(item.refId) : null;
+    const startedAt = (job && job.startedAt) || item.startedAt || null;
+    const finishedAt = (job && job.finishedAt) || item.finishedAt || null;
+    return {
+      itemId: item.id,
+      title: item.title || item.refId,
+      refType: item.refType,
+      refId: item.refId,
+      status: job ? itemStatus(job.status) : item.status,
+      provider: (job && job.provider) || '',
+      platform: (job && job.platform) || '',
+      channelId: (job && job.channelId) || '',
+      error: String((job && job.error) || item.error || '').slice(0, 300),
+      attempts: Number(item.attempts) || 0,
+      startedAt,
+      finishedAt,
+      durationMs: startedAt && finishedAt ? Math.max(0, finishedAt - startedAt) : null,
+    };
+  });
+  const stats = event.stats || {};
+  const judged = (stats.done || 0);
+  const success = rows.filter((row) => row.status === 'success').length;
+  const failed = rows.filter((row) => row.status === 'failed').length;
+  const canceled = rows.filter((row) => row.status === 'canceled').length;
+  const skipped = rows.filter((row) => row.status === 'skipped').length;
+  const unknown = rows.filter((row) => row.status === 'unknown').length;
+  const denominator = success + failed;
+  const durations = rows.map((row) => row.durationMs).filter((value) => Number.isFinite(value)).sort((a, b) => a - b);
+  const failures = new Map();
+  for (const row of rows) {
+    if (row.status !== 'failed') continue;
+    const key = [row.provider || 'unknown', row.channelId || '-', row.error.split('\n')[0].slice(0, 80) || '未知错误'].join(' | ');
+    const bucket = failures.get(key) || { provider: row.provider, channelId: row.channelId, error: row.error, count: 0 };
+    bucket.count += 1;
+    failures.set(key, bucket);
+  }
+  return {
+    eventId: event.id,
+    title: event.title,
+    status: event.status,
+    source: event.source,
+    createdAt: event.createdAt,
+    startedAt: event.startedAt,
+    finishedAt: event.finishedAt,
+    total: rows.length,
+    success,
+    failed,
+    canceled,
+    skipped,
+    unknown,
+    judged,
+    successRate: denominator ? Math.round((success / denominator) * 1000) / 10 : null,
+    durationMs: {
+      p50: percentile(durations, 0.5),
+      p90: percentile(durations, 0.9),
+      max: durations.length ? durations[durations.length - 1] : null,
+    },
+    failures: [...failures.values()].sort((a, b) => b.count - a.count),
+    items: rows,
+  };
+}
+
+function reportCsv(id, context = {}) {
+  const data = report(id, context);
+  const header = ['itemId', 'title', 'status', 'provider', 'channelId', 'durationMs', 'error'];
+  const lines = [header.join(',')];
+  for (const row of data.items) {
+    lines.push([row.itemId, row.title, row.status, row.provider, row.channelId, row.durationMs == null ? '' : row.durationMs, row.error]
+      .map((value) => '"' + String(value == null ? '' : value).replace(/"/g, '""') + '"').join(','));
+  }
+  return { filename: data.eventId + '-report.csv', body: lines.join('\n') };
+}
+
+function reportRange(days = 7) {
+  const span = Math.max(1, Math.min(90, Number(days) || 7));
+  const since = Date.now() - span * 24 * 60 * 60 * 1000;
+  const events = state.events.length ? state.events : load();
+  const picked = events.filter((event) => Number(event.createdAt) >= since).map((event) => hydrate(event));
+  const buckets = new Map();
+  let success = 0;
+  let failed = 0;
+  let unknown = 0;
+  for (const event of picked) {
+    for (const item of event.items || []) {
+      if (item.status === 'success') success += 1;
+      else if (item.status === 'failed') failed += 1;
+      else if (item.status === 'unknown') unknown += 1;
+    }
+    const day = new Date(Number(event.createdAt) || Date.now()).toISOString().slice(0, 10);
+    const bucket = buckets.get(day) || { day, events: 0, items: 0, success: 0, failed: 0 };
+    bucket.events += 1;
+    bucket.items += (event.items || []).length;
+    bucket.success += (event.items || []).filter((item) => item.status === 'success').length;
+    bucket.failed += (event.items || []).filter((item) => item.status === 'failed').length;
+    buckets.set(day, bucket);
+  }
+  const denominator = success + failed;
+  return {
+    days: span,
+    since,
+    events: picked.length,
+    items: success + failed + unknown,
+    success,
+    failed,
+    unknown,
+    successRate: denominator ? Math.round((success / denominator) * 1000) / 10 : null,
+    daily: [...buckets.values()].sort((a, b) => (a.day < b.day ? -1 : 1)),
+  };
+}
+
 load();
 
-module.exports = { load, save, list, get, create, createFromJobInputs, recordJobs, recordSingleJob, recordSingleImage, itemLog, hydrate, tick, start, stop, pauseEvent, resumeEvent, cancelEvent, retryItem, skipItem, retryFailed, state };
+module.exports = { load, save, list, get, create, createFromJobInputs, recordJobs, recordSingleJob, recordSingleImage, itemLog, hydrate, tick, start, stop, pauseEvent, resumeEvent, cancelEvent, retryItem, skipItem, retryFailed, report, reportCsv, reportRange, state };

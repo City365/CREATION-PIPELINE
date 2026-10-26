@@ -1183,6 +1183,21 @@ function mediaPath(input) {
     return ok(res, event);
   }
 
+  if (method === 'GET' && pathname === '/api/events/report') {
+    return ok(res, events.reportRange(url.searchParams.get('days')));
+  }
+
+  const eventReport = /^\/api\/events\/([^/]+)\/report$/.exec(pathname);
+  if (method === 'GET' && eventReport) {
+    if (url.searchParams.get('format') === 'csv') {
+      const csv = events.reportCsv(eventReport[1]);
+      res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="' + csv.filename + '"' });
+      res.end(csv.body);
+      return;
+    }
+    return ok(res, events.report(eventReport[1]));
+  }
+
   const eventAction = /^\/api\/events\/([^/]+)\/(pause|resume|cancel|retry-failed)$/.exec(pathname);
   if (method === 'POST' && eventAction) {
     const id = eventAction[1];

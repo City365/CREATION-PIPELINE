@@ -95,3 +95,32 @@ test('创建后可查询，存在临时数据目录', () => {
 test('空条目创建被拒绝', () => {
   assert.throws(() => events.createFromJobInputs([], {}), /没有可创建/);
 });
+
+function attachFake(event, items) { event.items.push(...items); events.save(); }
+
+test('报告：成功率、耗时与失败归因', () => {
+  const event = events.create({ title: 'report', source: 'batch', items: [{ prompt: 'a' }, { prompt: 'b' }] });
+  attachFake(event, [
+    { id: 'i1', refType: 'job', refId: 'ja', status: 'queued', title: 'a' },
+    { id: 'i2', refType: 'job', refId: 'jb', status: 'queued', title: 'b' },
+  ]);
+  const jobMap = new Map([
+    ['ja', { id: 'ja', status: 'success', provider: 'manager', channelId: 'ch1', startedAt: 1000, finishedAt: 5000 }],
+    ['jb', { id: 'jb', status: 'failed', provider: 'manager', channelId: 'ch1', startedAt: 1000, finishedAt: 3000, error: '额度不足' }],
+  ]);
+  const report = events.report(event.id, { jobMap });
+  assert.equal(report.success, 1);
+  assert.equal(report.failed, 1);
+  assert.equal(report.successRate, 50);
+  assert.equal(report.durationMs.p50, 3000);
+  assert.equal(report.failures[0].error, '额度不足');
+  assert.equal(report.failures[0].count, 1);
+});
+
+test('报告 CSV 带表头和条目行', () => {
+  const event = events.create({ title: 'csv', source: 'batch', items: [{ prompt: 'a' }] });
+  attachFake(event, [{ id: 'i1', refType: 'job', refId: 'jc', status: 'queued', title: 'a' }]);
+  const csv = events.reportCsv(event.id, { jobMap: new Map([['jc', { id: 'jc', status: 'success', provider: 'manager', channelId: 'ch1', startedAt: 0, finishedAt: 1000 }]]) });
+  assert.match(csv.body, /itemId,title,status/);
+  assert.match(csv.body, /success/);
+});
