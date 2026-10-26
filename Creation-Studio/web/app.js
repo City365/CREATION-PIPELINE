@@ -2252,6 +2252,8 @@ function renderShotFacts(shot) {
   const notes = images.filter((image) => image.note).map((image) => `${image.slot || '图'} ${image.note}`);
   const facts = [
     ['分镜名称', shot.name],
+    ['视频提示词', json.prompt || '—', true],
+    ['视频前置提示词', json.prefixPrompt || '无', true],
     ['参考图', `${shot.count} / 9`],
     ['时长', json.duration ? `${json.duration} 秒` : '渠道默认'],
     ['画面比例', json.ratio || '渠道默认'],

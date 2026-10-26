@@ -40,6 +40,7 @@ H3-Projects/<项目名-编号>/assets/
 {
   "title": "镜头01",
   "prompt": "雨夜街头，镜头缓慢推近",
+  "prefixPrompt": "电影感，35mm 胶片，冷色调",
   "duration": 10,
   "ratio": "16:9",
   "resolution": "",

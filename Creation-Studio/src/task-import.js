@@ -20,10 +20,11 @@ const RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4'];
 const MAX_IMAGES = 9;
 const MAX_AUDIOS = 3;
 
-const HEADERS = ['任务标题', '提示词', '参考图路径', '参考图说明', '时长（秒）', '画幅', '分辨率', '生成张数', '参考音频路径', '参考音频说明'];
+const HEADERS = ['任务标题', '提示词', '参考图路径', '参考图说明', '时长（秒）', '画幅', '分辨率', '生成张数', '参考音频路径', '参考音频说明', '视频前置提示词'];
 const HEADER_ALIAS = {
   title: ['任务标题', '标题', '分镜', '分镜名'],
   prompt: ['提示词', '描述', '内容', '任务详情'],
+  prefixPrompt: ['视频前置提示词', '前置提示词', '前缀提示词'],
   images: ['参考图路径', '参考图', '图片'],
   notes: ['参考图说明', '图片说明', '素材说明'],
   duration: ['时长（秒）', '时长(秒)', '时长'],
@@ -51,11 +52,13 @@ const JSON_TEMPLATE = {
     '本文件只支持固定结构：顶层 items 数组，一条任务一个元素；单条任务也只放一行。',
     '参考图写在 images 里：path 为绝对路径（或相对素材库的路径），note 说明这张图是什么。',
     'duration / ratio / resolution / count 可留空，留空时使用创建页所选渠道的默认值。',
+    'prefixPrompt 是视频前置提示词（风格、画质等），生成时会拼在提示词前面，可留空。',
   ],
   items: [
     {
       title: '镜头 01',
       prompt: '雨夜的旧城街道，霓虹灯倒映在积水里，镜头从远处缓慢推近一名撑透明伞的少女，她回头看向镜头，电影感，浅景深。',
+      prefixPrompt: '电影感，35mm 胶片，冷色调，高动态范围。',
       images: [
         { path: 'D:/素材/ref-01.png', note: '女主正面' },
         { path: 'D:/素材/ref-02.png', note: '女主背影' },
@@ -98,6 +101,7 @@ const XLSX_HELP = [
   ['生成张数', '否', '图像任务一次生成几张，1–4；视频忽略此列'],
   ['参考音频路径', '否', '只给接收音频的视频渠道用，多个用分号 ; 分隔，最多 3 段'],
   ['参考音频说明', '否', '与音频路径一一对应，例如「女主音色」'],
+  ['视频前置提示词', '否', '风格/画质等前置描述，生成时会拼在提示词前面'],
   [],
   ['注意', '', '表头按列名识别，顺序可以调整；多出来的列会原样保留并在页面上提示'],
   ['', '', '参考图/音频路径不存在时，解析会在页面上标出具体行号，不会静默忽略'],
@@ -426,16 +430,18 @@ function normalizeItem(raw, line, errors, warnings) {
     if (!Number.isInteger(count) || count < 1 || count > 4) { errors.push(`第 ${line} 行 生成张数必须是 1–4 的整数`); count = null; }
   }
   const resolution = raw.resolution == null ? '' : String(raw.resolution).trim();
+  const prefixPrompt = raw.prefixPrompt == null ? '' : String(raw.prefixPrompt).trim().slice(0, 4000);
   const images = normalizeImages(raw.images || [], raw.notes || [], line, errors);
   const audios = normalizeAudios(raw.audios || [], raw.audioNotes || [], line, errors);
   const extra = raw.extra && typeof raw.extra === 'object' ? raw.extra : {};
   void warnings;
-  return { line, title, prompt, images, audios, duration, ratio, resolution, count, extra };
+  return { line, title, prompt, prefixPrompt, images, audios, duration, ratio, resolution, count, extra };
 }
 
 const JSON_FIELD_ALIAS = {
   title: ['title', 'name', 'shot', '分镜', '标题'],
   prompt: ['prompt', 'content', 'description', '提示词', '描述'],
+  prefixPrompt: ['prefixPrompt', 'prefix', '视频前置提示词', '前置提示词'],
   duration: ['duration', 'seconds', '时长'],
   ratio: ['ratio', 'aspectRatio', 'aspect', '画幅', '比例'],
   resolution: ['resolution', '分辨率'],
@@ -487,6 +493,7 @@ function parseJson(buffer) {
     return normalizeItem({
       title: pickJsonField(entry, 'title'),
       prompt: pickJsonField(entry, 'prompt'),
+      prefixPrompt: pickJsonField(entry, 'prefixPrompt'),
       duration: pickJsonField(entry, 'duration'),
       ratio: pickJsonField(entry, 'ratio'),
       resolution: pickJsonField(entry, 'resolution'),
@@ -538,6 +545,7 @@ function parseXlsx(buffer) {
     return normalizeItem({
       title: cell('title'),
       prompt: cell('prompt'),
+      prefixPrompt: cell('prefixPrompt'),
       images: splitList(cell('images')),
       notes: splitList(cell('notes')),
       audios: splitList(cell('audios')),

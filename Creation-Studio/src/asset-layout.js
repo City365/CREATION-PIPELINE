@@ -355,6 +355,7 @@ function importShots(projectId, items, sourceName = '') {
     const json = {
       title: name,
       prompt: String(item.prompt || ''),
+      prefixPrompt: String(item.prefixPrompt || ''),
       duration: item.duration == null ? null : item.duration,
       ratio: item.ratio || '',
       resolution: item.resolution || '',

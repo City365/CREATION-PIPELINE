@@ -363,10 +363,10 @@ const Events = (() => {
       const title = String(item.title || '').trim() || undefined;
       const ratio = item.ratio || fallbackRatio;
       if (draft.kind === 'image') {
-        return { title, prompt, refs: images, imageRatio: ratio, aspectRatio: ratio, imageLayoutId: 'free', count: Math.max(1, Math.min(4, Number(item.count) || 1)), channelId: draft.channelId };
+        return { title, prompt, prefixPrompt: String(item.prefixPrompt || '').trim() || undefined, refs: images, imageRatio: ratio, aspectRatio: ratio, imageLayoutId: 'free', count: Math.max(1, Math.min(4, Number(item.count) || 1)), channelId: draft.channelId };
       }
       return {
-        title, prompt, images, audios,
+        title, prompt, prefixPrompt: String(item.prefixPrompt || '').trim() || undefined, images, audios,
         duration: Math.max(1, Math.min(15, Number(item.duration) || defaultDuration)),
         aspectRatio: ratio,
         resolution: String(item.resolution || '').trim() || defaultResolution,

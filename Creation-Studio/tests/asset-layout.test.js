@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -20,7 +20,7 @@ test('素材库新结构：分镜/素材/其他，9 格 + shot.json + 分镜导�
   fs.writeFileSync(refA, PNG);
   fs.writeFileSync(refB, PNG);
   const items = [
-    { title: '镜头01', prompt: '雨夜街头', images: Array.from({ length: 10 }, () => ({ path: refA, note: '女主' })), duration: 10, ratio: '16:9' },
+    { title: '镜头01', prompt: '雨夜街头', prefixPrompt: '冷色调，电影感', images: Array.from({ length: 10 }, () => ({ path: refA, note: '女主' })), duration: 10, ratio: '16:9' },
     { title: '镜头02', prompt: '清晨咖啡馆', images: [{ path: refB, note: '场景' }], duration: 8, ratio: '9:16' },
   ];
   const imported = layout.importShots(project.id, items, 'shots.json');
@@ -37,6 +37,7 @@ test('素材库新结构：分镜/素材/其他，9 格 + shot.json + 分镜导�
   assert.equal(fs.existsSync(path.join(shot1, '图十.png')), false, '最多 9 格');
   const json = JSON.parse(fs.readFileSync(path.join(shot1, 'shot.json'), 'utf8'));
   assert.equal(json.prompt, '雨夜街头');
+  assert.equal(json.prefixPrompt, '冷色调，电影感');
   assert.equal(json.title, '镜头01');
   assert.equal(json.images.length, 9);
   assert.equal(json.images[0].path, path.join(shot1, '图一.png'));
