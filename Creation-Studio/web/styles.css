@@ -1849,3 +1849,23 @@ body.is-pane-resizing * { user-select: none !important; }
 .generation-prefix-body{display:grid;gap:8px;margin-top:6px}
 .generation-prefix-body[hidden]{display:none}
 .generation-prefix-summary{margin:6px 0 0;font-size:12px;opacity:.62;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* 顶栏自适应：不换行、不竖排、窄屏逐级收缩 */
+.h3-topbar{gap:12px}
+.h3-brand{min-width:0;flex:0 1 auto}
+.h3-brand-text{min-width:0;overflow:hidden}
+.h3-maintabs{overflow-x:auto;scrollbar-width:none;margin-left:8px}
+.h3-maintabs::-webkit-scrollbar{display:none}
+.h3-maintab{padding:0 12px}
+.h3-topbar-right{flex-shrink:0}
+.h3-project-btn,.h3-queue-btn,.h3-svc-item,.h3-svc-item span,.h3-svc-act{white-space:nowrap}
+@media(max-width:1600px){.h3-topbar{gap:8px}.h3-maintab{padding:0 9px;font-size:var(--h3-fs-2)}}
+@media(max-width:1400px){.h3-brand-text{display:none}.h3-version{display:none}.h3-maintab{padding:0 7px}}
+@media(max-width:1200px){.h3-volume{display:none}.h3-svc-item span,.h3-svc-act{display:none}}
+
+/* 任务管理：合并页需要实底，避免文字压在壁纸上 */
+.tasks-page .page-head{background:color-mix(in srgb,var(--h3-bg-1) 88%,transparent);border:1px solid var(--h3-border);padding:var(--h3-sp-3) var(--h3-sp-4);backdrop-filter:blur(12px)}
+.tasks-page .filters{background:color-mix(in srgb,var(--h3-bg-1) 88%,transparent);border:1px solid var(--h3-border);padding:8px 10px}
+.task-tabs{margin:0;gap:6px;flex-wrap:wrap}
+.task-tabs [role=tab]{padding:8px 14px;border:1px solid var(--h3-border);background:var(--h3-bg-1)}
+.task-tabs [role=tab][aria-selected=true]{border-color:var(--h3-border-strong);background:var(--h3-bg-2)}

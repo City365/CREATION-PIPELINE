@@ -12,7 +12,7 @@ const IJ=(()=>{
    state.imageTasks=(await api('/api/images/tasks')).tasks;
    for(const task of tasks())if(task.status==='success')await WB.reconcileImageTask(task);
    const changed=before!==JSON.stringify(tasks().map(t=>[t.id,t.status,t.phase,t.logs.length]));
-   if(changed&&['image','jobs','logs'].includes(state.route)){
+   if(changed&&['image','jobs','logs','tasks'].includes(state.route)){
     const typing=document.activeElement?.matches('input,textarea,[contenteditable="true"]');
     if(!typing)render();else{const panel=document.querySelector('#image-task-panel');if(panel)panel.outerHTML=panelHtml();}
    }

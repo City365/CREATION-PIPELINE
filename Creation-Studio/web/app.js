@@ -540,8 +540,18 @@ document.addEventListener('click', async (event) => {
 
 function setRoute() {
   const previousRoute = state.route;
-  const route = (location.hash || '#image').replace(/^#/, '');
-  state.route = ['image', 'studio', 'script', 'assets', 'batch', 'jobs', 'media', 'compare', 'logs', 'projects'].includes(route) ? route : 'image';
+  let route = (location.hash || '#image').replace(/^#/, '');
+  // 旧路由兼容：批量任务 / 任务 / 任务日志 统一进「任务管理」的对应页签
+  if (route === 'jobs' || route === 'batch' || route === 'logs') {
+    state.taskTab = route === 'batch' ? 'batch'
+      : route === 'logs' ? ((state.logTab || localStorage.getItem('h3.logs.tab') || 'video') === 'image' ? 'image' : 'video')
+      : 'running';
+    localStorage.setItem('h3.tasks.tab', state.taskTab);
+    try { history.replaceState(null, '', '#tasks' + location.search); } catch { /* ignore */ }
+    route = 'tasks';
+  }
+  state.route = ['image', 'studio', 'script', 'assets', 'batch', 'jobs', 'tasks', 'media', 'compare', 'logs', 'projects'].includes(route) ? route : 'image';
+  if (state.route === 'tasks' && !state.taskTab) state.taskTab = localStorage.getItem('h3.tasks.tab') || 'running';
   if (state.route !== 'projects' && !state.projectId) state.route = 'projects';
   if (state.route === 'script' && previousRoute !== 'script' && state.ask?.conversations && !state.ask.loading && !state.ask.generating) {
     askNewConversation();
@@ -564,6 +574,7 @@ function render() {
   else if (state.route === 'script') html = renderScript();
   else if (state.route === 'batch') html = '<div class="page-scroll">' + renderBatch() + '</div>';
   else if (state.route === 'jobs') html = '<div class="page-scroll">' + renderJobs() + '</div>';
+  else if (state.route === 'tasks') html = '<div class="page-scroll tasks-page">' + renderTasks() + '</div>';
   else if (state.route === 'assets') html = '<div class="page-scroll">' + renderAssets() + '</div>';
   else if (state.route === 'media') html = '<div class="page-scroll">' + renderMedia() + '</div>';
   else if (state.route === 'compare') html = '<div class="page-scroll is-compare">' + renderCompare() + '</div>';
@@ -1995,20 +2006,22 @@ function jobStatusBadge(job) {
   return `<span class="badge ${job.status === 'success' ? 'ok' : job.status === 'failed' ? 'bad' : job.status === 'running' ? 'info' : ''}">${STATUS_LABEL[job.status] || job.status}</span>`;
 }
 
-function renderJobs() {
+function renderJobs(embed = false) {
   const filter = state.jobFilter || { status: '', provider: '' };
   const jobs = state.jobs.filter((j) => (!filter.status || j.status === filter.status) && (!filter.provider || j.provider === filter.provider));
   const counts = { queued: 0, running: 0, success: 0, failed: 0 };
   state.jobs.forEach((j) => { if (counts[j.status] !== undefined) counts[j.status]++; });
-  return `
+  const head = `
   <div class="page-head">
-    <div><h1>任务管理</h1><p>视频任务 · 排队 ${counts.queued} · 生成中 ${counts.running} · 完成 ${counts.success} · 失败 ${counts.failed}</p></div>
+    <div><h1>运行任务管理</h1><p>视频任务 · 排队 ${counts.queued} · 生成中 ${counts.running} · 完成 ${counts.success} · 失败 ${counts.failed}</p></div>
     <div class="page-actions"><button class="btn" data-act="go-logs">查看执行日志</button><button class="btn" data-act="go-studio">去创作台</button></div>
-  </div>
+  </div>`;
+  return `${embed ? '' : head}
   <div class="filters">
     ${['', 'queued', 'running', 'success', 'failed', 'canceled'].map((s) => `<button class="chip ${filter.status === s ? 'active' : ''}" data-filter-status="${s}">${s ? STATUS_LABEL[s] : '全部状态'}</button>`).join('')}
     <span style="width:12px"></span>
     ${[['', '全部类型'], ['autodl', '官网API'], ['generic', '自定义']].map(([p, label]) => `<button class="chip ${filter.provider === p ? 'active' : ''}" data-filter-provider="${p}">${label}</button>`).join('')}
+    ${embed ? '<span class="grow"></span><button class="btn sm" data-act="go-logs">查看执行日志</button>' : ''}
   </div>
   ${jobs.length ? `<div class="table-wrap"><table class="jobs">
     <thead><tr><th>状态</th><th>任务</th><th>工作流</th><th>参考</th><th>进度</th><th>创建</th><th>操作</th></tr></thead>
@@ -5546,18 +5559,19 @@ function bindScript(root) {
 
 /* ------------------------------------------------------------------ batch */
 
-function renderBatch() {
+function renderBatch(embed = false) {
   const b = state.batch || {};
   const result = b.result || null;
-  return `
+  const head = `
   <div class="page-head">
-    <div><h1>批量任务</h1><p>导入 AI 整理好的任务 JSON，选 API 后一次加入并发队列。</p></div>
+    <div><h1>批量创建</h1><p>导入 AI 整理好的任务 JSON，选 API 后一次加入并发队列。</p></div>
     <div class="page-actions">
       <button class="btn" data-act="batch-import">导入 JSON</button>
       <button class="btn" data-act="batch-template">保存模板</button>
       <button class="btn" data-act="batch-spec">复制 AI 说明</button>
     </div>
-  </div>
+  </div>`;
+  return `${embed ? '' : head}
   <div class="batch-grid">
     <div class="card" style="padding:14px;display:flex;flex-direction:column;gap:10px">
       <div class="row"><span class="muted small">工作流</span><select class="select" id="batch-workflow" style="flex:1">${state.workflows.map((w) => `<option value="${esc(w.id)}" ${w.id === (b.workflowId || state.studio.workflowId) ? 'selected' : ''}>${esc(w.display)}</option>`).join('')}</select></div>
@@ -5691,8 +5705,14 @@ function bindBatch(root) {
 
 /* ------------------------------------------------------------------ logs */
 
-function renderLogs() {
+function logsPanel(tab) {
   const jobsWithLogs = state.jobs.slice(0, 50);
+  return `<section id="generation-log-panel" role="tabpanel" aria-labelledby="${tab==='video'?'video':'image'}-log-tab">
+  ${tab==='image'?IJ.table(true):IJ.logTable(jobsWithLogs.map(job=>({id:job.id,createdAt:job.createdAt,title:job.title,statusHtml:jobStatusBadge(job)+'<div class="hint">'+esc(job.stage||'')+'</div>',error:job.error,actions:'<button class="btn sm" data-act="detail" data-id="'+job.id+'">查看日志</button>'})))}
+  </section>`;
+}
+
+function renderLogs() {
   const tab=state.logTab||localStorage.getItem('h3.logs.tab')||'video';
   return `
   <div class="page-head"><div><h1>任务日志</h1><p>每条任务从提交、轮询到下载的全过程都会记录在这里。</p></div>
@@ -5701,9 +5721,7 @@ function renderLogs() {
     <button type="button" role="tab" id="video-log-tab" aria-controls="generation-log-panel" aria-selected="${tab==='video'}" data-log-tab="video" class="${tab==='video'?'is-active':''}">视频生成日志</button>
     <button type="button" role="tab" id="image-log-tab" aria-controls="generation-log-panel" aria-selected="${tab==='image'}" data-log-tab="image" class="${tab==='image'?'is-active':''}">图像生成日志</button>
   </div>
-  <section id="generation-log-panel" role="tabpanel" aria-labelledby="${tab==='video'?'video':'image'}-log-tab">
-  ${tab==='image'?IJ.table(true):IJ.logTable(jobsWithLogs.map(job=>({id:job.id,createdAt:job.createdAt,title:job.title,statusHtml:jobStatusBadge(job)+'<div class="hint">'+esc(job.stage||'')+'</div>',error:job.error,actions:'<button class="btn sm" data-act="detail" data-id="'+job.id+'">查看日志</button>'})))}
-  </section>
+  ${logsPanel(tab)}
   `;
 }
 
@@ -5717,6 +5735,51 @@ function bindLogs(root) {
     if (target.dataset.act === 'go-studio') { location.hash = '#studio'; return; }
     if (target.dataset.act === 'detail') openJobDetail(target.dataset.id);
   });
+}
+
+/* ------------------------------------------------------------------ 任务管理（合并入口） */
+
+const TASK_TABS = [['running', '运行任务管理'], ['batch', '批量创建'], ['video', '视频生成日志'], ['image', '图像生成日志']];
+function currentTaskTab() {
+  const tab = state.taskTab || localStorage.getItem('h3.tasks.tab') || 'running';
+  return TASK_TABS.some(([id]) => id === tab) ? tab : 'running';
+}
+function renderTasks() {
+  const tab = currentTaskTab();
+  const counts = {};
+  state.jobs.forEach((j) => { counts[j.status] = (counts[j.status] || 0) + 1; });
+  const imageTasks = state.imageTasks || [];
+  const running = (counts.running || 0) + imageTasks.filter((t) => t.status === 'running').length;
+  const queued = (counts.queued || 0) + imageTasks.filter((t) => ['queued', 'paused'].includes(t.status)).length;
+  const done = (counts.success || 0) + imageTasks.filter((t) => t.status === 'success').length;
+  const failed = (counts.failed || 0) + imageTasks.filter((t) => t.status === 'failed').length;
+  const head = `
+  <div class="page-head">
+    <div><h1>任务管理</h1><p>创建 · 调度 · 监控：视频与图像任务统一在这里 · 生成中 ${running} · 排队 ${queued} · 完成 ${done} · 失败 ${failed}</p></div>
+    <div class="page-actions"><button class="btn" data-act="go-studio">去创作台</button><button class="btn" data-act="go-image">去图像台</button></div>
+  </div>`;
+  const tabs = `<div class="generation-log-tabs task-tabs" role="tablist" aria-label="任务管理页签">${TASK_TABS.map(([id, label]) => `<button type="button" role="tab" data-task-tab="${id}" aria-selected="${tab === id}" class="${tab === id ? 'is-active' : ''}">${label}</button>`).join('')}</div>`;
+  const body = tab === 'batch' ? renderBatch(true) : tab === 'running' ? renderJobs(true) : logsPanel(tab);
+  return head + tabs + body;
+}
+function bindTasks(root) {
+  const tab = currentTaskTab();
+  root.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-task-tab]');
+    if (button) {
+      state.taskTab = button.dataset.taskTab;
+      localStorage.setItem('h3.tasks.tab', state.taskTab);
+      render();
+      return;
+    }
+    const action = event.target.closest('[data-act]');
+    if (!action) return;
+    if (action.dataset.act === 'go-studio') { location.hash = '#studio'; return; }
+    if (action.dataset.act === 'go-image') { location.hash = '#image'; }
+  });
+  if (tab === 'batch') bindBatch(root);
+  else if (tab === 'running') bindJobs(root);
+  else bindLogs(root);
 }
 
 /* ------------------------------------------------------------------ settings */
@@ -6914,6 +6977,7 @@ async function init() {
 function bindRoute(root) {
   if (state.route === 'studio') bindStudio(root);
   else if (state.route === 'image') bindImage(root);
+  else if (state.route === 'tasks') bindTasks(root);
   else if (state.route === 'jobs') bindJobs(root);
   else if (state.route === 'assets') bindAssets(root);
   else if (state.route === 'compare') bindCompare(root);
