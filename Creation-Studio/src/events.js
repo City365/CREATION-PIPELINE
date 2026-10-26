@@ -8,39 +8,13 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const config = require('./config');
 const jobs = require('./jobs');
+const channels=require('./channels');
 
 const state = { events: [] };
-const FILE = () => path.join(config.load().dataDir || config.DATA, 'events.json');
-const MAX_EVENTS = 200;
-
-function uid() {
-  return 'evt_' + Date.now().toString(36) + '_' + crypto.randomUUID().slice(0, 8);
-}
-
-function file() {
-  try { return FILE(); } catch { return path.join(config.DATA, 'events.json'); }
-}
-
-function load() {
-  try {
-    const data = JSON.parse(fs.readFileSync(file(), 'utf8'));
-    state.events = Array.isArray(data.events) ? data.events : [];
-  } catch {
-    state.events = [];
-  }
-  return state.events;
-}
-
-function save() {
-  let target;
-  try { target = file(); } catch { return; }
-  try {
-    fs.mkdirSync(path.dirname(target), { recursive: true });
-    const tmp = target + '.' + crypto.randomUUID() + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify({ schemaVersion: 1, events: state.events.slice(0, MAX_EVENTS) }, null, 2));
-    fs.renameSync(tmp, target);
-  } catch { /* 事件存储失败不能影响任务执行 */ }
-}
+const repository = require('./event-store');
+function uid() { return 'evt_' + Date.now().toString(36) + '_' + crypto.randomUUID().slice(0, 8); }
+function load() { state.events = repository.read(); return state.events; }
+function save() { repository.write(state.events); }
 
 function imageTasks() {
   try { return require('./image-tasks').tasks(); } catch { return null; }
@@ -83,10 +57,11 @@ function hydrate(event, context = {}) {
     }
   }
   const items = (event.items || []).map((item) => {
-    if (item.override === 'skipped') return { ...item, status: 'skipped', error: item.error || null };
+    if (['skipped', 'canceled'].includes(item.override)) return { ...item, status: item.override, error: item.error || null };
     let source = null;
     if (item.refType === 'job') source = jobMap.get(item.refId);
     else if (item.refType === 'imageTask') source = imageMap.get(item.refId);
+    if (!source && item.dispatchState === 'pending') return { ...item, status: 'queued' };
     if (!source) {
       return { ...item, status: item.status === 'queued' ? 'unknown' : item.status, error: item.error || '任务记录已不存在' };
     }
@@ -94,37 +69,42 @@ function hydrate(event, context = {}) {
       ...item,
       status: itemStatus(source.status),
       reconcile: source.status === 'interrupted',
+      remoteId:source.remotePromptId||null,provider:source.provider||null,
       error: source.error || null,
       progress: Number(source.progress || 0),
       startedAt: source.startedAt || null,
       finishedAt: source.finishedAt || null,
     };
   });
+  if (event.draft) return {...event, items, status: 'draft', stats: { total: items.length, done: 0, success: 0, failed: 0, running: 0, queued: 0, unknown: 0, skipped: 0, canceled: 0 } };
   if (!items.length) {
-    return { ...event, items, stats: { total: 0, queued: 0, running: 0, paused: 0, done: 0, failed: 0, canceled: 0, skipped: 0, unknown: 0 }, status: 'draft', updatedAt: Date.now() };
+    return { ...event, items, stats: { total: 0, queued: 0, running: 0, paused: 0, done: 0, success: 0, failed: 0, canceled: 0, skipped: 0, unknown: 0 }, status: 'draft', updatedAt: Date.now() };
   }
-  const stats = { total: items.length, queued: 0, running: 0, paused: 0, done: 0, failed: 0, canceled: 0, skipped: 0, unknown: 0 };
+  const stats = { total: items.length, queued: 0, running: 0, paused: 0, done: 0, success: 0, failed: 0, canceled: 0, skipped: 0, unknown: 0 };
   for (const item of items) {
     if (item.status === 'running') stats.running += 1;
     else if (item.status === 'queued') stats.queued += 1;
     else if (item.status === 'paused') stats.paused += 1;
-    else if (item.status === 'success') { stats.done += 1; }
+    else if (item.status === 'success') stats.success += 1;
+    else if (item.status === 'skipped') stats.skipped += 1;
     else if (item.status === 'canceled') stats.canceled += 1;
     else if (item.status === 'unknown') stats.unknown += 1;
     else stats.failed += 1;
   }
-  stats.done += stats.canceled + stats.skipped;
+  stats.done = stats.success + stats.failed + stats.canceled + stats.skipped;
   const started = items.map((i) => i.startedAt).filter(Boolean).sort()[0] || event.startedAt || null;
   const finished = items.every((i) => ['success', 'failed', 'canceled', 'skipped', 'unknown'].includes(i.status))
     ? (items.map((i) => i.finishedAt).filter(Boolean).sort().pop() || event.finishedAt || Date.now())
     : null;
   let status = event.status;
   if (stats.running > 0) status = 'running';
-  else if (stats.queued > 0 && finished === null) status = 'queued';
+  else if ((stats.queued > 0 || stats.paused > 0) && finished === null) status = 'queued';
   else if (finished !== null) {
-    if (stats.done === stats.total) status = stats.canceled === stats.total ? 'canceled' : 'completed';
+    if (stats.success === stats.total) status = 'completed';
+    else if (stats.unknown > 0) status = 'interrupted';
     else if (stats.failed === 0 && stats.canceled > 0) status = 'canceled';
-    else if (stats.failed > 0 && stats.done > 0) status = 'partial';
+    else if (stats.failed > 0 && stats.success > 0) status = 'partial';
+    else if (stats.skipped > 0 && stats.failed === 0) status = 'completed';
     else if (stats.unknown > 0 && stats.failed === 0 && items.some((item) => item.reconcile)) status = 'interrupted';
     else status = 'failed';
   }
@@ -141,20 +121,13 @@ function hydrate(event, context = {}) {
   };
 }
 
-function list(filter = {}) {
-  load();
-  let events = state.events.map(hydrate);
-  if (filter.status) events = events.filter((e) => e.status === filter.status);
-  if (filter.source) events = events.filter((e) => e.source === filter.source);
-  const summary = { total: events.length, running: 0, queued: 0, completed: 0, failed: 0, partial: 0 };
-  for (const event of events) if (summary[event.status] !== undefined) summary[event.status] += 1;
-  const limit = Math.max(1, Math.min(200, Number(filter.limit) || 50));
-  return { events: events.slice(0, limit), stats: summary };
+function list(filter={}){
+ const result=repository.query(filter);
+ return {...result,schedulerError:state.schedulerError||null,events:result.events.map(raw=>{const e=hydrate(raw);const {items,spec,...rest}=e;return {...rest,kind:repository.kind(e),spec:{projectId:spec?.projectId,workflowId:spec?.workflowId},itemCount:items.length};})};
 }
 
 function get(id) {
-  load();
-  const raw = state.events.find((e) => e.id === id);
+  const raw = repository.get(id);
   if (!raw) { const error = new Error('事件不存在'); error.status = 404; error.code = 'EVENT_NOT_FOUND'; throw error; }
   return hydrate(raw);
 }
@@ -163,9 +136,11 @@ function create(input = {}) {
   load();
   const items = Array.isArray(input.items) ? input.items : [];
   const event = {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    version:1,
     id: uid(),
     title: String(input.title || '').trim().slice(0, 120) || ('事件 ' + new Date().toLocaleString('zh-CN', { hour12: false })),
+    kind: input.kind || (input.source === 'image' ? 'image' : 'video'),
     source: ['batch', 'studio', 'image', 'api'].includes(input.source) ? input.source : 'api',
     spec: {
       channelId: String(input.channelId || ''),
@@ -175,7 +150,7 @@ function create(input = {}) {
       items: items.map((item) => ({
         key: String(item.key || ''),
         title: String(item.title || '').slice(0, 80),
-        prompt: String(item.prompt || '').slice(0, 20000),
+        prompt: String(item.prompt || ''),
         images: Array.isArray(item.images) ? item.images : [],
         params: item.params || {},
       })),
@@ -186,7 +161,7 @@ function create(input = {}) {
       retries: Math.max(0, Math.min(3, Number(input.policy?.retries) || 0)),
     },
     schedule: { order: Number(input.schedule?.order) || 0, startAt: input.schedule?.startAt || null },
-    status: 'queued',
+    status: input.draft?'draft':'queued',
     items: [],
     createdAt: Date.now(),
     startedAt: null,
@@ -204,20 +179,49 @@ function attach(event, refType, refId, extra = {}) {
   return item;
 }
 
+function prepareInputs(inputs,kind){return inputs.map(input=>{const copy={...input};if(kind==='image'){const ch=copy.channelId?channels.get('image',copy.channelId):channels.active('image');if(!ch)throw Object.assign(new Error('没有启用的图像渠道'),{status:422});copy.channelId=ch.id;copy.model=copy.model||ch.model;}delete copy.apiKey;delete copy.authorization;for(const field of ['images','refs','audios'])if(Array.isArray(copy[field]))copy[field]=copy[field].map(asset=>{if(!asset?.path||/^https?:/i.test(asset.path))return asset;const full=path.resolve(asset.path);if(!fs.existsSync(full))throw Object.assign(new Error('参考素材不存在：'+asset.path),{status:400});const digest=crypto.createHash('sha256').update(fs.readFileSync(full)).digest('hex');return {...asset,path:full,assetFingerprint:digest};});return copy;});}
 function createFromJobInputs(inputs, meta = {}) {
-  if (!Array.isArray(inputs) || !inputs.length) {
-    const error = new Error('没有可创建的任务条目'); error.status = 400; error.code = 'INVALID_SPEC'; throw error;
-  }
-  const event = create({ ...meta, items: inputs.map((input) => ({ title: input.title, prompt: input.prompt })) });
-  for (const input of inputs) {
-    const created = jobs.addJobs({ ...input, eventId: event.id });
-    for (const job of created) {
-      attach(event, 'job', job.id, { title: job.title, cancelMode: 'local' });
-      try { jobs.setHeld(job.id, true); } catch { /* 调度器会兜底 */ }
+  if (!Array.isArray(inputs) || !inputs.length) { const error = new Error('没有可创建的任务条目'); error.status = 400; throw error; }
+  inputs=prepareInputs(inputs,meta.kind);
+  const kind = meta.kind === 'image' ? 'image' : 'video';
+  load();
+  const requestKey=meta.requestId||(inputs.length===1?inputs[0].requestId:null);
+  const inputHash=crypto.createHash('sha256').update(JSON.stringify({inputs,kind,projectId:meta.projectId||''})).digest('hex');
+  if(requestKey){const existing=state.events.find(e=>e.requestKey===requestKey);if(existing){if(existing.inputHash!==inputHash)throw Object.assign(new Error('同一请求编号的内容发生变化'),{status:409});return get(existing.id);}}
+
+  const event = create({ ...meta, kind, items: inputs.map(input => ({ ...input, params: input })) });
+  event.requestKey=requestKey;event.inputHash=inputHash;
+  event.paused = !!meta.paused;
+  event.draft = !!meta.draft;event.status=event.draft?'draft':'queued';
+  event.items = inputs.flatMap(input => Array.from({length: kind === 'video' ? Math.max(1,Math.min(20,Number(input.count)||1)) : 1}, () => ({ ...normalizeRef(kind === 'image' ? 'imageTask' : 'job', ''), title: input.title || input.prompt?.slice(0,60) || '生成任务', input: { ...input, count: 1 }, status: 'queued', dispatchState: 'pending' })));
+  save();
+  if (!event.draft) materialize(event);
+  save();
+  setTimeout(safeTick, 50);
+  return get(event.id);
+}
+function materialize(event) {
+  for (const item of event.items) {
+    if (item.dispatchState !== 'pending') continue;
+    // Durable intent precedes executor creation; stable item key allows restart reconciliation.
+    const input = { ...item.input, eventId: event.id, eventItemId: item.id, requestId: item.id };
+    try {
+      if (item.refType === 'imageTask') {
+        const task = imageTasks().enqueue({ ...input, paused: true });
+        item.refId = task.id;
+      } else {
+        const found = jobs.list().find(j => j.eventId === event.id && j.eventItemId === item.id);
+        const task = found || jobs.addJobs({ ...input, held: true })[0];
+        jobs.setHeld(task.id, true);
+        item.refId = task.id;
+      }
+      item.dispatchState = 'ready'; item.status = 'queued';
+      save();
+    } catch (err) {
+      item.error = String(err.message || err); event.paused = true;
+      save(); throw err;
     }
   }
-  setTimeout(tick, 50);
-  return get(event.id);
 }
 
 function recordJobs(created, source = 'studio') {
@@ -281,64 +285,100 @@ function itemLog(eventId, itemId) {
 /* ---------------- 调度与整组控制（P2） ---------------- */
 
 let tickTimer = null;
+let unsubscribeImage=null,jobListener=null;
 const TERMINAL_ITEM = new Set(['success', 'failed', 'canceled', 'skipped', 'unknown']);
 
-function rawEvent(id) {
-  load();
-  const raw = state.events.find((e) => e.id === id);
-  if (!raw) { const error = new Error('事件不存在'); error.status = 404; error.code = 'EVENT_NOT_FOUND'; throw error; }
-  return raw;
-}
+function rawEvent(id){load();const raw=state.events.find(e=>e.id===id);if(!raw)throw Object.assign(new Error('事件不存在'),{status:404});return raw;}
 
 function jobMapNow() {
   return new Map(jobs.list().map((j) => [j.id, j]));
 }
 
-function itemStatusOf(item, jobMap) {
-  if (item.override === 'skipped') return 'skipped';
-  if (item.override === 'canceled') return 'canceled';
-  const job = jobMap.get(item.refId);
-  return job ? itemStatus(job.status) : 'unknown';
+function sourceOf(item, map) {
+  if (item.refType === 'imageTask') { try { return imageTasks()?.get(item.refId); } catch { return null; } }
+  return map.get(item.refId);
 }
-
+function itemStatusOf(item, map) {
+  if (item.override) return item.override;
+  if (item.dispatchState === 'pending') return 'queued';
+  const source = sourceOf(item, map);
+  return source ? itemStatus(source.status) : 'unknown';
+}
+function hold(item, value) {
+  if (item.refType === 'imageTask') {
+    const worker = imageTasks(), task = worker.get(item.refId);
+    if (value && !task.held) worker.pause(item.refId);
+    if (!value && task.held) worker.resume(item.refId);
+  } else jobs.setHeld(item.refId, value);
+}
+function cancelPending(item) {
+  if (item.refType === 'imageTask') imageTasks().cancelPending(item.refId);
+  else jobs.cancel(item.refId);
+}
+function capture(event, item, map) {
+  const source = sourceOf(item, map);
+  if (!source) return;
+  const attemptId = source.runId || source.id;
+  const previous = repository.attempts(event.id,item.id).find(a => a.id === attemptId);
+  const record = { id: attemptId, eventId: event.id, itemId: item.id, refId: item.refId, kind: event.kind || repository.kind(event), createdAt: source.createdAt || Date.now(), startedAt: source.startedAt, finishedAt: source.finishedAt, status: source.status, remoteId: source.remotePromptId || null, error: source.error, outputs: source.outputs || source.result?.items || [], snapshot: source.snapshot || item.input || {}, logs: item.refType === 'imageTask' ? source.logs || [] : jobs.readLog(item.refId) };
+  if (!previous || previous.status !== record.status || previous.logs.length !== record.logs.length) repository.attempt(record);
+}
 function tick() {
-  if (!state.events.length) return;
-  load();
+  state.events=repository.active();
   const map = jobMapNow();
   let changed = false;
-  for (const event of state.events) {
-    if (event.paused || !event.items || !event.items.length) continue;
-    if (TERMINAL_ITEM.has(event.lastStatus || '')) continue;
-    const statuses = event.items.map((item) => itemStatusOf(item, map));
-    if (statuses.every((status) => TERMINAL_ITEM.has(status))) continue;
-    if (event.policy && event.policy.onItemFail === 'stop' && statuses.includes('failed')) {
-      for (const [index, item] of event.items.entries()) {
-        if (statuses[index] === 'running' || statuses[index] === 'queued') {
-          if (statuses[index] === 'queued') { try { jobs.cancel(item.refId); } catch { /* ignore */ } }
-          item.override = 'skipped';
-          changed = true;
-        }
+  const ordered = state.events.slice().sort((a,b) => (a.schedule?.order || 0) - (b.schedule?.order || 0) || a.createdAt - b.createdAt);
+  const queueIds=ordered.flatMap(e=>(e.items||[]).filter(i=>i.refType==='job'&&map.get(i.refId)?.status==='queued').map(i=>i.refId));
+  if(jobs.reorder&&queueIds.length){const keys=new Set(queueIds),existing=[...map.values()].filter(j=>keys.has(j.id)).sort((a,b)=>(a.order||0)-(b.order||0)).map(j=>j.id);if(existing.join(',')!==queueIds.join(','))jobs.reorder(queueIds);}
+  let imageOrder=0;for(const event of ordered)for(const item of event.items||[])if(item.refType==='imageTask'&&item.refId&&imageTasks()?.setOrder)imageTasks().setOrder(item.refId,imageOrder++);
+  for (const event of ordered) {
+    for (const item of event.items || []) capture(event,item,map);
+    if (event.legacy || event.paused || event.canceled || event.draft || !event.items?.length) continue;
+    if (event.schedule?.startAt && Date.parse(event.schedule.startAt) > Date.now()) continue;
+    if (event.items.some(i => i.dispatchState === 'pending')) { try { materialize(event); changed=true; } catch { continue; } }
+    const statuses = event.items.map(item => itemStatusOf(item,map));
+    if (statuses.every(status => TERMINAL_ITEM.has(status))) continue;
+    if (event.policy?.onItemFail === 'stop' && statuses.includes('failed')) {
+      for (const [index,item] of event.items.entries()) if (['queued','paused'].includes(statuses[index])) {
+        cancelPending(item); item.override='skipped'; changed=true;
       }
       continue;
     }
-    // 已放行但还在排队（未 hold）的条目同样占用并发名额
-    const dispatched = event.items.filter((item) => { const job = map.get(item.refId); return job && job.status === 'queued' && !job.held; }).length;
-    let running = statuses.filter((status) => status === 'running').length + dispatched;
-    const limit = Math.max(1, Number(event.policy && event.policy.concurrency) || 1);
-    for (const [index, item] of event.items.entries()) {
-      if (running >= limit) break;
-      if (statuses[index] !== 'queued') continue;
-      const job = map.get(item.refId);
-      if (!job || job.status !== 'queued') continue;
-      try { jobs.setHeld(item.refId, false); running += 1; changed = true; } catch { /* ignore */ }
+    const dispatched = event.items.filter(item => { const source=sourceOf(item,map); return source && source.status==='queued' && !source.held; }).length;
+    let occupied = statuses.filter(status => status==='running').length + dispatched;
+    const limit = Math.max(1,Number(event.policy?.concurrency)||1);
+    for (const [index,item] of event.items.entries()) {
+      if (occupied>=limit) break;
+      if (!['queued','paused'].includes(statuses[index])) continue;
+      const source=sourceOf(item,map);
+      if (!source || !source.held) continue;
+      hold(item,false); occupied++; changed=true;
     }
   }
+  for(const event of state.events){const current=hydrate(event,{jobMap:jobMapNow()});if(current.status!==event.status||current.finishedAt!==event.finishedAt){event.status=current.status;event.finishedAt=current.finishedAt;event.startedAt=current.startedAt;changed=true;}}
   if (changed) save();
 }
 
+function importHistory(){
+ const db=repository.open();if(db.prepare("SELECT 1 FROM task_meta WHERE key='history-seeded'").get())return;
+ load();const linked=new Set(state.events.flatMap(e=>(e.items||[]).map(i=>i.refId)));
+ const oldJobs=jobs.list();const worker=imageTasks();let images=[];if(worker?.page){const first=worker.page(undefined,1);images=first.tasks;for(let p=2;p<=Math.ceil(first.total/10);p++)images.push(...worker.page(undefined,p).tasks);}else if(worker?.list)images=worker.list();
+ for(const source of [...oldJobs.map(j=>({...j,refType:'job'})),...images.map(i=>({...i,refType:'imageTask'}))]){
+  if(linked.has(source.id))continue;
+  const id=uid(),item=normalizeRef(source.refType,source.id,{title:source.title||source.snapshot?.userPrompt?.slice(0,60)||'历史生成任务'});
+  const raw={id,version:1,schemaVersion:2,kind:source.refType==='job'?'video':'image',title:item.title,source:source.refType==='job'?'studio':'image',legacy:true,createdAt:source.createdAt||0,startedAt:source.startedAt||null,finishedAt:source.finishedAt||null,spec:{projectId:source.projectId||'',items:[]},policy:{concurrency:1,onItemFail:'continue'},schedule:{order:0,startAt:null},items:[item]};
+  const result=hydrate(raw);raw.status=result.status;raw.finishedAt=result.finishedAt;state.events.push(raw);
+ }
+ save();db.prepare('INSERT INTO task_meta(key,value) VALUES(?,?)').run('history-seeded',String(Date.now()));
+}
+function safeTick(){try{tick();state.schedulerError=null;}catch(err){state.schedulerError=String(err.message||err);console.error('事件调度停止本轮派发：'+state.schedulerError);}}
 function start() {
+  importHistory();
   if (tickTimer) return;
-  tickTimer = setInterval(tick, 2000);
+  tickTimer = setInterval(safeTick, 2000);
+  const onTerminal=task=>{if(['success','failed','canceled','interrupted'].includes(task.status))setImmediate(safeTick);};
+  if(imageTasks()?.on)unsubscribeImage=imageTasks().on(onTerminal);
+  jobListener=onTerminal;jobs.emitter?.on('job',jobListener);
   if (tickTimer.unref) tickTimer.unref();
   tick();
 }
@@ -346,6 +386,7 @@ function start() {
 function stop() {
   if (tickTimer) clearInterval(tickTimer);
   tickTimer = null;
+  unsubscribeImage?.();unsubscribeImage=null;if(jobListener)jobs.emitter?.off('job',jobListener);jobListener=null;
 }
 
 function pauseEvent(id) {
@@ -353,7 +394,7 @@ function pauseEvent(id) {
   const map = jobMapNow();
   event.paused = true;
   for (const item of event.items) {
-    if (itemStatusOf(item, map) === 'queued') { try { jobs.setHeld(item.refId, true); } catch { /* ignore */ } }
+    if (['queued','paused'].includes(itemStatusOf(item,map))||(item.refType==='imageTask'&&itemStatusOf(item,map)==='running')) hold(item,true);
   }
   save();
   return get(id);
@@ -362,6 +403,7 @@ function pauseEvent(id) {
 function resumeEvent(id) {
   const event = rawEvent(id);
   event.paused = false;
+  for(const item of event.items||[])if(item.refType==='imageTask'){const source=sourceOf(item,jobMapNow());if(source?.held&&source.status==='running')hold(item,false);}
   save();
   tick();
   return get(id);
@@ -374,7 +416,7 @@ function cancelEvent(id) {
   for (const item of event.items) {
     const status = itemStatusOf(item, map);
     if (status === 'queued' || status === 'paused') {
-      try { jobs.cancel(item.refId); } catch { /* ignore */ }
+      cancelPending(item)
       item.override = 'canceled';
     }
   }
@@ -388,46 +430,58 @@ function retryItem(id, itemId) {
   if (!item) { const error = new Error('条目不存在'); error.status = 404; throw error; }
   const map = jobMapNow();
   const status = itemStatusOf(item, map);
-  if (!['failed', 'canceled', 'skipped', 'unknown'].includes(status)) {
+  if (status==='unknown') throw Object.assign(new Error('远端状态未知，请先对账或继续查询原任务，不能直接重新生成'),{status:409});
+  if (!['failed', 'canceled', 'skipped', 'success'].includes(status)) {
     const error = new Error('条目还没结束，不能重试'); error.status = 409; error.code = 'EVENT_STATE_INVALID'; throw error;
   }
-  if (item.refType === 'job') {
-    try { jobs.retry(item.refId); } catch { /* ignore */ }
-    try { jobs.setHeld(item.refId, true); } catch { /* ignore */ }
-  }
+  capture(event,item,map);
+  if (item.refType === 'imageTask') {
+    const task=imageTasks().retry(item.refId,{paused:true}); item.refId=task.id;
+  } else { jobs.retry(item.refId); jobs.setHeld(item.refId,true); }
+  item.attempts=(item.attempts||0)+1;event.legacy=false;
+
   delete item.override;
   event.paused = false;
   event.canceled = false;
+  event.status='queued';event.finishedAt=null;
   save();
   setTimeout(tick, 50);
   return get(id);
 }
 
+function moveItem(id,itemId,direction){const event=rawEvent(id),map=jobMapNow(),from=event.items.findIndex(i=>i.id===itemId);if(from<0)throw Object.assign(new Error('条目不存在'),{status:404});if(!['queued','paused'].includes(itemStatusOf(event.items[from],map)))throw Object.assign(new Error('只能调整尚未派发条目的顺序'),{status:409});const step=direction==='up'?-1:1;let to=from+step;while(to>=0&&to<event.items.length&&!['queued','paused'].includes(itemStatusOf(event.items[to],map)))to+=step;if(to>=0&&to<event.items.length){[event.items[from],event.items[to]]=[event.items[to],event.items[from]];save();}return get(id);}
 function skipItem(id, itemId) {
   const event = rawEvent(id);
   const item = (event.items || []).find((i) => i.id === itemId);
   if (!item) { const error = new Error('条目不存在'); error.status = 404; throw error; }
   const map = jobMapNow();
   const status = itemStatusOf(item, map);
-  if (['queued', 'paused'].includes(status)) { try { jobs.cancel(item.refId); } catch { /* ignore */ } }
+  if (['queued', 'paused'].includes(status)) { cancelPending(item) }
+  if (!['queued', 'paused'].includes(status)) { const error = new Error('只能跳过尚未执行的条目'); error.status = 409; throw error; }
   item.override = 'skipped';
   save();
   return get(id);
 }
 
 function retryFailed(id) {
-  const event = rawEvent(id);
-  const map = jobMapNow();
-  let retried = 0;
-  for (const item of event.items) {
-    if (item.refType !== 'job') continue;
-    const status = itemStatusOf(item, map);
-    if (!['failed', 'canceled', 'unknown'].includes(status)) continue;
-    try { jobs.retry(item.refId); jobs.setHeld(item.refId, true); delete item.override; retried += 1; } catch { /* ignore */ }
-  }
-  if (retried) { event.paused = false; event.canceled = false; save(); setTimeout(tick, 50); }
-  return { event: get(id), retried };
+  const event=get(id);
+  const targets=event.items.filter(i=>i.status==='failed');
+  let retried=0;
+  for(const item of targets){retryItem(id,item.id);retried++;}
+  return {event:get(id),retried};
 }
+function scheduleEvent(id, input={}) {
+  const event=rawEvent(id);
+  if(input.startAt && !Number.isFinite(Date.parse(input.startAt))) {const err=new Error('执行时间无效');err.status=400;throw err;}
+  for(const item of event.items||[]){const status=itemStatusOf(item,jobMapNow());if(['queued','paused'].includes(status)&&item.refId)hold(item,true);}
+  event.schedule={...event.schedule,order:Number(input.order)||0,startAt:input.startAt||null};
+  event.policy={...event.policy,concurrency:Math.max(1,Math.min(4,Number(input.concurrency)||1)),onItemFail:input.onItemFail==='stop'?'stop':'continue'};
+  save();return get(id);
+}
+function lookupRef(refId){load();for(const event of state.events){const item=event.items?.find(i=>i.refId===refId);if(item)return {event,item};}const row=repository.open().prepare("SELECT event_id,item_id FROM task_attempts WHERE json_extract(payload,'$.refId')=? LIMIT 1").get(refId);if(row){const event=repository.get(row.event_id),item=event?.items.find(i=>i.id===row.item_id);if(item)return {event,item};}return null;}
+async function resumeOriginal(id,itemId){const event=rawEvent(id),item=event.items.find(i=>i.id===itemId);if(!item||item.refType!=='job')throw Object.assign(new Error('该任务不支持远端续查'),{status:409});const job=jobs.get(item.refId);if(job?.provider!=='manager'||!job.remotePromptId)throw Object.assign(new Error('没有可恢复的远端任务编号'),{status:409});capture(event,item,jobMapNow());event.legacy=false;event.status='queued';event.finishedAt=null;event.paused=false;event.canceled=false;save();await jobs.resume(item.refId);jobs.setHeld(item.refId,true);setTimeout(safeTick,50);return get(id);}
+function updateDraft(id,inputs,meta={}){const event=rawEvent(id);inputs=prepareInputs(inputs,event.kind);event.version=(event.version||1)+1;if(!event.draft)throw Object.assign(new Error('已入队任务不能修改提交快照，请复制为新任务'),{status:409});event.title=meta.title||event.title;event.spec.items=inputs.map(input=>({...input,params:input}));event.items=inputs.flatMap(input=>Array.from({length:event.kind==='video'?Math.max(1,Math.min(20,Number(input.count)||1)):1},()=>({...normalizeRef(event.kind==='image'?'imageTask':'job',''),title:input.title||input.prompt?.slice(0,60)||'生成任务',input:{...input,count:1},dispatchState:'pending'})));save();return get(id);}
+function queueEvent(id) {const event=rawEvent(id);event.draft=false;event.status='queued';event.paused=false;save();materialize(event);save();setTimeout(safeTick,50);return get(id);}
 
 function percentile(values, ratio) {
   if (!values.length) return null;
@@ -449,7 +503,7 @@ function report(id, context = {}) {
       title: item.title || item.refId,
       refType: item.refType,
       refId: item.refId,
-      status: job ? itemStatus(job.status) : item.status,
+      status: item.override || (job ? itemStatus(job.status) : item.status),
       provider: (job && job.provider) || '',
       platform: (job && job.platform) || '',
       channelId: (job && job.channelId) || '',
@@ -514,10 +568,10 @@ function reportCsv(id, context = {}) {
   return { filename: data.eventId + '-report.csv', body: lines.join('\n') };
 }
 
-function reportRange(days = 7) {
+function reportRange(days = 7, kind) {
   const span = Math.max(1, Math.min(90, Number(days) || 7));
   const since = Date.now() - span * 24 * 60 * 60 * 1000;
-  const events = state.events.length ? state.events : load();
+  const events = repository.read().filter(event=>!kind||repository.kind(event)===kind);
   const picked = events.filter((event) => Number(event.createdAt) >= since).map((event) => hydrate(event));
   const buckets = new Map();
   let success = 0;
@@ -553,4 +607,4 @@ function reportRange(days = 7) {
 
 load();
 
-module.exports = { load, save, list, get, create, createFromJobInputs, recordJobs, recordSingleJob, recordSingleImage, itemLog, hydrate, tick, start, stop, pauseEvent, resumeEvent, cancelEvent, retryItem, skipItem, retryFailed, report, reportCsv, reportRange, state };
+module.exports = { repository, materialize, importHistory, lookupRef, capture, scheduleEvent, queueEvent, updateDraft, resumeOriginal, moveItem, load, save, list, get, create, createFromJobInputs, recordJobs, recordSingleJob, recordSingleImage, itemLog, hydrate, tick, start, stop, pauseEvent, resumeEvent, cancelEvent, retryItem, skipItem, retryFailed, report, reportCsv, reportRange, state };

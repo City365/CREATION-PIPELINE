@@ -79,7 +79,7 @@ async function submit(channel, job, platform) {
     ...(pinnedAccount ? { accountId: account.id } : {}),
     prompt: job.prompt,
     references,
-    requestId: job.id,
+    requestId: job.runId || job.id,
     removeWatermark: true,
     timeoutSeconds: 3600,
   };

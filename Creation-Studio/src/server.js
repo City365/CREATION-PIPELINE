@@ -16,6 +16,7 @@ const styles = require('./styles');
 const jobs = require('./jobs');
 const batch = require('./batch');
 const events = require('./events');
+const taskImport = require('./task-import');
 const probe = require('./probe');
 const channels = require('./channels');
 const imagegen = require('./imagegen');
@@ -653,8 +654,8 @@ async function controlService(name, action) {
     const parsed = batch.parseBatch(body.json, { baseDir: body.baseDir, fileDir: body.fileDir, name: body.name });
     if (!parsed.tasks.some((t) => !t.errors.length)) return bad(res, '没有可提交的任务：' + (parsed.errors[0] || '请检查 JSON'));
     const inputs = batch.toJobInputs(parsed, body.workflowId);
-    const created = inputs.flatMap((input) => jobs.addJobs(input));
-    return ok(res, { count: created.length, tasks: parsed.tasks.length, warnings: parsed.warnings });
+    const event=events.createFromJobInputs(prepareEventVideos(inputs),{source:'batch',kind:'video',title:parsed.name,projectId:body.projectId||'',policy:body.policy,schedule:body.schedule});
+    return ok(res,{eventId:event.id,count:event.items.length,tasks:parsed.tasks.length,warnings:parsed.warnings});
   }
 
   if (method === 'POST' && pathname === '/api/prompt/validate') {
@@ -885,19 +886,20 @@ function rememberImageBatch(entry) {
   }
 
   if (method === 'GET' && pathname === '/api/images/tasks') {
+    if(url.searchParams.has('page'))return ok(res,imageTasks.tasks().page(url.searchParams.get('projectId')||undefined,Number(url.searchParams.get('page'))||1));
     return ok(res,{tasks:imageTasks.tasks().list(url.searchParams.get('projectId')||undefined)});
   }
   const imageAction=/^\/api\/images\/tasks\/([^/]+)(?:\/(pause|resume|retry))?$/.exec(pathname);
   if(imageAction){
     const worker=imageTasks.tasks();
     if(method==='GET')return ok(res,worker.get(imageAction[1]));
-    if(method==='POST'&&imageAction[2])return ok(res,worker[imageAction[2]](imageAction[1]));
+    if(method==='POST'&&imageAction[2]){const id=imageAction[1],link=events.lookupRef(id);if(link&&['pause','resume'].includes(imageAction[2])){if(imageAction[2]==='pause')events.pauseEvent(link.event.id);else events.resumeEvent(link.event.id);return ok(res,worker.get(link.item.refId));}if(link&&imageAction[2]==='retry'){const event=events.retryItem(link.event.id,link.item.id);return ok(res,worker.get(event.items.find(i=>i.id===link.item.id).refId));}return ok(res,worker[imageAction[2]](id));}
     return bad(res,'method not allowed',405);
   }
   if (method === 'POST' && pathname === '/api/images/generate') {
     const body=await readBody(req),worker=imageTasks.tasks();
-    const task=worker.enqueue(body);
-    let eventId=null;try{eventId=events.recordSingleImage(task,'image');}catch{ /* 事件失败不影响任务 */ }
+    const event=events.createFromJobInputs([body],{kind:'image',source:'image',title:body.prompt?.slice(0,60),projectId:body.projectId||'',paused:body.paused});
+    const task=worker.get(event.items[0].refId),eventId=event.id;
     if(body.background)return ok(res,{taskId:task.id,runId:task.id,status:task.status,eventId});
     const result=await worker.wait(task.id);
     if(result.status!=='success')return bad(res,result.error||'图像任务未完成');
@@ -1123,25 +1125,16 @@ function mediaPath(input) {
     let list = jobs.list();
     if (status) list = list.filter((j) => j.status === status);
     if (provider) list = list.filter((j) => j.provider === provider);
+    if(url.searchParams.has('page')){const total=list.length,page=Math.max(1,Math.min(Math.ceil(total/10)||1,Number(url.searchParams.get('page'))||1));list=list.slice().sort((a,b)=>b.createdAt-a.createdAt).slice((page-1)*10,page*10).map(({logs,prompt,...summary})=>summary);return ok(res,{jobs:list,total,page,pageSize:10});}
     return ok(res, { jobs: list, stats: jobs.slotStats() });
   }
 
   if (method === 'POST' && pathname === '/api/jobs') {
     const body = await readBody(req);
-    body.userPrompt = String(body.prompt||'');
-    if (body.itemId) workbenchStore.store().get(body.itemId,body.projectId,'video');
-    if (body.applyStyle !== false && (typeof body.prefixPrompt==='string' || body.styleId)) {
-      const stylePrefix = typeof body.prefixPrompt==='string'?body.prefixPrompt.trim():styles.promptFor(body.styleId, { layer: body.styleLayer || 'video', text: body.prompt });
-      if (stylePrefix) body.prompt = stylePrefix + '\n\n' + String(body.prompt || '');
-    }
-    const wf = workflows.get(body.workflowId);
-    if (!wf) return bad(res, '工作流不存在');
-    const check = workflows.validate(wf, body);
-    if (check.errors.length) return bad(res, check.errors.join('；'));
-    const created = jobs.addJobs(body);
-    let eventId = null;
-    try { eventId = events.recordJobs(created, body.eventId ? 'batch' : 'studio'); } catch { /* 事件失败不影响任务 */ }
-    return ok(res, { jobs: created.map((j) => ({ id: j.id })), eventId, warnings: check.warnings });
+    if(body.itemId)workbenchStore.store().get(body.itemId,body.projectId,'video');
+    const inputs=prepareEventVideos([body]);
+    const event=events.createFromJobInputs(inputs,{kind:'video',source:'studio',title:body.title,projectId:body.projectId||'',policy:body.policy,schedule:body.schedule});
+    return ok(res,{jobs:event.items.map(i=>({id:i.refId})),eventId:event.id,warnings:[]});
   }
 
   if (method === 'GET' && pathname === '/api/capabilities') {
@@ -1161,8 +1154,34 @@ function mediaPath(input) {
     }
   }
 
+  if (method === 'GET' && pathname === '/api/task-import/template') {
+    const format = (url.searchParams.get('format') || 'json').toLowerCase() === 'xlsx' ? 'xlsx' : 'json';
+    const body = format === 'xlsx' ? taskImport.xlsxTemplate() : taskImport.jsonTemplate();
+    const type = format === 'xlsx'
+      ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      : 'application/json; charset=utf-8';
+    res.writeHead(200, {
+      'Content-Type': type,
+      'Content-Disposition': `attachment; filename="task-template.${format}"`,
+      'Content-Length': body.length,
+      'Cache-Control': 'no-store',
+    });
+    res.end(body);
+    return;
+  }
+
+  if (method === 'POST' && pathname === '/api/task-import/parse') {
+    const body = await readBody(req);
+    if (!body || !body.data) return bad(res, '没有收到文件内容');
+    try {
+      return ok(res, taskImport.parseFile({ name: body.name, data: body.data }));
+    } catch (err) {
+      return bad(res, err.message || '文件解析失败');
+    }
+  }
+
   if (method === 'GET' && pathname === '/api/events') {
-    return ok(res, events.list({ status: url.searchParams.get('status') || '', source: url.searchParams.get('source') || '', limit: url.searchParams.get('limit') }));
+    return ok(res, events.list({ status: url.searchParams.get('status') || '', source: url.searchParams.get('source') || '', kind:url.searchParams.get('kind')||'',projectId:url.searchParams.get('projectId')||'',page:url.searchParams.get('page'),query:url.searchParams.get('query')||'' }));
   }
 
   if (method === 'POST' && pathname === '/api/events/import') {
@@ -1170,7 +1189,7 @@ function mediaPath(input) {
     const parsed = batch.parseBatch(body.json, { baseDir: body.baseDir, fileDir: body.fileDir, name: body.name });
     const inputs = batch.toJobInputs(parsed, body.workflowId);
     if (!inputs.length) return bad(res, '没有可导入的任务：' + (parsed.errors.join('；') || '请检查 JSON'));
-    const event = events.createFromJobInputs(inputs, { title: body.title || parsed.name || '', source: 'batch', workflowId: body.workflowId, projectId: body.projectId || '', channelId: body.channelId || '' });
+    const event = events.createFromJobInputs(prepareEventVideos(inputs), { kind:'video', policy:body.policy,schedule:body.schedule,draft:body.draft, title: body.title || parsed.name || '', source: 'batch', workflowId: body.workflowId, projectId: body.projectId || '', channelId: body.channelId || '' });
     return ok(res, event);
   }
 
@@ -1178,13 +1197,13 @@ function mediaPath(input) {
     const body = await readBody(req);
     const items = Array.isArray(body.items) ? body.items : [];
     if (!items.length) return bad(res, '事件没有条目');
-    const inputs = items.map((item) => ({ ...item, workflowId: item.workflowId || body.workflowId, count: 1, projectId: body.projectId || item.projectId, itemId: body.itemId || item.itemId }));
-    const event = events.createFromJobInputs(inputs, { title: body.title, source: ['batch', 'studio', 'image', 'api'].includes(body.source) ? body.source : 'api', workflowId: body.workflowId, projectId: body.projectId || '', channelId: body.channelId || '' });
+    const inputs = items.map((item) => ({ ...item, workflowId: item.workflowId || body.workflowId, count: item.count || 1, projectId: body.projectId || item.projectId, itemId: body.itemId || item.itemId }));
+    const event = events.createFromJobInputs(body.kind==='image'?inputs:prepareEventVideos(inputs), { kind:body.kind,requestId:body.requestId||req.headers['idempotency-key'],policy:body.policy,schedule:body.schedule,draft:body.draft, title: body.title, source: ['batch', 'studio', 'image', 'api'].includes(body.source) ? body.source : 'api', workflowId: body.workflowId, projectId: body.projectId || '', channelId: body.channelId || '' });
     return ok(res, event);
   }
 
   if (method === 'GET' && pathname === '/api/events/report') {
-    return ok(res, events.reportRange(url.searchParams.get('days')));
+    return ok(res, events.reportRange(url.searchParams.get('days'),url.searchParams.get('kind')));
   }
 
   const eventReport = /^\/api\/events\/([^/]+)\/report$/.exec(pathname);
@@ -1198,6 +1217,12 @@ function mediaPath(input) {
     return ok(res, events.report(eventReport[1]));
   }
 
+  const draftRoute=/^\/api\/events\/([^/]+)\/draft$/.exec(pathname);
+  if(draftRoute&&method==='POST'){const body=await readBody(req),event=events.get(draftRoute[1]);const inputs=Array.isArray(body.items)?body.items:[];if(!inputs.length)return bad(res,'至少需要一个条目');return ok(res,events.updateDraft(event.id,event.kind==='image'?inputs:prepareEventVideos(inputs),body));}
+  const attemptLogRoute=/^\/api\/task-attempts\/([^/]+)\/logs$/.exec(pathname);
+  if(attemptLogRoute&&method==='GET')return ok(res,events.repository.attemptLog(attemptLogRoute[1],Math.max(0,Number(url.searchParams.get('after'))||0)));
+  const lifecycleAction=/^\/api\/events\/([^/]+)\/(schedule|queue|attempts)$/.exec(pathname);
+  if(lifecycleAction){const id=lifecycleAction[1];if(method==='POST'&&lifecycleAction[2]==='queue')return ok(res,events.queueEvent(id));if(method==='POST'&&lifecycleAction[2]==='schedule')return ok(res,events.scheduleEvent(id,await readBody(req)));if(method==='GET'&&lifecycleAction[2]==='attempts'){const event=events.get(id),data=events.repository.attemptPage(id,url.searchParams.get('page'));const grouped=new Map();for(const attempt of data.attempts){const item=event.items.find(i=>i.id===attempt.itemId);if(!grouped.has(attempt.itemId))grouped.set(attempt.itemId,{itemId:attempt.itemId,title:item?.title||attempt.itemId,attempts:[]});grouped.get(attempt.itemId).attempts.push(attempt);}return ok(res,{...data,items:[...grouped.values()]});}}
   const eventAction = /^\/api\/events\/([^/]+)\/(pause|resume|cancel|retry-failed)$/.exec(pathname);
   if (method === 'POST' && eventAction) {
     const id = eventAction[1];
@@ -1207,8 +1232,10 @@ function mediaPath(input) {
     return ok(res, events.retryFailed(id));
   }
 
-  const eventItemAction = /^\/api\/events\/([^/]+)\/items\/([^/]+)\/(retry|skip)$/.exec(pathname);
+  const eventItemAction = /^\/api\/events\/([^/]+)\/items\/([^/]+)\/(retry|skip|resume-original|up|down)$/.exec(pathname);
   if (method === 'POST' && eventItemAction) {
+    if(['up','down'].includes(eventItemAction[3]))return ok(res,events.moveItem(eventItemAction[1],eventItemAction[2],eventItemAction[3]));
+    if(eventItemAction[3]==='resume-original')return ok(res,await events.resumeOriginal(eventItemAction[1],eventItemAction[2]));
     if (eventItemAction[3] === 'retry') return ok(res, events.retryItem(eventItemAction[1], eventItemAction[2]));
     return ok(res, events.skipItem(eventItemAction[1], eventItemAction[2]));
   }
@@ -1217,7 +1244,7 @@ function mediaPath(input) {
   if (method === 'GET' && eventItemLog) return ok(res, events.itemLog(eventItemLog[1], eventItemLog[2]));
 
   const eventRoute = /^\/api\/events\/([^/]+)$/.exec(pathname);
-  if (method === 'GET' && eventRoute) return ok(res, events.get(eventRoute[1]));
+  if(method==='GET'&&eventRoute){const event=events.get(eventRoute[1]);if(url.searchParams.get('paged')==='1'){const total=event.items.length,page=Math.max(1,Math.min(Math.ceil(total/10)||1,Number(url.searchParams.get('page'))||1));event.items=event.items.slice((page-1)*10,page*10);event.spec={...event.spec,items:[]};event.itemPaging={total,page,pageSize:10};}return ok(res,event);}
 
   const jobAction = /^\/api\/jobs\/([^/]+)\/(cancel|retry|resume|delete|hold|unhold|logs)$/.exec(pathname);
   if (jobAction) {
@@ -1230,7 +1257,7 @@ function mediaPath(input) {
     }
     if (method !== 'POST') return bad(res, 'method not allowed', 405);
     if (action === 'cancel') return ok(res, jobs.cancel(id));
-    if (action === 'retry') return ok(res, jobs.retry(id));
+    if (action === 'retry') {const link=events.lookupRef(id);if(link){events.retryItem(link.event.id,link.item.id);return ok(res,jobs.get(id));}return ok(res,jobs.retry(id));}
     if (action === 'resume') return ok(res, await jobs.resume(id));
     if (action === 'delete') return ok(res, jobs.remove(id));
     if (action === 'hold') return ok(res, jobs.setHeld(id, true));
@@ -1290,7 +1317,7 @@ function mediaPath(input) {
     return ok(res, true);
   }
 
-  if (method === 'GET' && pathname === '/api/events') {
+  if (method === 'GET' && pathname === '/api/task-events/stream') {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream; charset=utf-8',
       'Cache-Control': 'no-cache, no-transform',
@@ -1513,3 +1540,20 @@ if (require.main === module) start();
 
 module.exports = { server, start };
 
+
+function prepareEventVideos(inputs) {
+  return inputs.map(original => {
+    const input={...original,userPrompt:original.userPrompt ?? String(original.prompt||'')};
+    if(input.applyStyle!==false && (typeof input.prefixPrompt==='string'||input.styleId)) {
+      const prefix=typeof input.prefixPrompt==='string'?input.prefixPrompt.trim():styles.promptFor(input.styleId,{layer:input.styleLayer||'video',text:input.prompt});
+      if(prefix)input.prompt=prefix+'\n\n'+String(input.prompt||'');
+    }
+    input.applyStyle=false;
+    const wf=workflows.get(input.workflowId);
+    if(!wf)throw Object.assign(new Error('工作流不存在'),{status:400});
+    input.model=input.model||(channels.get('video',wf.channelId)||{}).model||wf.model;
+    const check=workflows.validate(wf,input);
+    if(check.errors.length)throw Object.assign(new Error(check.errors.join('；')),{status:400});
+    return input;
+  });
+}

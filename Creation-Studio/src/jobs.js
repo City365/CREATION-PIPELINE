@@ -31,7 +31,7 @@ function loadState() {
   const data = readJson(STATE_FILE, { jobs: [] });
   state.jobs = Array.isArray(data.jobs) ? data.jobs : [];
   for (const job of state.jobs) {
-    if (job.status === 'running' || job.status === 'queued') {
+    if (job.status === 'running' || (job.status === 'queued' && job.remotePromptId && !job.eventId)) {
       job.status = 'interrupted';
       job.stage = '已中断（待对账）';
       job.error = job.provider === 'manager' && job.remotePromptId ? '服务重启，任务已中断；可点「继续查询／下载」恢复原任务' : '服务重启，任务已中断；可点「重试」重新提交';
@@ -204,13 +204,15 @@ function addJobs(input) {
       status: 'queued',
       stage: '排队中',
       progress: 0,
-      held: false,
+      held: !!input.held,
       createdAt: Date.now(),
       startedAt: null,
       finishedAt: null,
       projectId: input.projectId || 'unassigned',
       itemId: input.itemId || null,
       eventId: input.eventId || null,
+      eventItemId: input.eventItemId || null,
+      model:input.model||null,
       userPrompt: input.userPrompt == null ? prompt : input.userPrompt,
       prefixPrompt: input.prefixPrompt,
       styleId: input.styleId,
@@ -235,7 +237,7 @@ function addJobs(input) {
       error: null,
       logs: [],
     };
-    job.runId = workbenchStore.store().begin({...job,kind:'video',jobId:job.id,channelName:(channels.get('video',job.channelId)||{}).name,model:(channels.get('video',job.channelId)||{}).model});
+    job.runId = workbenchStore.store().begin({...job,kind:'video',jobId:job.id,channelName:(channels.get('video',job.channelId)||{}).name,model:job.model||(channels.get('video',job.channelId)||{}).model});
     state.jobs.push(job);
     created.push(job);
     log(job, 'info', `已加入队列（${i + 1}/${count}），工作流 ${wf.id}`);
@@ -342,7 +344,7 @@ function retry(id) {
   job.finishedAt = null;
   job.logs = [];
   job.held = false;
-  job.resumeRemote = false;
+  job.resumeRemote = false;job.remotePromptId=null;
   log(job, 'info', '重新排队');
   touch(job);
   setImmediate(pump);
@@ -411,6 +413,7 @@ async function run(job, slot) {
   job.progress = 5;
   touch(job);
   try {
+    require('./task-assets').verify(job);
     const wf = workflows.get(job.workflowId);
     if (!wf) throw new Error('工作流不存在');
     const check = workflows.validate(wf, job);
@@ -561,7 +564,8 @@ async function runAutodl(job, wf, a) {
 }
 
 async function runGenericVideo(job, wf, a, slot) {
-  const channel = channels.get('video', slot.id);
+  const configuredChannel=channels.get('video',slot.id);
+  const channel=configuredChannel&&{...configuredChannel,model:job.model||configuredChannel.model};
   if (!channel) throw new Error('视频渠道已删除，请重新选择');
   job.apiUrl = channel.baseUrl;
   job.stage = '提交到自定义渠道…';

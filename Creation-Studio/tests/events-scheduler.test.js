@@ -98,3 +98,5 @@ test('重试失败条目会重新排队并保持调度', async () => {
   await delay(80);
   assert.equal(unheld().length, 1);
 });
+
+test('20条视频按事件次序完整处理',()=>{fake.jobs.length=0;const event=events.createFromJobInputs(input(20),{title:'twenty',source:'batch'});for(let n=0;n<20;n++){events.tick();const next=fake.jobs.find(j=>j.status==='queued'&&!j.held);assert.ok(next,'每次只放行一个条目');next.status='running';events.tick();next.status='success';}events.tick();const result=events.get(event.id);assert.equal(result.status,'completed');assert.equal(result.stats.done,20);});

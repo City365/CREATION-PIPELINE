@@ -222,6 +222,10 @@ test('留空账号时交给管理器自动选号，只有指定账号才钉死',
     assert.equal(manager.state.submits[0].accountId, undefined, '留空时不传 accountId，交给管理器换号');
     const pinned = await submit({ ...base, options: { accountId: 'acc-doubao' } }, job('job-pin'), 'doubao');
     assert.equal(pinned.account.id, 'acc-doubao');
+    await submit({...base,options:{}},{...job('same-job'),runId:'attempt-one'},'doubao');
+    await submit({...base,options:{}},{...job('same-job'),runId:'attempt-two'},'doubao');
+    assert.equal(manager.state.submits[2].requestId,'attempt-one');
+    assert.equal(manager.state.submits[3].requestId,'attempt-two');
     assert.equal(manager.state.submits[1].accountId, 'acc-doubao', '明确指定的账号仍然钉死');
   } finally {
     manager.server.close();

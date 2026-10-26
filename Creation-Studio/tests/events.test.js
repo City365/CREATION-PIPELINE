@@ -56,7 +56,7 @@ test('任务记录丢失 → unknown，不污染成功率', () => {
   ]), { jobMap: new Map(), worker: null });
   assert.equal(result.items[0].status, 'unknown');
   assert.equal(result.stats.unknown, 1);
-  assert.equal(result.status, 'failed');
+  assert.equal(result.status, 'interrupted');
 });
 
 test('被取消的条目计入 done，但事件是 canceled', () => {
@@ -88,7 +88,7 @@ test('创建后可查询，存在临时数据目录', () => {
   assert.ok(event.id.startsWith('evt_'));
   const listed = events.list();
   assert.ok(listed.events.some((e) => e.id === event.id));
-  assert.ok(fs.existsSync(path.join(process.env.H3_DATA_DIR, 'events.json')));
+  assert.ok(fs.existsSync(path.join(process.env.H3_DATA_DIR, 'task-events.sqlite')));
   assert.equal(events.get(event.id).title, '测试事件');
 });
 
@@ -124,3 +124,7 @@ test('报告 CSV 带表头和条目行', () => {
   assert.match(csv.body, /itemId,title,status/);
   assert.match(csv.body, /success/);
 });
+
+ test('失败和跳过分别计数，已处理进度包含所有明确终态',()=>{const result=events.hydrate(fakeEvent([{id:'i1',refType:'job',refId:'a'},{id:'i2',refType:'job',refId:'b',override:'skipped'}]),{jobMap:new Map([['a',job('a','failed')],['b',job('b','canceled')]]),worker:null});assert.equal(result.stats.done,2);assert.equal(result.stats.failed,1);assert.equal(result.stats.skipped,1);assert.equal(result.status,'failed');});
+
+test('超过200条事件重载仍完整，分页不会丢弃历史',()=>{for(let i=0;i<205;i++)events.create({title:'archive-'+i,kind:'image'});const total=events.repository.read().filter(e=>e.title.startsWith('archive-')).length;assert.equal(total,205);const page=events.list({kind:'image',page:21});assert.equal(page.events.length,5);assert.equal(page.total,205);});
