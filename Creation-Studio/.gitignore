@@ -9,3 +9,4 @@ data/assets/
 data/assets.json
 .cache/
 *.log
+data-backup-*/
