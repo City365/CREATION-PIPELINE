@@ -163,14 +163,14 @@ function serveFile(req, res, file, { download = false } = {}) {
   fs.createReadStream(abs).pipe(res);
 }
 
-function saveBase64Upload(name, base64, folder, projectId, type) {
+function saveBase64Upload(name, base64, folder, projectId, type, subfolder) {
   const clean = sanitizeFilename(name || 'upload');
   const data = String(base64 || '').replace(/^data:[^;]+;base64,/, '');
   if (!data) throw new Error('文件内容为空');
   const buf = Buffer.from(data, 'base64');
   if (!buf.length) throw new Error('文件内容为空');
   if (folder === 'assets') {
-    const saved = library.saveAssetUpload(projectId || '', clean, buf, '', type);
+    const saved = library.saveAssetUpload(projectId || '', clean, buf, subfolder || '', type);
     return { ...saved, name: path.basename(saved.path), bytes: buf.length, kind: kindOf(saved.path) };
   }
   const dir = library.uploadRoot(projectId || '');
@@ -1316,7 +1316,7 @@ function mediaPath(input) {
 
   if (method === 'POST' && pathname === '/api/assets/upload') {
     const body = await readBody(req);
-    return ok(res, saveBase64Upload(body.name, body.data, 'assets', projectId, body.type));
+    return ok(res, saveBase64Upload(body.name, body.data, 'assets', projectId, body.type, body.folder));
   }
 
   if (method === 'POST' && pathname === '/api/assets/type') {

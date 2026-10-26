@@ -2164,13 +2164,17 @@ function renderAssets() {
       <button class="btn" data-act="refresh-assets">重新扫描</button>
     </div>
   </div>
-  <div class="asset-type-chips" role="group" aria-label="素材业务类型">
-    <button class="chip ${type === 'all' ? 'active' : ''}" data-asset-type="all">全部类型 ${typeTotal}</button>
-    ${types.map((t) => `<button class="chip ${type === t.id ? 'active' : ''}" data-asset-type="${esc(t.id)}" title="${esc(t.hint || '')}">${esc(t.label)} ${t.count}</button>`).join('')}
-  </div>
-  <div class="folder-chips" style="margin-bottom:12px">
-    <button class="chip ${folder === '全部' ? 'active' : ''}" data-folder="全部">全部文件夹 ${data.items.length}</button>
-    ${data.folders.map((f) => `<button class="chip ${folder === f.name ? 'active' : ''}" data-folder="${esc(f.name)}">${esc(f.name)} ${f.count}</button>`).join('')}
+  <div class="asset-filter-row">
+    <div class="asset-type-chips" role="group" aria-label="素材业务类型">
+      <button class="chip ${type === 'all' ? 'active' : ''}" data-asset-type="all">全部类型 ${typeTotal}</button>
+      ${types.map((t) => `<button class="chip ${type === t.id ? 'active' : ''}" data-asset-type="${esc(t.id)}" title="${esc(t.hint || '')}">${esc(t.label)} ${t.count}</button>`).join('')}
+    </div>
+    <label class="asset-folder-filter">文件夹
+      <select class="select" id="asset-folder-filter">
+        <option value="全部" ${folder === '全部' ? 'selected' : ''}>全部文件夹 ${data.items.length}</option>
+        ${data.folders.map((f) => `<option value="${esc(f.name)}" ${folder === f.name ? 'selected' : ''}>${esc(f.name)} ${f.count}</option>`).join('')}
+      </select>
+    </label>
   </div>
   <div class="hint" style="margin-bottom:10px">业务类型写在数据里（不靠目录名区分），批量 JSON 可以按类型导出；文件夹只用于整理。选中素材后在详情里改类型、命名主体或移动文件夹。</div>
   ${items.length ? `<div class="grid-cards">${items.map((item, i) => `
@@ -2193,11 +2197,11 @@ function bindAssets(root) {
       state.assetSearchTimer = setTimeout(() => { render(); const el = $('#asset-search'); if (el) { el.focus(); el.selectionStart = el.value.length; } }, 250);
     };
   }
+  const folderFilter = $('#asset-folder-filter');
+  if (folderFilter) folderFilter.onchange = () => { state.assetFolder = folderFilter.value; render(); };
   root.addEventListener('click', async (event) => {
     const typeBtn = event.target.closest('[data-asset-type]');
     if (typeBtn) { state.assetType = typeBtn.dataset.assetType; return render(); }
-    const folderBtn = event.target.closest('[data-folder]');
-    if (folderBtn) { state.assetFolder = folderBtn.dataset.folder; return render(); }
     const card = event.target.closest('[data-asset]');
     if (card) {
       const item = visibleAssetItems()[Number(card.dataset.asset)];
