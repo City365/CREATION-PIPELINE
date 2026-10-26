@@ -3,6 +3,7 @@
 const Events = (() => {
   let timer = null;
   let lastSignature = '';
+  let modalEventId = null;
   const STATUS = { draft: '草稿', queued: '排队', running: '执行中', paused: '暂停', completed: '完成', partial: '部分失败', failed: '失败', canceled: '已取消', interrupted: '已中断' };
   const SOURCE = { batch: '批量导入', studio: '创作台', image: '图像台', api: '接口' };
   const ITEM = { queued: '排队', running: '执行中', success: '完成', failed: '失败', canceled: '已取消', skipped: '跳过', unknown: '未知', paused: '暂停' };
@@ -51,7 +52,7 @@ const Events = (() => {
         <td><div class="evt-progress"><span style="width:${progress}%"></span></div><div class="hint">${s.done || 0}/${s.total || 0} 完成${s.failed ? ' · ' + s.failed + ' 失败' : ''}${s.running ? ' · ' + s.running + ' 执行中' : ''}</div></td>
         <td class="tnum">${duration(event)}</td>
         <td class="hint">${event.createdAt ? new Date(event.createdAt).toLocaleString('zh-CN', { hour12: false }) : '—'}</td>
-        <td><button class="btn sm" data-event-detail="${esc(event.id)}">详情</button></td>
+        <td class="evt-actions"><button class="btn sm" data-event-detail="${esc(event.id)}">详情</button>${['queued', 'running'].includes(event.status) ? `<button class="btn sm ghost" data-event-action="pause" data-id="${esc(event.id)}">暂停</button>` : ''}${event.status === 'paused' ? `<button class="btn sm" data-event-action="resume" data-id="${esc(event.id)}">继续</button>` : ''}${['queued', 'running', 'paused'].includes(event.status) ? `<button class="btn sm ghost" data-event-action="cancel" data-id="${esc(event.id)}">取消</button>` : ''}${(event.stats && event.stats.failed) ? `<button class="btn sm" data-event-action="retry-failed" data-id="${esc(event.id)}">重试失败</button>` : ''}</td>
       </tr>`;
     }).join('');
     return `
@@ -104,16 +105,23 @@ const Events = (() => {
 
   async function openDetail(id) {
     const event = await api('/api/events/' + encodeURIComponent(id));
+    modalEventId = id;
     const s = event.stats || {};
     const items = (event.items || []).map((item) => `<tr>
       <td>${badge(item.status === 'success' ? 'completed' : item.status)}</td>
       <td>${esc(item.title || item.refId)}<div class="hint">${esc(item.refType)} · ${esc(item.refId)}</div></td>
       <td class="hint">${esc(item.error || '—')}</td>
-      <td><button class="btn sm" data-event-item-log="${esc(item.id)}">日志</button></td>
+      <td class="evt-actions"><button class="btn sm ghost" data-event-item-log="${esc(item.id)}">日志</button>${['failed','canceled','skipped','unknown'].includes(item.status) ? `<button class="btn sm" data-event-item-action="retry" data-item="${esc(item.id)}">重试</button>` : ''}${['queued','paused'].includes(item.status) ? `<button class="btn sm ghost" data-event-item-action="skip" data-item="${esc(item.id)}">跳过</button>` : ''}</td>
     </tr>`).join('');
     const panel = openModal(`<div class="modal-head"><h2>${esc(event.title)}</h2><button class="btn" data-close="1">关闭</button></div>
       <div class="modal-body">
         <div class="hint">${esc(event.id)} · ${esc(SOURCE[event.source] || event.source)} · 创建 ${new Date(event.createdAt).toLocaleString('zh-CN', { hour12: false })}</div>
+        <div class="row evt-actions" style="gap:8px;flex-wrap:wrap;margin:8px 0">
+          ${['queued','running'].includes(event.status) ? `<button class="btn sm" data-event-action="pause" data-id="${esc(event.id)}">暂停</button>` : ''}
+          ${event.status === 'paused' ? `<button class="btn sm" data-event-action="resume" data-id="${esc(event.id)}">继续</button>` : ''}
+          ${['queued','running','paused'].includes(event.status) ? `<button class="btn sm ghost" data-event-action="cancel" data-id="${esc(event.id)}">取消</button>` : ''}
+          ${s.failed ? `<button class="btn sm" data-event-action="retry-failed" data-id="${esc(event.id)}">重试失败项</button>` : ''}
+        </div>
         <div class="row" style="gap:16px;flex-wrap:wrap">
           <span>状态：${badge(event.status)}</span>
           <span>条目：${s.done || 0}/${s.total || 0} 完成</span>
@@ -127,6 +135,9 @@ const Events = (() => {
       <div class="modal-foot"><span class="grow"></span><button class="btn" data-close="1">关闭</button></div>`);
     panel.classList.add('modal-wide');
     const logBox = document.querySelector('#evt-item-log');
+    document.querySelectorAll('[data-event-item-action]').forEach((button) => {
+      button.onclick = () => runItemAction(button.dataset.eventItemAction, button.dataset.item).catch((err) => toast(err.message, true));
+    });
     document.querySelectorAll('[data-event-item-log]').forEach((button) => {
       button.onclick = async () => {
         const data = await api('/api/events/' + encodeURIComponent(id) + '/items/' + encodeURIComponent(button.dataset.eventItemLog) + '/log');
@@ -152,11 +163,36 @@ const Events = (() => {
       const refresh = event.target.closest('[data-event-refresh]');
       if (refresh) { load(); return; }
       const detail = event.target.closest('[data-event-detail]');
-      if (detail) { openDetail(detail.dataset.eventDetail).catch((err) => toast(err.message, true)); }
+      if (detail) { openDetail(detail.dataset.eventDetail).catch((err) => toast(err.message, true)); return; }
+      const action = event.target.closest('[data-event-action]');
+      if (action) { runAction(action.dataset.eventAction, action.dataset.id).catch((err) => toast(err.message, true)); return; }
+      const itemAction = event.target.closest('[data-event-item-action]');
+      if (itemAction) { runItemAction(itemAction.dataset.eventItemAction, itemAction.dataset.item).catch((err) => toast(err.message, true)); }
     });
     start();
     if (!state.events) load();
   }
+
+  async function runAction(action, id) {
+    await api('/api/events/' + encodeURIComponent(id) + '/' + action, { method: 'POST', body: {} });
+    await load();
+    if (document.querySelector('#modal:not([hidden])')) await openDetail(id).catch(() => {});
+    toast('已' + ({ pause: '暂停', resume: '继续', cancel: '取消', 'retry-failed': '重试失败项' }[action] || action));
+  }
+  async function runItemAction(action, itemId) {
+    const panel = document.querySelector('#modal:not([hidden])');
+    const eventId = modalEventId;
+    if (!eventId) return;
+    await api('/api/events/' + encodeURIComponent(eventId) + '/items/' + encodeURIComponent(itemId) + '/' + action, { method: 'POST', body: {} });
+    await openDetail(eventId);
+  }
+
+  document.addEventListener('click', (event) => {
+    const action = event.target.closest('[data-event-action]');
+    if (!action || !action.closest('#modal')) return;
+    event.preventDefault();
+    runAction(action.dataset.eventAction, action.dataset.id).catch((err) => toast(err.message, true));
+  });
 
   return { render, load, bind, openCreate, openDetail };
 })();

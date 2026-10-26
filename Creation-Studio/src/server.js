@@ -1165,6 +1165,21 @@ function mediaPath(input) {
     return ok(res, event);
   }
 
+  const eventAction = /^\/api\/events\/([^/]+)\/(pause|resume|cancel|retry-failed)$/.exec(pathname);
+  if (method === 'POST' && eventAction) {
+    const id = eventAction[1];
+    if (eventAction[2] === 'pause') return ok(res, events.pauseEvent(id));
+    if (eventAction[2] === 'resume') return ok(res, events.resumeEvent(id));
+    if (eventAction[2] === 'cancel') return ok(res, events.cancelEvent(id));
+    return ok(res, events.retryFailed(id));
+  }
+
+  const eventItemAction = /^\/api\/events\/([^/]+)\/items\/([^/]+)\/(retry|skip)$/.exec(pathname);
+  if (method === 'POST' && eventItemAction) {
+    if (eventItemAction[3] === 'retry') return ok(res, events.retryItem(eventItemAction[1], eventItemAction[2]));
+    return ok(res, events.skipItem(eventItemAction[1], eventItemAction[2]));
+  }
+
   const eventItemLog = /^\/api\/events\/([^/]+)\/items\/([^/]+)\/log$/.exec(pathname);
   if (method === 'GET' && eventItemLog) return ok(res, events.itemLog(eventItemLog[1], eventItemLog[2]));
 

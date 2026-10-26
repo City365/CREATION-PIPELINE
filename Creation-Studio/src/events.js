@@ -83,6 +83,7 @@ function hydrate(event, context = {}) {
     }
   }
   const items = (event.items || []).map((item) => {
+    if (item.override === 'skipped') return { ...item, status: 'skipped', error: item.error || null };
     let source = null;
     if (item.refType === 'job') source = jobMap.get(item.refId);
     else if (item.refType === 'imageTask') source = imageMap.get(item.refId);
@@ -125,6 +126,8 @@ function hydrate(event, context = {}) {
     else if (stats.failed > 0 && stats.done > 0) status = 'partial';
     else status = 'failed';
   }
+  if (event.canceled && !['running', 'queued'].includes(status)) status = 'canceled';
+  if (event.paused && !['completed', 'failed', 'partial', 'canceled'].includes(status)) status = 'paused';
   return {
     ...event,
     items,
@@ -206,8 +209,12 @@ function createFromJobInputs(inputs, meta = {}) {
   const event = create({ ...meta, items: inputs.map((input) => ({ title: input.title, prompt: input.prompt })) });
   for (const input of inputs) {
     const created = jobs.addJobs({ ...input, eventId: event.id });
-    for (const job of created) attach(event, 'job', job.id, { title: job.title, cancelMode: 'local' });
+    for (const job of created) {
+      attach(event, 'job', job.id, { title: job.title, cancelMode: 'local' });
+      try { jobs.setHeld(job.id, true); } catch { /* 调度器会兜底 */ }
+    }
   }
+  setTimeout(tick, 50);
   return get(event.id);
 }
 
@@ -269,6 +276,157 @@ function itemLog(eventId, itemId) {
   }
 }
 
+/* ---------------- 调度与整组控制（P2） ---------------- */
+
+let tickTimer = null;
+const TERMINAL_ITEM = new Set(['success', 'failed', 'canceled', 'skipped', 'unknown']);
+
+function rawEvent(id) {
+  load();
+  const raw = state.events.find((e) => e.id === id);
+  if (!raw) { const error = new Error('事件不存在'); error.status = 404; error.code = 'EVENT_NOT_FOUND'; throw error; }
+  return raw;
+}
+
+function jobMapNow() {
+  return new Map(jobs.list().map((j) => [j.id, j]));
+}
+
+function itemStatusOf(item, jobMap) {
+  if (item.override === 'skipped') return 'skipped';
+  if (item.override === 'canceled') return 'canceled';
+  const job = jobMap.get(item.refId);
+  return job ? itemStatus(job.status) : 'unknown';
+}
+
+function tick() {
+  if (!state.events.length) return;
+  load();
+  const map = jobMapNow();
+  let changed = false;
+  for (const event of state.events) {
+    if (event.paused || !event.items || !event.items.length) continue;
+    if (TERMINAL_ITEM.has(event.lastStatus || '')) continue;
+    const statuses = event.items.map((item) => itemStatusOf(item, map));
+    if (statuses.every((status) => TERMINAL_ITEM.has(status))) continue;
+    if (event.policy && event.policy.onItemFail === 'stop' && statuses.includes('failed')) {
+      for (const [index, item] of event.items.entries()) {
+        if (statuses[index] === 'running' || statuses[index] === 'queued') {
+          if (statuses[index] === 'queued') { try { jobs.cancel(item.refId); } catch { /* ignore */ } }
+          item.override = 'skipped';
+          changed = true;
+        }
+      }
+      continue;
+    }
+    // 已放行但还在排队（未 hold）的条目同样占用并发名额
+    const dispatched = event.items.filter((item) => { const job = map.get(item.refId); return job && job.status === 'queued' && !job.held; }).length;
+    let running = statuses.filter((status) => status === 'running').length + dispatched;
+    const limit = Math.max(1, Number(event.policy && event.policy.concurrency) || 1);
+    for (const [index, item] of event.items.entries()) {
+      if (running >= limit) break;
+      if (statuses[index] !== 'queued') continue;
+      const job = map.get(item.refId);
+      if (!job || job.status !== 'queued') continue;
+      try { jobs.setHeld(item.refId, false); running += 1; changed = true; } catch { /* ignore */ }
+    }
+  }
+  if (changed) save();
+}
+
+function start() {
+  if (tickTimer) return;
+  tickTimer = setInterval(tick, 2000);
+  if (tickTimer.unref) tickTimer.unref();
+  tick();
+}
+
+function stop() {
+  if (tickTimer) clearInterval(tickTimer);
+  tickTimer = null;
+}
+
+function pauseEvent(id) {
+  const event = rawEvent(id);
+  const map = jobMapNow();
+  event.paused = true;
+  for (const item of event.items) {
+    if (itemStatusOf(item, map) === 'queued') { try { jobs.setHeld(item.refId, true); } catch { /* ignore */ } }
+  }
+  save();
+  return get(id);
+}
+
+function resumeEvent(id) {
+  const event = rawEvent(id);
+  event.paused = false;
+  save();
+  tick();
+  return get(id);
+}
+
+function cancelEvent(id) {
+  const event = rawEvent(id);
+  const map = jobMapNow();
+  event.canceled = true;
+  for (const item of event.items) {
+    const status = itemStatusOf(item, map);
+    if (status === 'queued' || status === 'paused') {
+      try { jobs.cancel(item.refId); } catch { /* ignore */ }
+      item.override = 'canceled';
+    }
+  }
+  save();
+  return get(id);
+}
+
+function retryItem(id, itemId) {
+  const event = rawEvent(id);
+  const item = (event.items || []).find((i) => i.id === itemId);
+  if (!item) { const error = new Error('条目不存在'); error.status = 404; throw error; }
+  const map = jobMapNow();
+  const status = itemStatusOf(item, map);
+  if (!['failed', 'canceled', 'skipped', 'unknown'].includes(status)) {
+    const error = new Error('条目还没结束，不能重试'); error.status = 409; error.code = 'EVENT_STATE_INVALID'; throw error;
+  }
+  if (item.refType === 'job') {
+    try { jobs.retry(item.refId); } catch { /* ignore */ }
+    try { jobs.setHeld(item.refId, true); } catch { /* ignore */ }
+  }
+  delete item.override;
+  event.paused = false;
+  event.canceled = false;
+  save();
+  setTimeout(tick, 50);
+  return get(id);
+}
+
+function skipItem(id, itemId) {
+  const event = rawEvent(id);
+  const item = (event.items || []).find((i) => i.id === itemId);
+  if (!item) { const error = new Error('条目不存在'); error.status = 404; throw error; }
+  const map = jobMapNow();
+  const status = itemStatusOf(item, map);
+  if (['queued', 'paused'].includes(status)) { try { jobs.cancel(item.refId); } catch { /* ignore */ } }
+  item.override = 'skipped';
+  save();
+  return get(id);
+}
+
+function retryFailed(id) {
+  const event = rawEvent(id);
+  const map = jobMapNow();
+  let retried = 0;
+  for (const item of event.items) {
+    if (item.refType !== 'job') continue;
+    const status = itemStatusOf(item, map);
+    if (!['failed', 'canceled', 'unknown'].includes(status)) continue;
+    try { jobs.retry(item.refId); jobs.setHeld(item.refId, true); delete item.override; retried += 1; } catch { /* ignore */ }
+  }
+  if (retried) { event.paused = false; event.canceled = false; save(); setTimeout(tick, 50); }
+  return { event: get(id), retried };
+}
+
 load();
 
-module.exports = { load, save, list, get, create, createFromJobInputs, recordJobs, recordSingleJob, recordSingleImage, itemLog, hydrate, state };
+module.exports = { load, save, list, get, create, createFromJobInputs, recordJobs, recordSingleJob, recordSingleImage, itemLog, hydrate, tick, start, stop, pauseEvent, resumeEvent, cancelEvent, retryItem, skipItem, retryFailed, state };
