@@ -1831,11 +1831,10 @@ function openImagePicker(slotIndex) {
       <button class="btn sm" id="picker-upload">上传本地图片</button>
       <button class="btn ghost sm" data-close="1">关闭</button></div>
     <div class="modal-body">
-      <div class="folder-chips">${(state.assets ? state.assets.folders : []).map((f) => `<span class="chip">${esc(f.name)} ${f.count}</span>`).join('')}</div>
       <div class="grid-cards">${items.map((item, i) => `
         <div class="asset-card" data-pick="${i}">
           <div class="asset-thumb"><img src="${item.url}" alt="" loading="lazy" /></div>
-          <div class="asset-meta"><span class="name">${esc(item.name)}</span><span class="sub">${esc(item.folder)}${item.subject ? ' · ' + esc(item.subject) : ''}</span></div>
+          <div class="asset-meta"><span class="name">${esc(item.name)}</span><span class="sub">${esc(item.typeLabel || '')}${item.group ? ' · ' + esc(item.group) : ''}${item.subject ? ' · ' + esc(item.subject) : ''}</span></div>
         </div>`).join('') || '<div class="empty">素材库还没有图片</div>'}</div>
     </div>
   `);
@@ -2136,55 +2135,77 @@ function assetTypeMeta(id) {
   return list.find((t) => t.id === id) || { id, label: id || '其他', count: 0 };
 }
 
-function visibleAssetItems() {
-  const folder = state.assetFolder || '全部';
-  const type = state.assetType || 'all';
+function assetQueryMatch(item) {
   const query = (state.assetQuery || '').toLowerCase();
-  return ((state.assets && state.assets.items) || []).filter((i) => (type === 'all' || i.type === type)
-    && (folder === '全部' || i.folder === folder)
-    && (!query || i.name.toLowerCase().includes(query) || (i.subject || '').toLowerCase().includes(query) || String(i.typeLabel || '').toLowerCase().includes(query)));
+  return !query || item.name.toLowerCase().includes(query) || (item.subject || '').toLowerCase().includes(query)
+    || String(item.group || '').toLowerCase().includes(query) || String(item.typeLabel || '').toLowerCase().includes(query);
+}
+
+/** 当前视图里的素材：分镜组内只看该组图片；其它视图只看根目录下的单个素材。 */
+function visibleAssetItems() {
+  const group = state.assetGroup || '';
+  const type = state.assetType || 'all';
+  return ((state.assets && state.assets.items) || []).filter((item) => {
+    if (!assetQueryMatch(item)) return false;
+    if (group) return item.group === group;
+    if (item.group) return false;
+    return type === 'all' || item.type === type;
+  });
+}
+
+function visibleAssetGroups() {
+  const query = (state.assetQuery || '').toLowerCase();
+  return ((state.assets && state.assets.groups) || []).filter((group) => !query || group.name.toLowerCase().includes(query));
 }
 
 function renderAssets() {
   const data = state.assets;
   if (!data) return `<div class="empty"><span class="spinner"></span></div>`;
-  const folder = state.assetFolder || '全部';
   const type = state.assetType || 'all';
+  const group = state.assetGroup || '';
+  const groupView = group ? ((data.groups || []).find((row) => row.name === group) || { name: group, count: 0, cover: '' }) : null;
+  const showGroups = !group && type === 'storyboard';
   const items = visibleAssetItems();
+  const groups = visibleAssetGroups();
   const types = data.types || [];
-  const typeTotal = types.reduce((sum, t) => sum + t.count, 0);
+  const typeTotal = types.reduce((sum, row) => sum + row.count, 0);
+  const chipCount = (row) => row.id === 'storyboard' ? (data.groups || []).length : row.count;
+  const uploadLabel = groupView ? `上传到「${esc(groupView.name)}」` : (type === 'storyboard' ? '上传到分镜' : '上传');
+  const empty = showGroups
+    ? `<div class="card"><div class="empty"><strong>还没有分镜</strong><p>一个分镜一个文件夹，里面放这个分镜的所有参考图；生成时只取该文件夹里的图。</p><button class="btn primary" data-act="new-group">新建分镜</button></div></div>`
+    : `<div class="card"><div class="empty"><strong>没有匹配的素材</strong><p>把参考图放进素材库目录，或点「上传」。</p></div></div>`;
   return `
   <div class="page-head">
-    <div><h1>素材库</h1><p class="mono">${esc(data.root)} · ${data.items.length} 个文件</p></div>
+    <div><h1>素材库</h1><p class="mono">${esc(data.root)} · ${data.items.length} 个文件 · ${(data.groups || []).length} 个分镜</p></div>
     <div class="page-actions">
-      <input class="input" id="asset-search" placeholder="搜索文件名 / 主体 / 类型" value="${esc(state.assetQuery || '')}" style="width:220px" />
-      <button class="btn" data-act="new-folder">新建文件夹</button>
-      <button class="btn" data-act="upload-asset">上传</button>
+      <input class="input" id="asset-search" placeholder="搜索文件名 / 主体 / 分镜" value="${esc(state.assetQuery || '')}" style="width:220px" />
+      <button class="btn" data-act="new-group">新建分镜</button>
+      <button class="btn" data-act="upload-asset">${uploadLabel}</button>
       <button class="btn" data-act="open-assets">打开目录</button>
       <button class="btn" data-act="refresh-assets">重新扫描</button>
     </div>
   </div>
   <div class="asset-filter-row">
     <div class="asset-type-chips" role="group" aria-label="素材业务类型">
-      <button class="chip ${type === 'all' ? 'active' : ''}" data-asset-type="all">全部类型 ${typeTotal}</button>
-      ${types.map((t) => `<button class="chip ${type === t.id ? 'active' : ''}" data-asset-type="${esc(t.id)}" title="${esc(t.hint || '')}">${esc(t.label)} ${t.count}</button>`).join('')}
+      <button class="chip ${type === 'all' && !group ? 'active' : ''}" data-asset-type="all">全部类型 ${typeTotal}</button>
+      ${types.map((row) => `<button class="chip ${type === row.id ? 'active' : ''}" data-asset-type="${esc(row.id)}" title="${esc(row.hint || '')}">${esc(row.label)} ${chipCount(row)}</button>`).join('')}
     </div>
-    <label class="asset-folder-filter">文件夹
-      <select class="select" id="asset-folder-filter">
-        <option value="全部" ${folder === '全部' ? 'selected' : ''}>全部文件夹 ${data.items.length}</option>
-        ${data.folders.map((f) => `<option value="${esc(f.name)}" ${folder === f.name ? 'selected' : ''}>${esc(f.name)} ${f.count}</option>`).join('')}
-      </select>
-    </label>
   </div>
-  <div class="hint" style="margin-bottom:10px">业务类型写在数据里（不靠目录名区分），批量 JSON 可以按类型导出；文件夹只用于整理。选中素材后在详情里改类型、命名主体或移动文件夹。</div>
-  ${items.length ? `<div class="grid-cards">${items.map((item, i) => `
-    <div class="asset-card" data-asset="${i}">
-      <div class="asset-thumb">${item.kind === 'image' ? `<img src="${item.url}" alt="" loading="lazy" />` : '♪'}</div>
-      <div class="asset-meta">
-        <span class="name" title="${esc(item.name)}">${esc(item.name)}</span>
-        <span class="sub"><span class="asset-type-tag" title="${esc(assetTypeMeta(item.type).hint || '')}">${esc(item.typeLabel || assetTypeMeta(item.type).label)}</span>${esc(item.folder)}${item.subject ? ' · ' + esc(item.subject) : ''}${item.width ? ' · ' + item.width + '×' + item.height : ''}</span>
-      </div>
-    </div>`).join('')}</div>` : `<div class="card"><div class="empty"><strong>没有匹配的素材</strong><p>把参考图放进素材库目录，或点「上传」。</p></div></div>`}
+  <div class="hint" style="margin-bottom:10px">人物 / 场景 / 道具 / 首帧 / 尾帧 / 溶图参考是单个素材，类型可改；只有「分镜参考」用文件夹：一个分镜一个文件夹，里面的图不再分人物道具场景，生成时只取该文件夹的图。</div>
+  ${groupView ? `<div class="asset-group-head"><button class="btn sm" data-asset-back>← 全部分镜</button><b>${esc(groupView.name)}</b><span class="hint">${groupView.count} 张参考图 · 只从这个文件夹取图</span></div>` : ''}
+  ${showGroups
+    ? (groups.length ? `<div class="grid-cards">${groups.map((row, i) => `<div class="asset-card" data-group="${i}">
+        <div class="asset-thumb">${row.cover ? `<img src="${row.cover}" alt="" loading="lazy" />` : '🗂'}</div>
+        <div class="asset-meta"><span class="name">${esc(row.name)}</span><span class="sub"><span class="asset-type-tag">分镜参考</span>${row.count} 张图</span></div>
+      </div>`).join('')}</div>` : empty)
+    : (items.length ? `<div class="grid-cards">${items.map((item, i) => `
+      <div class="asset-card" data-asset="${i}">
+        <div class="asset-thumb">${item.kind === 'image' ? `<img src="${item.url}" alt="" loading="lazy" />` : '♪'}</div>
+        <div class="asset-meta">
+          <span class="name" title="${esc(item.name)}">${esc(item.name)}</span>
+          <span class="sub"><span class="asset-type-tag" title="${esc(assetTypeMeta(item.type).hint || '')}">${esc(item.typeLabel || assetTypeMeta(item.type).label)}</span>${item.group ? esc(item.group) + ' · ' : ''}${item.subject ? esc(item.subject) + ' · ' : ''}${item.width ? item.width + '×' + item.height : (item.kind === 'audio' ? '音频' : '')}</span>
+        </div>
+      </div>`).join('')}</div>` : empty)}
   `;
 }
 
@@ -2198,10 +2219,16 @@ function bindAssets(root) {
     };
   }
   const folderFilter = $('#asset-folder-filter');
-  if (folderFilter) folderFilter.onchange = () => { state.assetFolder = folderFilter.value; render(); };
+  if (folderFilter) folderFilter.onchange = () => { state.assetType = 'storyboard'; state.assetGroup = folderFilter.value === '全部' ? '' : folderFilter.value; render(); };
   root.addEventListener('click', async (event) => {
     const typeBtn = event.target.closest('[data-asset-type]');
-    if (typeBtn) { state.assetType = typeBtn.dataset.assetType; return render(); }
+    if (typeBtn) { state.assetType = typeBtn.dataset.assetType; state.assetGroup = ''; return render(); }
+    const groupCard = event.target.closest('[data-group]');
+    if (groupCard) {
+      const group = visibleAssetGroups()[Number(groupCard.dataset.group)];
+      if (group) { state.assetGroup = group.name; state.assetType = 'storyboard'; return render(); }
+    }
+    if (event.target.closest('[data-asset-back]')) { state.assetGroup = ''; return render(); }
     const card = event.target.closest('[data-asset]');
     if (card) {
       const item = visibleAssetItems()[Number(card.dataset.asset)];
@@ -2212,15 +2239,21 @@ function bindAssets(root) {
     try {
       if (target.dataset.act === 'refresh-assets') { state.assets = await api('/api/assets'); return render(); }
       if (target.dataset.act === 'open-assets') { await api('/api/reveal', { method: 'POST', body: { path: state.assets.root } }); return; }
-      if (target.dataset.act === 'new-folder') {
-        return askText('新建文件夹', '', '例如：角色 / 场景 / 道具', async (name) => {
+      if (target.dataset.act === 'new-group') {
+        return askText('新建分镜', '', '例如：镜头01 / 第3场-推门', async (name) => {
           if (!name) return;
-          await api('/api/assets/folder', { method: 'POST', body: { name } });
+          const group = await api('/api/assets/group', { method: 'POST', body: { name } });
           state.assets = await api('/api/assets');
+          state.assetType = 'storyboard';
+          state.assetGroup = group.name || name;
           render();
+          toast('分镜已创建，上传的图片都会归到这个分镜');
         });
       }
       if (target.dataset.act === 'upload-asset') {
+        const group = state.assetGroup || '';
+        if (!group && state.assetType === 'storyboard') { toast('先新建或进入一个分镜文件夹再上传', true); return; }
+        const type = state.assetType && state.assetType !== 'all' ? state.assetType : 'other';
         const input = $('#file-input');
         input.accept = 'image/*,audio/*';
         input.onchange = async () => {
@@ -2233,11 +2266,11 @@ function bindAssets(root) {
               reader.onerror = () => reject(new Error('读取失败'));
               reader.readAsDataURL(file);
             });
-            await api('/api/assets/upload', { method: 'POST', body: { name: file.name, data, folder: state.assetFolder && state.assetFolder !== '全部' ? state.assetFolder : '', type: state.assetType && state.assetType !== 'all' ? state.assetType : undefined } });
+            await api('/api/assets/upload', { method: 'POST', body: { name: file.name, data, group: group || undefined, type: group ? undefined : type } });
           }
           state.assets = await api('/api/assets');
           render();
-          if (files.length) toast(`已上传 ${files.length} 个文件`);
+          if (files.length) toast(group ? `已上传 ${files.length} 张到分镜「${group}」` : `已上传 ${files.length} 个文件`);
         };
         input.click();
       }
@@ -2246,7 +2279,9 @@ function bindAssets(root) {
 }
 
 function openAssetDetail(item) {
-  const folders = ['未归类', ...(state.assets.folders || []).map((f) => f.name).filter((n) => n !== '未归类')];
+  const groups = ((state.assets && state.assets.groups) || []).map((row) => row.name);
+  const inGroup = !!item.group;
+  const singleTypes = ((state.assets && state.assets.types) || []).filter((row) => row.id !== 'storyboard');
   openModal(`
     <div class="modal-head"><h2>${esc(item.name)}</h2><span class="grow"></span><button class="btn ghost sm" data-close="1">关闭</button></div>
     <div class="modal-body">
@@ -2257,10 +2292,12 @@ function openAssetDetail(item) {
         <div class="section">
           <div class="kv"><span>尺寸</span><span>${item.width ? item.width + ' × ' + item.height : '—'}</span></div>
           <div class="kv"><span>大小</span><span>${fmtBytes(item.bytes)}</span></div>
-          <div class="kv"><span>文件夹</span><span>${esc(item.folder)}</span></div>
-          <div class="field"><label>业务类型</label><select class="select" id="asset-type">${((state.assets && state.assets.types) || []).map((t) => `<option value="${esc(t.id)}" ${t.id === item.type ? 'selected' : ''}>${esc(t.label)} — ${esc(t.hint || '')}</option>`).join('')}</select></div>
+          <div class="kv"><span>分镜</span><span>${inGroup ? esc(item.group) : '素材库根目录'}</span></div>
+          ${inGroup
+            ? '<div class="kv"><span>业务类型</span><span>分镜参考（固定）</span></div>'
+            : `<div class="field"><label>业务类型</label><select class="select" id="asset-type">${singleTypes.map((t) => `<option value="${esc(t.id)}" ${t.id === item.type ? 'selected' : ''}>${esc(t.label)} — ${esc(t.hint || '')}</option>`).join('')}</select></div>`}
           <div class="field"><label>命名主体（用于 &lt;Subject N&gt;）</label><input class="input" id="asset-subject" value="${esc(item.subject)}" placeholder="例如：护法武僧" /></div>
-          <div class="field"><label>移动到</label><select class="select" id="asset-folder">${folders.map((f) => `<option value="${esc(f)}" ${f === item.folder ? 'selected' : ''}>${esc(f)}</option>`).join('')}</select></div>
+          <div class="field"><label>移动到</label><select class="select" id="asset-group"><option value="">素材库根目录</option>${groups.map((name) => `<option value="${esc(name)}" ${name === item.group ? 'selected' : ''}>分镜 · ${esc(name)}</option>`).join('')}</select><small>移进分镜文件夹后，这张图会算作该分镜的参考图；分镜里的图不再区分人物/道具/场景。</small></div>
         </div>
       </div>
     </div>
@@ -2277,17 +2314,17 @@ function openAssetDetail(item) {
   panel.querySelector('[data-save]').onclick = async () => {
     try {
       const subject = $('#asset-subject').value.trim();
-      const folder = $('#asset-folder').value;
+      const groupValue = $('#asset-group') ? $('#asset-group').value : (item.group || '');
       const type = $('#asset-type') ? $('#asset-type').value : item.type;
       let rel = item.rel;
-      if (type && type !== item.type) {
+      if (!item.group && type && type !== item.type) {
         await api('/api/assets/type', { method: 'POST', body: { rel, type } });
       }
       if (subject !== (item.subject || '')) {
         await api('/api/assets/subject', { method: 'POST', body: { rel, subject } });
       }
-      if (folder !== item.folder) {
-        const res = await api('/api/assets/move', { method: 'POST', body: { rel, folder } });
+      if (groupValue !== (item.group || '')) {
+        const res = await api('/api/assets/move', { method: 'POST', body: { rel, group: groupValue } });
         rel = res.rel;
       }
       closeModal();

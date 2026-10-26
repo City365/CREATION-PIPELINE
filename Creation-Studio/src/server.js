@@ -1316,7 +1316,7 @@ function mediaPath(input) {
 
   if (method === 'POST' && pathname === '/api/assets/upload') {
     const body = await readBody(req);
-    return ok(res, saveBase64Upload(body.name, body.data, 'assets', projectId, body.type, body.folder));
+    return ok(res, saveBase64Upload(body.name, body.data, 'assets', projectId, body.type, body.group || ''));
   }
 
   if (method === 'POST' && pathname === '/api/assets/type') {
@@ -1326,7 +1326,7 @@ function mediaPath(input) {
 
   if (method === 'POST' && pathname === '/api/assets/move') {
     const body = await readBody(req);
-    return ok(res, { rel: library.moveAsset(projectId, body.rel, body.folder) });
+    return ok(res, library.moveAsset(projectId, body.rel, body.group != null ? body.group : body.folder));
   }
 
   if (method === 'POST' && pathname === '/api/assets/rename') {
@@ -1339,9 +1339,9 @@ function mediaPath(input) {
     return ok(res, library.setSubject(projectId, body.rel, body.subject));
   }
 
-  if (method === 'POST' && pathname === '/api/assets/folder') {
+  if (method === 'POST' && (pathname === '/api/assets/group' || pathname === '/api/assets/folder')) {
     const body = await readBody(req);
-    return ok(res, { name: library.createFolder(projectId, body.name) });
+    return ok(res, { name: library.createGroup(projectId, body.name) });
   }
 
   if (method === 'GET' && pathname === '/api/assets/file') {

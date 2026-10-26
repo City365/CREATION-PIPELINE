@@ -2038,3 +2038,7 @@ body.is-pane-resizing * { user-select: none !important; }
 .asset-filter-row .asset-type-chips{margin-bottom:0}
 .asset-folder-filter{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--h3-text-3);white-space:nowrap}
 .asset-folder-filter .select{width:auto;min-width:130px;padding-top:4px;padding-bottom:4px;font-size:12px}
+
+.asset-group-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:0 0 12px;font-size:13px}
+.asset-group-head b{font-weight:600;font-size:14px}
+.asset-group-head .hint{font-size:11px}

@@ -179,12 +179,28 @@ function imageSize(file) {
 }
 
 const FOLDER_ORDER = ['全部', '角色', '场景', '道具', '首帧', '尾帧', '溶图参考', '分镜参考', '未归类'];
+const GROUP_TYPE = 'storyboard';
 
+function groupOfRel(rel) {
+  const value = String(rel || '');
+  const index = value.indexOf('/');
+  return index > 0 ? value.slice(0, index) : '';
+}
+
+/**
+ * 素材库只有两类实体：
+ * - 根目录下的单个素材（人物/场景/道具/首帧/尾帧/溶图参考/其他），类型写在 assets.json；
+ * - 顶层文件夹 = 一个分镜组，组里的图片不再分人物/道具/场景，统一算「分镜参考」。
+ */
 function scanAssets(projectId) {
   const root = assetRoot(projectId);
   const data = metaFor(projectId);
   const items = [];
-  const folders = new Map();
+  const groupMap = new Map();
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+    groupMap.set(entry.name, { name: entry.name, rel: entry.name, count: 0, cover: '', mtime: 0 });
+  }
   const walk = (dir, depth) => {
     let entries = [];
     try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
@@ -198,18 +214,17 @@ function scanAssets(projectId) {
       const kind = kindOf(abs);
       if (kind !== 'image' && kind !== 'audio') continue;
       const rel = relOf(root, abs);
-      const folder = rel.includes('/') ? rel.split('/')[0] : '未归类';
-      if (!folders.has(folder)) folders.set(folder, 0);
-      folders.set(folder, folders.get(folder) + 1);
+      const group = groupOfRel(rel);
+      const type = group ? GROUP_TYPE : (TYPE_IDS.has(data.types[rel]) ? data.types[rel] : 'other');
+      const meta = typeMeta(type);
       const size = imageSize(abs);
       const st = fs.statSync(abs);
-      const type = TYPE_IDS.has(data.types[rel]) ? data.types[rel] : defaultTypeForFolder(folder);
-      const meta = typeMeta(type);
       items.push({
         name: entry.name,
         rel,
         path: abs,
-        folder,
+        folder: group || '未归类',
+        group,
         kind,
         type,
         typeLabel: meta.label,
@@ -220,6 +235,13 @@ function scanAssets(projectId) {
         mtime: st.mtimeMs,
         url: '/api/assets/file?rel=' + encodeURIComponent(rel),
       });
+      if (group) {
+        const row = groupMap.get(group) || { name: group, rel: group, count: 0, cover: '', mtime: 0 };
+        row.count += 1;
+        if (!row.cover && kind === 'image') row.cover = '/api/assets/file?rel=' + encodeURIComponent(rel);
+        row.mtime = Math.max(row.mtime, st.mtimeMs);
+        groupMap.set(group, row);
+      }
     }
   };
   walk(root, 0);
@@ -233,11 +255,7 @@ function scanAssets(projectId) {
     projectId: String(projectId || ''),
     items,
     types: typeCounts,
-    folders: [...folders.entries()].map(([name, count]) => ({ name, count })).sort((a, b) => {
-      const ia = FOLDER_ORDER.indexOf(a.name);
-      const ib = FOLDER_ORDER.indexOf(b.name);
-      return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.name.localeCompare(b.name);
-    }),
+    groups: [...groupMap.values()].sort((a, b) => b.mtime - a.mtime || a.name.localeCompare(b.name)),
   };
 }
 
@@ -255,17 +273,21 @@ function uniquePath(dir, name) {
   return candidate;
 }
 
-function saveAssetUpload(projectId, fileName, buffer, folder, type) {
+function saveAssetUpload(projectId, fileName, buffer, group, type) {
   const root = assetRoot(projectId);
-  const dir = folder && folder !== '全部' && folder !== '未归类' ? ensureDir(path.join(root, safeSegment(folder))) : root;
+  const groupName = String(group || '').trim();
+  const dir = groupName && groupName !== '全部' ? ensureDir(path.join(root, safeSegment(groupName))) : root;
   const target = uniquePath(dir, sanitizeFilename(fileName || 'image.png'));
   fs.writeFileSync(target, buffer);
   const rel = relOf(root, target);
-  if (type) {
-    const value = assertType(type);
-    if (value !== 'other') updateMeta(projectId, (row) => { row.types[rel] = value; });
+  const assignedGroup = groupName && groupName !== '全部' ? groupName : '';
+  if (assignedGroup) {
+    updateMeta(projectId, (row) => { row.types[rel] = GROUP_TYPE; });
+    return { path: target, rel, type: GROUP_TYPE, group: assignedGroup };
   }
-  return { path: target, rel, type: type ? assertType(type) : defaultTypeForFolder(rel.includes('/') ? rel.split('/')[0] : '未归类') };
+  const value = type ? assertType(type) : 'other';
+  if (value !== 'other') updateMeta(projectId, (row) => { row.types[rel] = value; });
+  return { path: target, rel, type: value, group: '' };
 }
 
 function setSubject(projectId, rel, subject) {
@@ -280,7 +302,9 @@ function setSubject(projectId, rel, subject) {
 
 function setType(projectId, rel, type) {
   const key = String(rel);
+  if (groupOfRel(key)) throw new Error('分镜文件夹里的图片固定是「分镜参考」，不能单独改类型');
   const value = assertType(type);
+  if (value === GROUP_TYPE) throw new Error('分镜参考请通过新建分镜文件夹上传，不能直接设为该类型');
   updateMeta(projectId, (row) => {
     row.types = row.types || {};
     row.types[key] = value;
@@ -321,21 +345,29 @@ function renameAsset(projectId, rel, newName) {
   return nextRel;
 }
 
-function moveAsset(projectId, rel, folder) {
+/** group 非空表示移入该分镜文件夹；传空表示移回素材库根目录。 */
+function moveAsset(projectId, rel, group) {
   const root = assetRoot(projectId);
   const abs = assetFile(projectId, rel);
-  const destDir = !folder || folder === '全部' || folder === '未归类' ? root : ensureDir(path.join(root, safeSegment(folder)));
+  const groupName = String(group || '').trim();
+  const destDir = groupName && groupName !== '全部' && groupName !== '未归类' ? ensureDir(path.join(root, safeSegment(groupName))) : root;
   const target = uniquePath(destDir, path.basename(abs));
   fs.renameSync(abs, target);
   generationStore.link(abs, target, true);
   const nextRel = relOf(root, target);
-  updateMeta(projectId, (row) => moveMetaRel(projectId, String(rel), nextRel, row));
-  return nextRel;
+  const nextGroup = groupOfRel(nextRel);
+  updateMeta(projectId, (row) => {
+    const oldType = row.types && row.types[String(rel)];
+    moveMetaRel(projectId, String(rel), nextRel, row);
+    if (nextGroup) row.types[nextRel] = GROUP_TYPE;
+    else if (oldType === GROUP_TYPE) delete row.types[nextRel];
+  });
+  return { rel: nextRel, group: nextGroup, type: nextGroup ? GROUP_TYPE : (metaFor(projectId).types[nextRel] || 'other') };
 }
 
-function createFolder(projectId, name) {
+function createGroup(projectId, name) {
   const clean = safeSegment(name);
-  if (!clean) throw new Error('文件夹名不能为空');
+  if (!clean || clean === '全部' || clean === '未归类') throw new Error('分镜名称不能为空，也不能叫「全部/未归类」');
   ensureDir(path.join(assetRoot(projectId), clean));
   return clean;
 }
@@ -474,7 +506,8 @@ module.exports = {
   setType,
   renameAsset,
   moveAsset,
-  createFolder,
+  createGroup,
+  createFolder: createGroup,
   fileForAsset,
   listMedia,
   mediaFile,
