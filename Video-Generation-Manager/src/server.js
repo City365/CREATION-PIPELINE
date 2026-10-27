@@ -174,7 +174,16 @@ async function createService(options={}) {
           send(res,200,await settings.save(value));return;
         }
         if(req.method==='GET' && pathname==='/api/state') {
-          send(res,200,{accounts:store.list(),tasks:queue.list(),busyAccounts:[...queue.busy],directory,downloads:currentDownloads(),connectionFile,version:'0.1.0'});return;
+          const accounts=store.list();
+          const page=queue.page({
+            page:Number(url.searchParams.get('tasksPage'))||1,
+            pageSize:url.searchParams.has('tasksPageSize')?Number(url.searchParams.get('tasksPageSize')):10,
+            query:url.searchParams.get('q')||'',
+            filter:url.searchParams.get('filter')||'all',
+            accountName:(id)=>accounts.find((a)=>a.id===id)?.name||'',
+          });
+          send(res,200,{accounts,tasks:page.tasks,busyAccounts:[...queue.busy],directory,downloads:currentDownloads(),connectionFile,version:'0.1.0',
+            taskTotal:page.total,taskPage:page.page,taskPageSize:page.pageSize,taskPages:page.pages,taskStats:page.stats});return;
         }
         if(req.method==='POST' && pathname==='/api/accounts'){
           const input=await body(req);if(input.platform==='fixture' && !options.testBaseURL)throw new Error('测试平台未启用');

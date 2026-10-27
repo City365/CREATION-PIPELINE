@@ -10,13 +10,42 @@ class TaskQueue extends EventEmitter {
     super(); this.store = store; this.execute = execute; this.concurrency = concurrency;
     this.file = path.join(directory, 'tasks.json'); this.tasks = readJSON(this.file, []);
     this.busy = new Set(); this.running = new Map(); this.stopping = false;
-    for (const t of this.tasks) if (!TERMINAL.has(t.status)) {
-      t.status = 'interrupted'; t.message = '服务重启，未自动重新提交，避免重复生成'; t.updatedAt = new Date().toISOString();
+    for (const t of this.tasks) {
+      // 旧版本在发送前就扣额度；没有成片的失败/取消/中断任务要退回来。
+      if (t.quotaCharged && !t.result?.path && t.accountId) {
+        try { this.store.refundQuota?.(t.accountId); t.quotaRefunded = true; } catch { /* 额度退回失败不阻塞启动 */ }
+        t.quotaCharged = false;
+      }
+      if (!TERMINAL.has(t.status)) {
+        t.status = 'interrupted'; t.message = '服务重启，未自动重新提交，避免重复生成'; t.updatedAt = new Date().toISOString();
+      }
     }
     this.persist();
   }
   persist() { saveJSON(this.file, this.tasks); this.emit('change'); }
   list() { return this.tasks.map(t => this.public(t)); }
+  page({ page = 1, pageSize = 10, query = '', filter = 'all', accountName = () => '' } = {}) {
+    const q = String(query || '').trim().toLowerCase();
+    const rows = this.tasks.filter((t) => {
+      const active = !TERMINAL.has(t.status);
+      if (filter === 'active' && !active) return false;
+      if (filter === 'failed' && !['failed', 'interrupted'].includes(t.status)) return false;
+      if (!['all', 'active', 'failed'].includes(filter) && t.status !== filter) return false;
+      if (!q) return true;
+      return `${t.id} ${t.prompt} ${accountName(t.accountId)}`.toLowerCase().includes(q);
+    }).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    const total = rows.length;
+    const size = Math.max(1, Math.min(50, Number(pageSize) || 10));
+    const pages = Math.max(1, Math.ceil(total / size));
+    const current = Math.max(1, Math.min(pages, Number(page) || 1));
+    const tasks = rows.slice((current - 1) * size, current * size).map((t) => this.public(t));
+    const stats = {
+      total: this.tasks.length,
+      active: this.tasks.filter((t) => !TERMINAL.has(t.status)).length,
+      done: this.tasks.filter((t) => t.status === 'completed').length,
+    };
+    return { tasks, total, page: current, pageSize: size, pages, stats };
+  }
   public(t) { return structuredClone(t); }
   get(id) { const t = this.tasks.find(t => t.id === id); if (!t) throw new Error('任务不存在'); return t; }
   submit(input = {}) {
@@ -46,12 +75,20 @@ class TaskQueue extends EventEmitter {
     const t = { id: crypto.randomUUID(), requestId, prompt, platform, accountId, requestedAccountId:accountId, references: paths,
       model: String(input.model || '').slice(0, 80), duration, resolution, ratio: String(input.ratio || '').slice(0, 20),
       removeWatermark: input.removeWatermark !== false, timeoutSeconds: Math.max(60,Math.min(14400,Number(input.timeoutSeconds)||3600)),
-      status: 'queued', message: '等待可用账号', progress: 0, createdAt: now, updatedAt: now, result: null, error: '' };
+      status: 'queued', message: '等待可用账号', progress: 0, createdAt: now, updatedAt: now, result: null, error: '', quotaCharged:false, quotaRefunded:false };
     this.tasks.push(t); this.persist(); this.kick(); return this.public(t);
   }
   update(t, patch) {
     if (TERMINAL.has(t.status)) return;
     Object.assign(t, patch, { updatedAt: new Date().toISOString() }); this.persist();
+  }
+  /** 没有产出成片就退回预扣额度；一个任务最多退一次。 */
+  refundQuota(t, accountId) {
+    if (!t.quotaCharged || !accountId) return false;
+    try { this.store.refundQuota?.(accountId); } catch { /* 记录失败时仍不重复扣 */ }
+    t.quotaCharged = false;
+    t.quotaRefunded = true;
+    return true;
   }
   kick() { if (!this.stopping) setImmediate(() => this.drain()); }
   drain() {
@@ -80,10 +117,17 @@ class TaskQueue extends EventEmitter {
         if(error.code==='ACCOUNT_QUOTA_EXHAUSTED' && !controller.signal.aborted){
           // 平台判定这个号今日额度用完：拉黑它，把任务放回队列换下一个号。
           const next=[...new Set([...(t.excludedAccounts||[]),a.id])];
-          this.update(t,{status:'queued',accountId:'',excludedAccounts:next,message:'账号「'+a.name+'」额度不足，换其他可用账号',quotaCharged:false});return;
+          this.update(t,{status:'queued',accountId:'',excludedAccounts:next,message:'账号「'+a.name+'」额度不足，换其他可用账号',quotaCharged:false,quotaRefunded:false});return;
         }
-        if (error.code === 'CANCELED') { this.update(t, { status: 'cancelled', message: '用户已通过聊天框取消视频生成', error: null, progress: 0 }); return; }
-        if (!controller.signal.aborted) this.update(t, { status: 'failed', error: String(error.message || error), message: String(error.message || error), ...(error.uploadDiagnostics ? { uploadDiagnostics: error.uploadDiagnostics } : {}) });
+        if (error.code === 'CANCELED') {
+          this.refundQuota(t, a.id);
+          this.update(t, { status: 'cancelled', message: '用户已通过聊天框取消视频生成', error: null, progress: 0 });
+          return;
+        }
+        if (!controller.signal.aborted) {
+          this.refundQuota(t, a.id);
+          this.update(t, { status: 'failed', error: String(error.message || error), message: String(error.message || error), ...(error.uploadDiagnostics ? { uploadDiagnostics: error.uploadDiagnostics } : {}) });
+        }
       }).finally(() => { this.busy.delete(a.id); this.running.delete(t.id); this.kick(); });
     }
   }

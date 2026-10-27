@@ -22,6 +22,7 @@ function safeSegment(value) {
   if (!s || /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)/i.test(s)) throw new Error('无效文件名');
   return s;
 }
+const DEFAULT_QUOTA_TIMEZONE = 'Asia/Shanghai';
 class Store {
   constructor(directory, options = {}) {
     this.now=options.now || (()=>new Date());
@@ -30,17 +31,22 @@ class Store {
     this.file = path.join(this.directory, 'accounts.json');
     this.accounts = readJSON(this.file, []);
     if (!Array.isArray(this.accounts)) throw new Error('账号文件格式错误，请保留文件后检查');
-    for(const a of this.accounts)this.ensureQuota(a);
-    this.persist();
+    let migrated=false;
+    for(const a of this.accounts){
+      // 旧版本默认按蒂华纳时间重置；统一迁到北京时间，避免早上 8 点才刷新。
+      if(a.quota?.timezone==='America/Tijuana'||!a.quota?.timezone){a.quota={...(a.quota||{}),timezone:DEFAULT_QUOTA_TIMEZONE};migrated=true;}
+      if(this.ensureQuota(a))migrated=true;
+    }
+    if(migrated)this.persist();
   }
   quotaDate(timezone) {
     return new Intl.DateTimeFormat('en-CA',{timeZone:timezone,year:'numeric',month:'2-digit',day:'2-digit'}).format(this.now());
   }
   ensureQuota(account) {
-    const q=account.quota ||= {limit:5,used:0,timezone:'America/Tijuana',date:''};
+    const q=account.quota ||= {limit:5,used:0,timezone:DEFAULT_QUOTA_TIMEZONE,date:''};
     q.limit=Number.isInteger(q.limit)&&q.limit>=0?q.limit:5;
     q.used=Number.isInteger(q.used)&&q.used>=0?q.used:0;
-    q.timezone=q.timezone||'America/Tijuana';
+    q.timezone=q.timezone||DEFAULT_QUOTA_TIMEZONE;
     const today=this.quotaDate(q.timezone);
     if(q.date!==today){q.date=today;q.used=0;return true;}return false;
   }
@@ -54,6 +60,11 @@ class Store {
     if(!this.canUse(a)){const error=new Error('账号今日视频配额已用完');error.code='ACCOUNT_QUOTA_EXHAUSTED';throw error;}
     a.quota.used++;this.persist();return structuredClone(a.quota);
   }
+  /** 任务没有产出成片时退回预扣额度；已到平台上限的账号不要调用。 */
+  refundQuota(id) {
+    const a=this.get(id);if(!a)return null;this.ensureQuota(a);
+    a.quota.used=Math.max(0,a.quota.used-1);this.persist();return structuredClone(a.quota);
+  }
   get(id) { return this.accounts.find(a => a.id === id); }
   persist() { saveJSON(this.file, this.accounts); }
   add(input = {}) {
@@ -61,7 +72,7 @@ class Store {
     if (!['doubao', 'dola', 'gemini', 'fixture'].includes(platform)) throw new Error('平台不支持');
     const account = { id: crypto.randomUUID(), name: String(input.name || '新账号').slice(0, 60), platform,
       group: String(input.group || '').slice(0, 40), remark: String(input.remark || '').slice(0, 100),
-      enabled: true, cooldownUntil: 0, createdAt: new Date().toISOString(), selectors: {}, quota:{limit:5,used:0,timezone:'America/Tijuana',date:this.quotaDate('America/Tijuana')} };
+      enabled: true, cooldownUntil: 0, createdAt: new Date().toISOString(), selectors: {}, quota:{limit:5,used:0,timezone:DEFAULT_QUOTA_TIMEZONE,date:this.quotaDate(DEFAULT_QUOTA_TIMEZONE)} };
     this.accounts.push(account); this.persist(); return structuredClone(account);
   }
   update(id, input = {}) {
@@ -83,7 +94,7 @@ class Store {
     for(const [inputKey,key]of [['quotaLimit','limit'],['quotaUsed','used']])if(input[inputKey]!==undefined){
       const value=Number(input[inputKey]);if(!Number.isInteger(value)||value<0||value>100000)throw new Error('配额必须是0到100000之间的整数');a.quota[key]=value;
     }
-    if(input.quotaTimezone!==undefined){const timezone=String(input.quotaTimezone);this.quotaDate(timezone);a.quota.timezone=timezone;this.ensureQuota(a);}
+    if(input.quotaTimezone!==undefined){const timezone=String(input.quotaTimezone||'').trim()||DEFAULT_QUOTA_TIMEZONE;this.quotaDate(timezone);a.quota.timezone=timezone;this.ensureQuota(a);}
     this.persist(); return structuredClone(a);
   }
   remove(id) {
@@ -97,4 +108,4 @@ class Store {
     return path.join(this.directory, 'profiles', id);
   }
 }
-module.exports = { Store, saveJSON, readJSON, safeSegment };
+module.exports = { Store, saveJSON, readJSON, safeSegment, DEFAULT_QUOTA_TIMEZONE };

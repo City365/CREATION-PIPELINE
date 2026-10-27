@@ -190,3 +190,104 @@ td .prompt-summary{max-width:190px}
 [data-swatch=graphite]{background:linear-gradient(135deg,#e8a33d,#e8704b)}
 .theme-menu .theme-more{grid-column:1/-1;margin-top:4px;display:flex;justify-content:center;font-size:11px;color:var(--primary);padding:8px;border-top:1px solid var(--line);text-decoration:none}
 
+/* ===== 紧凑布局：更小的组件、账号一排 5 个、表格分页 ===== */
+:root{--radius:14px;--pad:16px;--gap:14px;font-size:13px}
+.header-inner{max-width:1280px;min-height:64px;padding:0 24px;gap:24px}
+.brand{font-size:15px;gap:9px}
+.brand-icon{width:34px;height:34px;border-radius:11px}
+.brand-icon .icon{width:20px;height:20px}
+.header-inner nav a{padding:8px 12px;font-size:13px;gap:7px}
+main{max-width:1280px;padding:22px 24px 0}
+.page-heading{margin-bottom:18px}
+.page-heading h1{font-size:28px}
+.page-heading p{margin-top:6px;font-size:12px}
+.eyebrow{font-size:9px;margin-bottom:6px}
+.primary,.quiet{min-height:34px;padding:7px 12px;font-size:12px;border-radius:9px}
+.icon-button{min-width:30px;min-height:30px;padding:6px}
+.actions{gap:8px}
+.stats{gap:12px;margin-bottom:14px}
+.stat-card{padding:12px 14px}
+.stat-card strong{font-size:24px;margin:3px 0}
+.stat-card span:not(.stat-icon){font-size:11px}
+.stat-card small{font-size:10px}
+.stat-icon{width:34px;height:34px;border-radius:11px}
+.card{padding:16px;margin-bottom:14px}
+.section-head{margin-bottom:14px}
+.section-head h2{font-size:16px}
+.toolbar{gap:8px;margin-bottom:12px}
+.search-field{max-width:300px;padding:0 9px}
+.toolbar select{min-width:120px}
+table{font-size:12px}
+th{padding:8px 10px}
+td{padding:9px 10px}
+td strong{font-size:12px}
+td .prompt-summary{max-width:240px;margin-top:3px}
+.status-message{max-width:150px}
+.badge,.pill{padding:2px 7px;font-size:10px}
+.account-overview{padding:12px 16px;margin-bottom:14px}
+.account-overview strong{font-size:14px}
+.overview-icon{width:32px;height:32px;border-radius:9px}
+.account-toolbar{margin-bottom:12px}
+.account-grid{grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;min-height:0}
+.account-card{padding:12px;border-radius:12px}
+.account-card::before{left:12px;right:12px;height:2px}
+.account-head{gap:8px}
+.account-avatar{width:32px;height:32px;border-radius:10px;font-size:15px}
+.account-name h3{font-size:13px}
+.account-name small{font-size:10px}
+.account-labels{margin:8px 0 6px;gap:4px}
+.account-remark{height:28px;font-size:11px;line-height:1.4}
+.quota-block{padding-top:8px;margin-top:8px}
+.quota-title{font-size:11px}
+.quota-block progress{height:4px;margin:6px 0 5px}
+.quota-block small{font-size:9px}
+.account-actions{margin-top:8px;gap:5px}
+.account-actions .primary{min-height:28px;padding:5px 7px;font-size:11px;gap:5px}
+.account-actions .quiet{min-height:28px;padding:5px 7px;font-size:11px}
+.account-actions .icon{width:13px;height:13px}
+.account-footer{margin-top:5px;font-size:9px}
+.account-footer button{font-size:9px;padding:2px}
+.download-location{padding:10px 14px;margin-bottom:12px;gap:10px}
+.download-location .download-icon{width:32px;height:32px;border-radius:9px}
+.download-location-text strong{font-size:12px}
+.download-location-text code{font-size:10px}
+.download-location-actions .quiet,.download-location-actions .text-link{font-size:11px;min-height:28px;padding:5px 8px}
+dialog{padding:20px;border-radius:16px;width:min(560px,calc(100vw - 24px))}
+.wide-dialog{width:min(720px,calc(100vw - 24px))}
+.dialog-heading{margin-bottom:10px}
+.dialog-symbol{width:34px;height:34px;border-radius:10px}
+.dialog-description{margin:6px 0 14px}
+input:not([type=checkbox]):not([type=radio]),select,textarea{padding:7px 9px;min-height:34px;border-radius:8px;margin-top:5px;font-size:12px}
+form>label,form>.two{margin:12px 0}
+.two{gap:10px}
+.upload-zone{margin:12px 0 8px}
+.upload{padding:11px;gap:9px}
+.upload-icon{width:30px;height:30px;border-radius:8px}
+.parameter-content{padding-top:10px}
+.detail-meta{padding:12px;gap:10px;margin:12px 0}
+.detail-label{margin:12px 0 6px}
+.detail-text{padding:10px;max-height:220px}
+#notice{padding:10px 16px;font-size:12px;bottom:18px}
+footer{padding:16px 0 18px;margin-top:14px}
+.task-pagination{display:flex;align-items:center;justify-content:flex-end;gap:8px;padding-top:10px;font-size:11px;color:var(--muted)}
+.task-pagination button{background:var(--surface);border:1px solid var(--line);border-radius:7px;padding:5px 10px;font-size:11px;color:var(--text)}
+.task-pagination button:hover:not(:disabled){background:var(--soft);border-color:var(--primary);color:var(--primary)}
+.task-pagination button:disabled{opacity:.42;cursor:default}
+@media(max-width:1400px){.account-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media(max-width:1100px){.account-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:900px){.account-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:560px){.account-grid{grid-template-columns:1fr}.header-inner{min-height:auto;padding:10px 14px 0}.page-heading h1{font-size:24px}main{padding:16px 14px 0}.stat-card strong{font-size:21px}}
+/* 组件风格选择不应把紧凑布局放大 */
+[data-components] .header-inner{min-height:64px}
+[data-components] .account-card{padding:12px}
+[data-components] .account-remark{height:28px}
+[data-components] .account-actions{margin-top:8px}
+[data-components] .stat-card{padding:12px 14px}
+[data-components] td{padding:9px 10px}
+@media(max-width:1250px){.account-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media(max-width:1000px){.account-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:780px){.account-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.account-remark{height:16px!important;-webkit-line-clamp:1!important}
+.account-footer span{display:none}
+.account-footer{justify-content:flex-end;margin-top:2px}
+@media(max-width:560px){.account-grid{grid-template-columns:1fr}}
