@@ -291,3 +291,13 @@ footer{padding:16px 0 18px;margin-top:14px}
 .account-footer span{display:none}
 .account-footer{justify-content:flex-end;margin-top:2px}
 @media(max-width:560px){.account-grid{grid-template-columns:1fr}}
+/* 设置 / API 页：用 tab 切换，不再铺一屏 */
+.page-tabs{display:flex;gap:4px;align-items:center;flex-wrap:wrap;border-bottom:1px solid var(--line);margin:0 0 16px}
+.page-tab{border:0;background:none;color:var(--muted);font-size:12px;font-weight:600;padding:8px 12px;border-radius:8px 8px 0 0;position:relative}
+.page-tab:hover{background:var(--soft);color:var(--primary)}
+.page-tab[aria-selected=true]{color:var(--primary);background:var(--soft)}
+.page-tab[aria-selected=true]::after{content:"";position:absolute;left:10px;right:10px;bottom:-1px;height:2px;background:var(--primary);border-radius:2px}
+[data-tab-panel]:not(.is-active){display:none!important}
+.settings-grid{grid-template-columns:repeat(auto-fit,minmax(380px,1fr))}
+.settings-section{scroll-margin-top:84px}
+@media(max-width:560px){.page-tabs{flex-wrap:nowrap;overflow-x:auto}.page-tab{white-space:nowrap;font-size:11px;padding:7px 9px}}
