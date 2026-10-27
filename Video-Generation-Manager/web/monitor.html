@@ -1,0 +1,44 @@
+<!doctype html><html lang="zh-CN" data-theme="mint" data-components="rounded"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>监控预览 · 本地创作台</title><script src="/theme-boot.js"></script><link rel="stylesheet" href="/styles.css"><script src="/app.js" defer></script></head><body data-page="monitor"><div class="ambient" aria-hidden="true"><span class="blob b1"></span><span class="blob b2"></span><span class="blob b3"></span><span class="grain"></span></div><svg class="icon-library" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs>
+<symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></symbol>
+<symbol id="i-spark" viewBox="0 0 24 24"><path d="m12 3 2.7 6.3L21 12l-6.3 2.7L12 21l-2.7-6.3L3 12l6.3-2.7Z"/><path d="M20 2v4M18 4h4"/></symbol>
+<symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 20v-2a6 6 0 0 1 12 0v2M16 5a3 3 0 0 1 0 6M18 15a5 5 0 0 1 3 5"/></symbol>
+<symbol id="i-link" viewBox="0 0 24 24"><path d="m10 14 4-4M9 16l-2 2a4 4 0 0 1-6-6l5-5a4 4 0 0 1 6 0M15 8l2-2a4 4 0 0 1 6 6l-5 5a4 4 0 0 1-6 0" transform="translate(0 -1) scale(.96)"/></symbol>
+<symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+<symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"/></symbol>
+<symbol id="i-palette" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18h1a2 2 0 0 0 1-3.7 1.5 1.5 0 0 1 1-2.8h2a4 4 0 0 0 4-4C21 6.4 17 3 12 3Z"/><circle cx="7.5" cy="10" r=".7"/><circle cx="11" cy="7" r=".7"/><circle cx="15.5" cy="8" r=".7"/></symbol>
+<symbol id="i-play" viewBox="0 0 24 24"><path d="m9 5 11 7-11 7Z"/></symbol>
+<symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+<symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+<symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-1l2 6M18 17a7 7 0 0 1-12 1l-2-6"/></symbol>
+<symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="4"/><circle cx="8" cy="8" r="1.5"/><path d="m4 17 5-5 4 4 3-3 5 5"/></symbol>
+<symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h5l3 3h6a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></symbol>
+<symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M4 16v4h16v-4"/></symbol>
+<symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4m-5 5 5-5 5 5M4 16v4h16v-4"/></symbol>
+<symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+<symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
+<symbol id="i-list" viewBox="0 0 24 24"><path d="M9 5h12M9 12h12M9 19h12M3 5h1M3 12h1M3 19h1"/></symbol>
+<symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7h16M4 17h16M8 4v6M16 14v6"/><circle cx="8" cy="7" r="2"/><circle cx="16" cy="17" r="2"/></symbol>
+<symbol id="i-monitor" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="13" rx="3"/><path d="M12 16v5M7 21h10"/></symbol>
+<symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
+<symbol id="i-shield" viewBox="0 0 24 24"><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6Z"/><path d="m8 12 3 3 5-6"/></symbol>
+<symbol id="i-power" viewBox="0 0 24 24"><path d="M12 2v10M6 5a9 9 0 1 0 12 0"/></symbol>
+<symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="13" height="13" rx="3"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></symbol>
+</defs></svg><a class="skip-link" href="#main">跳转到主要内容</a><header class="app-header"><div class="header-inner"><a class="brand" href="/tasks"><span class="brand-icon"><svg class="icon" aria-hidden="true"><use href="#i-spark"/></svg></span><span>本地创作台<small>CREATIVE DESK</small></span></a><nav aria-label="主导航"><a href="/tasks"><svg class="icon" aria-hidden="true"><use href="#i-list"/></svg><span>任务管理</span></a><a href="/accounts" ><svg class="icon" aria-hidden="true"><use href="#i-users"/></svg><span>账号管理</span></a><a href="/monitor" aria-current="page"><svg class="icon" aria-hidden="true"><use href="#i-monitor"/></svg><span>监控</span></a><a href="/api" ><svg class="icon" aria-hidden="true"><use href="#i-link"/></svg><span>API</span></a><a href="/settings" ><svg class="icon" aria-hidden="true"><use href="#i-settings"/></svg><span>系统管理</span></a></nav><div class="header-status"><span class="dot"></span><span id="service-status">连接中</span><div class="theme-switch"><button class="icon-button" id="theme-switch" type="button" aria-label="快速切换主题" aria-haspopup="menu" aria-expanded="false"><svg class="icon" aria-hidden="true"><use href="#i-palette"/></svg></button><div class="theme-menu" id="theme-menu" role="menu" hidden></div></div></div></div></header><main id="main">
+  <div class="page-heading"><div><div class="eyebrow">YOUR CREATIVE WORKSPACE <span> / 监控预览</span></div><h1>监控预览<span class="heading-dot">.</span></h1><p>账号、任务、参数与时间趋势，一屏看清系统运行状态。</p></div><div class="actions"><button class="quiet" id="monitor-refresh"><svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg>刷新</button></div></div>
+  <div id="notice" role="status" aria-live="polite" hidden></div>
+  <div class="monitor-toolbar"><div class="monitor-dimensions" role="tablist" aria-label="时间维度"><button type="button" data-dimension="month" aria-selected="true">按月</button><button type="button" data-dimension="day" aria-selected="false">按天</button><button type="button" data-dimension="hour" aria-selected="false">按时</button></div><span class="hint" id="monitor-range">近 12 个月</span><span class="hint" id="monitor-updated"></span></div>
+  <section class="stats monitor-kpis" aria-label="监控概览">
+    <article class="stat-card"><div><span>任务总数</span><strong id="mon-total">—</strong><small id="mon-total-hint">当前时间范围</small></div><span class="stat-icon"><svg class="icon" aria-hidden="true"><use href="#i-list"/></svg></span></article>
+    <article class="stat-card"><div><span>完成率</span><strong id="mon-completion">—</strong><small id="mon-completion-hint">已完成 / 任务总数</small></div><span class="stat-icon"><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg></span></article>
+    <article class="stat-card"><div><span>账号额度</span><strong id="mon-quota">—</strong><small id="mon-quota-hint">今日已用 / 总额度</small></div><span class="stat-icon"><svg class="icon" aria-hidden="true"><use href="#i-users"/></svg></span></article>
+  </section>
+  <section class="card monitor-trend-card"><div class="section-head"><div><span class="eyebrow">TREND</span><h2>任务趋势</h2><p id="mon-trend-caption">创建、完成、失败随时间的变化</p></div><span class="monitor-legend"><i class="created"></i>创建<i class="completed"></i>完成<i class="failed"></i>失败</span></div><div id="monitor-trend" class="monitor-trend"><div class="hint">正在读取…</div></div></section>
+  <div class="monitor-grid">
+    <section class="card"><div class="section-head"><div><span class="eyebrow">STATUS</span><h2>任务状态</h2></div></div><div id="monitor-status"></div></section>
+    <section class="card"><div class="section-head"><div><span class="eyebrow">PARAMS</span><h2>任务参数</h2></div></div><div id="monitor-params"></div></section>
+  </div>
+  <section class="card"><div class="section-head"><div><span class="eyebrow">ACCOUNTS</span><h2>账号状态与额度</h2><p>当前账号快照；任务数按所选时间范围统计</p></div></div><div id="monitor-accounts" class="monitor-accounts"><div class="hint">正在读取…</div></div></section>
+  <footer><span><svg class="icon" aria-hidden="true"><use href="#i-shield"/></svg> 本地工作空间 · 账号会话独立保存</span><span>本地创作台 <span class="footer-dot">/</span> <span id="footer-version">0.1.0</span></span></footer>
+</main>
+<script src="/monitor.js"></script>
+</body></html>

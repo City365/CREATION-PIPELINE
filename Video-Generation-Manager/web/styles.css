@@ -312,3 +312,67 @@ footer{padding:16px 0 18px;margin-top:14px}
 .mapping-language-table input{min-height:30px;margin-top:0;padding:5px 8px;font-size:12px}
 .mapping-language-table .mapping-remove-language{background:none;border:0;color:var(--danger);font-size:11px;padding:4px 6px;border-radius:5px}
 .mapping-language-table .mapping-remove-language:hover{background:#fff0f1}
+/* ===== 监控预览 ===== */
+.monitor-toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 14px}
+.monitor-dimensions{display:flex;gap:4px;padding:3px;background:var(--surface);border:1px solid var(--line);border-radius:9px}
+.monitor-dimensions button{border:0;background:none;color:var(--muted);font-size:11px;font-weight:600;padding:5px 12px;border-radius:6px}
+.monitor-dimensions button[aria-selected=true]{background:var(--soft);color:var(--primary)}
+.monitor-toolbar .hint{margin-left:auto}
+.monitor-kpis{margin-bottom:14px}
+.monitor-trend-card .section-head{margin-bottom:12px}
+.monitor-legend{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--muted);flex-wrap:wrap}
+.monitor-legend i{display:inline-block;width:7px;height:7px;border-radius:2px;margin-left:8px}
+.monitor-legend i.created{background:#9bb7c5}.monitor-legend i.completed{background:#0e7c64}.monitor-legend i.failed{background:#b33b49}
+.monitor-trend{overflow-x:auto;padding:4px 0 2px}
+.monitor-bars{display:flex;align-items:flex-end;gap:6px;height:190px;min-width:520px}
+.monitor-bar-group{flex:1;min-width:10px;display:flex;flex-direction:column;align-items:center;gap:4px;height:100%}
+.monitor-bar-stack{height:160px;display:flex;align-items:flex-end;justify-content:center;gap:1px;width:100%}
+.monitor-bar-stack i{width:5px;border-radius:2px 2px 0 0;min-height:0}
+.monitor-bar-stack i.created{background:#9bb7c5}
+.monitor-bar-stack i.completed{background:#0e7c64}
+.monitor-bar-stack i.failed{background:#b33b49}
+.monitor-bar-group>span{font-size:9px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.monitor-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px}
+.monitor-grid .card{min-width:0}
+.monitor-status-wrap{display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+.monitor-donut{width:128px;height:128px;border-radius:50%;position:relative;display:grid;place-items:center;flex-shrink:0}
+.monitor-donut::after{content:"";position:absolute;inset:20px;border-radius:50%;background:var(--surface)}
+.monitor-donut b,.monitor-donut span{position:relative;z-index:1;display:block;text-align:center}
+.monitor-donut b{font-size:22px;line-height:1.1}
+.monitor-donut span{font-size:9px;color:var(--muted)}
+.monitor-status-legend{display:grid;gap:5px;flex:1;min-width:130px}
+.monitor-status-legend>div{display:grid;grid-template-columns:8px minmax(0,1fr) auto;align-items:center;gap:6px;font-size:11px;color:var(--muted)}
+.monitor-status-legend i{width:7px;height:7px;border-radius:2px}
+.monitor-status-legend b{font-weight:600;color:var(--text);font-variant-numeric:tabular-nums}
+.monitor-param-group{display:grid;gap:5px;margin-bottom:10px}
+.monitor-param-group:last-child{margin-bottom:0}
+.monitor-param-group h3{margin:0 0 2px;font-size:11px;font-weight:600;color:var(--text)}
+.monitor-param-row{display:grid;grid-template-columns:56px minmax(0,1fr) 22px;align-items:center;gap:7px;font-size:10px;color:var(--muted)}
+.monitor-param-bar{height:6px;background:var(--tint);border-radius:4px;overflow:hidden}
+.monitor-param-bar i{display:block;height:100%;background:var(--primary);border-radius:4px}
+.monitor-param-row b{text-align:right;font-weight:600;color:var(--text);font-variant-numeric:tabular-nums}
+.monitor-accounts .table-scroll{border:1px solid var(--line);border-radius:8px}
+.monitor-accounts table{font-size:11px}
+.monitor-accounts th{padding:7px 9px}
+.monitor-accounts td{padding:7px 9px}
+.monitor-accounts td:first-child{min-width:0;max-width:none}
+.monitor-quota{display:grid;grid-template-columns:minmax(70px,120px) auto;align-items:center;gap:7px;font-size:10px;color:var(--muted)}
+.monitor-quota progress{width:100%;height:4px;border:0;border-radius:4px;background:var(--soft);appearance:none}
+.monitor-quota progress::-webkit-progress-value{background:var(--primary);border-radius:4px}
+.monitor-accounts .badge.info{color:#245eae;background:#eaf2ff}
+.monitor-accounts .badge.warn{color:#956212;background:#fff4d9}
+@media(max-width:900px){.monitor-grid{grid-template-columns:1fr}.monitor-toolbar .hint{margin-left:0}.monitor-bars{min-width:700px}}
+.monitor-svg{display:block;width:100%;height:190px;min-width:520px}
+/* 监控环形图与参数条：不使用内联样式，兼容 CSP */
+.monitor-donut::after{display:none}
+.monitor-donut svg{position:absolute;inset:0;width:100%;height:100%}
+.monitor-status-legend i[data-status=completed]{background:#0e7c64}
+.monitor-status-legend i[data-status=failed]{background:#b33b49}
+.monitor-status-legend i[data-status=cancelled]{background:#8b9591}
+.monitor-status-legend i[data-status=paused]{background:#c08b32}
+.monitor-status-legend i[data-status=interrupted]{background:#b06b3f}
+.monitor-status-legend i[data-status=queued]{background:#8ba6b5}
+.monitor-status-legend i[data-status=starting],.monitor-status-legend i[data-status=configuring],.monitor-status-legend i[data-status=uploading],.monitor-status-legend i[data-status=submitting],.monitor-status-legend i[data-status=generating],.monitor-status-legend i[data-status=downloading]{background:#2a5fd0}
+.monitor-param-bar progress{display:block;width:100%;height:6px;border:0;border-radius:4px;background:var(--tint);appearance:none}
+.monitor-param-bar progress::-webkit-progress-bar{background:var(--tint);border-radius:4px}
+.monitor-param-bar progress::-webkit-progress-value{background:var(--primary);border-radius:4px}

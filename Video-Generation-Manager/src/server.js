@@ -128,6 +128,45 @@ async function createService(options={}) {
   });
   const concurrency=Math.max(1,Math.min(10,Number(process.env.DBM_CONCURRENCY)||3));
   const queue=new TaskQueue({directory,store,execute,concurrency});
+  function monitorSnapshot(dimension='month'){
+    const now=new Date();const buckets=[];const pad=n=>String(n).padStart(2,'0');
+    if(dimension==='hour'){
+      const base=new Date(now);base.setMinutes(0,0,0);
+      for(let i=23;i>=0;i--){const d=new Date(base);d.setHours(base.getHours()-i);const start=d.getTime(),end=new Date(d.getTime()+3600000).getTime();buckets.push({key:pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+pad(d.getHours())+':00',label:pad(d.getHours())+':00',start,end,created:0,completed:0,failed:0,canceled:0});}
+    }else if(dimension==='day'){
+      for(let i=29;i>=0;i--){const d=new Date(now.getFullYear(),now.getMonth(),now.getDate()-i);const start=d.getTime(),end=new Date(d.getFullYear(),d.getMonth(),d.getDate()+1).getTime();buckets.push({key:d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate()),label:(d.getMonth()+1)+'/'+d.getDate(),start,end,created:0,completed:0,failed:0,canceled:0});}
+    }else{
+      dimension='month';
+      for(let i=11;i>=0;i--){const d=new Date(now.getFullYear(),now.getMonth()-i,1);const start=d.getTime(),end=new Date(d.getFullYear(),d.getMonth()+1,1).getTime();buckets.push({key:d.getFullYear()+'-'+pad(d.getMonth()+1),label:(d.getMonth()+1)+'月',start,end,created:0,completed:0,failed:0,canceled:0});}
+    }
+    const start=buckets[0].start,end=buckets[buckets.length-1].end;
+    const tasks=queue.list();const accounts=store.list();const inRange=tasks.filter(t=>{const ts=Date.parse(t.createdAt);return ts>=start&&ts<end;});
+    const statuses={};const ratios={};const durations={};const platforms={};
+    const accountStats=new Map(accounts.map(a=>[a.id,{id:a.id,name:a.name,platform:a.platform,enabled:a.enabled!==false,busy:queue.busy.has(a.id),cooldownUntil:a.cooldownUntil||0,quota:a.quota||{used:0,limit:0},tasks:0,completed:0,failed:0}]));
+    let processingMs=0,processingCount=0;
+    for(const task of inRange){
+      const ts=Date.parse(task.createdAt);const bucket=buckets.find(b=>ts>=b.start&&ts<b.end);
+      const status=String(task.status||'queued');statuses[status]=(statuses[status]||0)+1;
+      if(bucket){bucket.created++;if(status==='completed')bucket.completed++;else if(status==='failed')bucket.failed++;else if(status==='cancelled')bucket.canceled++;}
+      const ratio=String(task.ratio||'未设置');ratios[ratio]=(ratios[ratio]||0)+1;
+      const duration=task.duration==null?'未设置':String(task.duration)+' 秒';durations[duration]=(durations[duration]||0)+1;
+      const platform=String(task.platform||'未知');platforms[platform]=(platforms[platform]||0)+1;
+      const account=accountStats.get(task.accountId);if(account){account.tasks++;if(status==='completed')account.completed++;else if(status==='failed')account.failed++;}
+      if(status==='completed'){const a=Date.parse(task.createdAt),b=Date.parse(task.updatedAt);if(Number.isFinite(a)&&Number.isFinite(b)&&b>=a){processingMs+=b-a;processingCount++;}}
+    }
+    const count=(name)=>inRange.filter(t=>t.status===name).length;
+    const completed=count('completed'),failed=count('failed'),canceled=count('cancelled');
+    const active=inRange.filter(t=>!['completed','failed','cancelled','interrupted'].includes(t.status)).length;
+    const total=inRange.length;
+    return {
+      generatedAt:now.toISOString(),dimension,range:{start,end,label:dimension==='month'?'近 12 个月':dimension==='day'?'近 30 天':'近 24 小时'},
+      summary:{total,completed,failed,canceled,active,paused:count('paused'),interrupted:count('interrupted'),completionRate:total?Math.round(completed/total*1000)/10:0,successRate:(completed+failed)?Math.round(completed/(completed+failed)*1000)/10:null,avgProcessingMs:processingCount?Math.round(processingMs/processingCount):null,quotaUsed:accounts.reduce((n,a)=>n+Number(a.quota?.used||0),0),quotaLimit:accounts.reduce((n,a)=>n+Number(a.quota?.limit||0),0),accounts:accounts.length,accountsEnabled:accounts.filter(a=>a.enabled!==false).length,accountsBusy:queue.busy.size},
+      series:buckets.map(({start:xStart,end:xEnd,...rest})=>rest),
+      statuses:Object.entries(statuses).map(([status,n])=>({status,count:n})).sort((a,b)=>b.count-a.count),
+      accounts:[...accountStats.values()].sort((a,b)=>b.tasks-a.tasks),
+      params:{ratios:Object.entries(ratios).map(([label,count])=>({label,count})).sort((a,b)=>b.count-a.count),durations:Object.entries(durations).map(([label,count])=>({label,count})).sort((a,b)=>b.count-a.count),platforms:Object.entries(platforms).map(([label,count])=>({label,count})).sort((a,b)=>b.count-a.count)},
+    };
+  }
   const webRoot=path.join(__dirname,'..','web');let dashboard, dashboardPage, dashboardOpening, closePromise;let shuttingDown=false;
   let resolveClosed;const closed=new Promise(resolve=>{resolveClosed=resolve;});
   function authorized(req) {
@@ -172,6 +211,9 @@ async function createService(options={}) {
             return;
           }
           send(res,200,await settings.save(value));return;
+        }
+        if(req.method==='GET' && pathname==='/api/monitor') {
+          send(res,200,monitorSnapshot(String(url.searchParams.get('dimension')||'month')));return;
         }
         if(req.method==='GET' && pathname==='/api/state') {
           const accounts=store.list();
@@ -314,7 +356,7 @@ async function createService(options={}) {
         send(res,404,{error:'接口不存在'});return;
       }
       if(req.method!=='GET'){send(res,405,{error:'不支持的方法'});return;}
-      const files={'/':'tasks.html','/tasks':'tasks.html','/accounts':'accounts.html','/api':'api.html','/settings':'settings.html','/app.js':'app.js','/theme-boot.js':'theme-boot.js','/styles.css':'styles.css'};
+      const files={'/':'tasks.html','/tasks':'tasks.html','/accounts':'accounts.html','/monitor':'monitor.html','/api':'api.html','/settings':'settings.html','/app.js':'app.js','/monitor.js':'monitor.js','/theme-boot.js':'theme-boot.js','/styles.css':'styles.css'};
       if(!files[pathname]){send(res,404,{error:'页面不存在'});return;}
       const file=path.join(webRoot,files[pathname]);
       const content=fs.readFileSync(file);const type=file.endsWith('.html')?'text/html':file.endsWith('.css')?'text/css':'text/javascript';
