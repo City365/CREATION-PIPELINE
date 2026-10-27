@@ -410,11 +410,27 @@ function applyAgentTypography(ui = {}) {
   style.setProperty('--agent-title-size', clamp(ui.agentTitleSize ?? 44, 24, 64, 44) + 'px');
 }
 
+function applySystemTypography(ui = {}) {
+  const style = document.documentElement.style;
+  const clamp = (value, min, max, fallback) => Number.isFinite(Number(value)) ? Math.max(min, Math.min(max, Number(value))) : fallback;
+  const size = clamp(ui.systemFontSize ?? 14, 12, 18, 14);
+  const scale = size / 14;
+  style.setProperty('--system-font', (AGENT_FONTS[ui.systemFont] || AGENT_FONTS.system).css);
+  style.setProperty('--system-size', size + 'px');
+  style.setProperty('--system-leading', String(clamp(ui.systemLineHeight ?? 1.55, 1.25, 2.2, 1.55)));
+  style.setProperty('--system-weight', String([400, 500, 600].includes(Number(ui.systemFontWeight)) ? Number(ui.systemFontWeight) : 400));
+  style.setProperty('--h3-font', (AGENT_FONTS[ui.systemFont] || AGENT_FONTS.system).css);
+  for (const [name, base] of [['--h3-fs-1', 11], ['--h3-fs-2', 12], ['--h3-fs-3', 13], ['--h3-fs-4', 14], ['--h3-fs-5', 16], ['--h3-fs-6', 20]]) {
+    style.setProperty(name, (base * scale).toFixed(2).replace(/\.?0+$/, '') + 'px');
+  }
+}
+
 function applyTheme() {
   const active = currentTheme();
   document.documentElement.dataset.theme = active;
   const theme = themeCatalog().find((t) => t.id === active);
   const ui = (state.config && state.config.ui) || {};
+  applySystemTypography(ui);
   applyAgentTypography(ui);
   const welcomeText = agentWelcomeText(ui);
   document.documentElement.style.setProperty('--agent-title-length', String(Math.max(1, Array.from(welcomeText).length)));
@@ -6241,7 +6257,13 @@ function appearancePane() {
     </span><span class="theme-card-name">${esc(t.label)}</span><span class="theme-card-hint">${esc(t.hint || '')}</span>
     <span class="theme-card-tag">${t.day ? '白昼' : t.dark ? '深色' : '亮色'}${t.id === active ? ' · 使用中' : ''}</span>
     </button>${t.custom ? `<button type="button" class="wallpaper-remove" data-wallpaper-remove="${esc(t.id)}" aria-label="从壁纸库移除 ${esc(t.label)}" title="只移出壁纸库，保留本机原文件">×</button>` : ''}</div>`;
-  return `<div class="settings-block"><h3>智能体 · 字体与排版</h3><div class="field"><label for="agent-welcome-text">中文欢迎语</label><input class="input" id="agent-welcome-text" maxlength="40" value="${esc(agentWelcomeText(ui))}" placeholder="让故事成形，让想象入镜。" /><small class="hint">最多 40 字，保持单行显示。修改后移开焦点自动保存，留空恢复默认。</small></div><p class="hint">即时预览并自动保存。正文设置应用于对话、输入框和文字预览；欢迎标题单独调节。字体使用本机已安装字体。</p><div class="field"><label for="agent-font">字体风格</label><select id="agent-font" class="input">${Object.entries(AGENT_FONTS).map(([id, font]) => `<option value="${id}" ${(ui.agentFont || 'system') === id ? 'selected' : ''}>${font.label}</option>`).join('')}</select></div><div class="field"><label for="agent-weight">字重</label><select id="agent-weight" class="input">${[[400, '常规'], [500, '适中'], [600, '加粗']].map(([value, label]) => `<option value="${value}" ${Number(ui.agentFontWeight || 400) === value ? 'selected' : ''}>${label}</option>`).join('')}</select></div>${[['agent-size', '正文字号', 'agentFontSize', 12, 24, 1, 15, 'px'], ['agent-leading', '正文行距', 'agentLineHeight', 1.3, 2.4, .1, 1.8, ''], ['agent-title-size', '欢迎标题字号', 'agentTitleSize', 24, 64, 1, 44, 'px']].map(([id, label, key, min, max, step, fallback, unit]) => `<label class="wallpaper-dim" for="${id}"><span>${label}</span><input id="${id}" type="range" min="${min}" max="${max}" step="${step}" value="${ui[key] ?? fallback}" /><output id="${id}-value">${ui[key] ?? fallback}${unit}</output></label>`).join('')}<div class="agent-type-preview"><span id="agent-welcome-preview">${esc(agentWelcomeText(ui))}</span><br>每一个灵感，都值得成为一部作品。</div><button type="button" class="btn ghost" id="agent-type-reset">恢复默认排版</button></div>
+  const view = state.appearanceTab || 'system';
+  const systemTypeBlock = `<div class="settings-block"><h3>全局 · 字体与排版</h3><p class="hint">应用于整个系统：菜单、任务页、素材库、表单和弹窗都会使用这套字体与字号。</p><div class="two"><div class="field"><label for="system-font">全局字体</label><select id="system-font" class="input">${Object.entries(AGENT_FONTS).map(([id, font]) => `<option value="${id}" ${(ui.systemFont || 'system') === id ? 'selected' : ''}>${font.label}</option>`).join('')}</select></div><div class="field"><label for="system-weight">字重</label><select id="system-weight" class="input">${[[400, '常规'], [500, '适中'], [600, '加粗']].map(([value, label]) => `<option value="${value}" ${Number(ui.systemFontWeight || 400) === value ? 'selected' : ''}>${label}</option>`).join('')}</select></div></div>${[['system-size', '全局字号', 'systemFontSize', 12, 18, .5, 14, 'px'], ['system-leading', '全局行距', 'systemLineHeight', 1.25, 2.2, .05, 1.55, '']].map(([id, label, key, min, max, step, fallback, unit]) => `<label class="wallpaper-dim" for="${id}"><span>${label}</span><input id="${id}" type="range" min="${min}" max="${max}" step="${step}" value="${ui[key] ?? fallback}" /><output id="${id}-value">${ui[key] ?? fallback}${unit}</output></label>`).join('')}<div class="system-type-preview"><strong>标题示例 Title</strong><p>正文示例：让参数、任务和素材都保持同一种阅读节奏。</p><small>辅助文字 · 10 项任务 · 2026/10/27</small></div><button type="button" class="btn ghost" id="system-type-reset">恢复全局默认</button></div>`;
+  return `<div class="appearance-tabs" role="tablist" aria-label="外观分类"><button type="button" role="tab" aria-selected="${view === 'system'}" data-appearance-tab="system">系统外观</button><button type="button" role="tab" aria-selected="${view === 'agent'}" data-appearance-tab="agent">智能体外观</button></div>
+    <div class="appearance-panel" data-appearance-panel="agent" ${view === 'agent' ? '' : 'hidden'}>
+    <div class="settings-block"><h3>智能体 · 字体与排版</h3><div class="field"><label for="agent-welcome-text">中文欢迎语</label><input class="input" id="agent-welcome-text" maxlength="40" value="${esc(agentWelcomeText(ui))}" placeholder="让故事成形，让想象入镜。" /><small class="hint">最多 40 字，保持单行显示。修改后移开焦点自动保存，留空恢复默认。</small></div><p class="hint">即时预览并自动保存。正文设置应用于对话、输入框和文字预览；欢迎标题单独调节。字体使用本机已安装字体。</p><div class="field"><label for="agent-font">字体风格</label><select id="agent-font" class="input">${Object.entries(AGENT_FONTS).map(([id, font]) => `<option value="${id}" ${(ui.agentFont || 'system') === id ? 'selected' : ''}>${font.label}</option>`).join('')}</select></div><div class="field"><label for="agent-weight">字重</label><select id="agent-weight" class="input">${[[400, '常规'], [500, '适中'], [600, '加粗']].map(([value, label]) => `<option value="${value}" ${Number(ui.agentFontWeight || 400) === value ? 'selected' : ''}>${label}</option>`).join('')}</select></div>${[['agent-size', '正文字号', 'agentFontSize', 12, 24, 1, 15, 'px'], ['agent-leading', '正文行距', 'agentLineHeight', 1.3, 2.4, .1, 1.8, ''], ['agent-title-size', '欢迎标题字号', 'agentTitleSize', 24, 64, 1, 44, 'px']].map(([id, label, key, min, max, step, fallback, unit]) => `<label class="wallpaper-dim" for="${id}"><span>${label}</span><input id="${id}" type="range" min="${min}" max="${max}" step="${step}" value="${ui[key] ?? fallback}" /><output id="${id}-value">${ui[key] ?? fallback}${unit}</output></label>`).join('')}<div class="agent-type-preview"><span id="agent-welcome-preview">${esc(agentWelcomeText(ui))}</span><br>每一个灵感，都值得成为一部作品。</div><button type="button" class="btn ghost" id="agent-type-reset">恢复默认排版</button></div></div>
+    <div class="appearance-panel" data-appearance-panel="system" ${view === 'system' ? '' : 'hidden'}>
+    ${systemTypeBlock}
     <div class="settings-block">
       <h3>白昼主题 · 动漫与真人</h3>
       <p class="hint">清晰的浅色界面，让创作轻一点。静态图片、场景动画与视频分开选；自己的收藏可以一直添加。</p>
@@ -6266,6 +6288,7 @@ function appearancePane() {
         <div class="wallpaper-rotation"><label><input type="checkbox" id="wallpaper-rotate" ${ui.wallpaperRotate ? 'checked' : ''} /> 自动轮换</label><select class="input" id="wallpaper-rotation-kind" aria-label="轮换类型">${[['static', '只换静态'], ['dynamic', '只换动态'], ['all', '静态与动态']].map(([value, label]) => `<option value="${value}" ${value === (ui.wallpaperRotationKind || 'static') ? 'selected' : ''}>${label}</option>`).join('')}</select><select class="input" id="wallpaper-interval" aria-label="轮换间隔">${[[60, '每 1 分钟'], [300, '每 5 分钟'], [900, '每 15 分钟']].map(([value, label]) => `<option value="${value}" ${value === (ui.wallpaperInterval || 300) ? 'selected' : ''}>${label}</option>`).join('')}</select></div>
       </div>
       <details class="wallpaper-legacy"><summary>清爽纯色主题</summary><div class="theme-grid">${themes.filter((t) => !t.day).map(card).join('')}</div></details>
+    </div>
     </div>`;
 }
 
@@ -6385,6 +6408,9 @@ function bindSettings() {
     };
   });
 
+  $$('#modal-panel [data-appearance-tab]').forEach((button) => {
+    button.onclick = () => { state.appearanceTab = button.dataset.appearanceTab; renderSettings(); };
+  });
   $$('#modal-panel [data-theme-pick]').forEach((btn) => {
     btn.onclick = async () => {
       try {
@@ -6422,6 +6448,23 @@ function bindSettings() {
     input.onchange = async () => {
       try { await saveAppearance({ agentWelcomeText: agentWelcomeText({ agentWelcomeText: input.value }) }); input.value = agentWelcomeText(state.config.ui); }
       catch (err) { toast('欢迎语保存失败：' + err.message, true); }
+    };
+  }
+  if ($('#system-font')) {
+    for (const [id, key] of [['system-font', 'systemFont'], ['system-weight', 'systemFontWeight'], ['system-size', 'systemFontSize'], ['system-leading', 'systemLineHeight']]) {
+      const control = $('#' + id);
+      control.oninput = () => {
+        applySystemTypography({ ...state.config.ui, [key]: id === 'system-font' ? control.value : Number(control.value) });
+        const output = $('#' + id + '-value'); if (output) output.textContent = control.value + (id === 'system-leading' ? '' : 'px');
+      };
+      control.onchange = async () => {
+        try { await saveAppearance({ [key]: id === 'system-font' ? control.value : Number(control.value) }); }
+        catch (err) { toast('全局排版保存失败：' + err.message, true); }
+      };
+    }
+    $('#system-type-reset').onclick = async () => {
+      try { await saveAppearance({ systemFont: 'system', systemFontSize: 14, systemLineHeight: 1.55, systemFontWeight: 400 }); renderSettings(); }
+      catch (err) { toast(err.message, true); }
     };
   }
   if ($('#agent-font')) {
