@@ -1223,7 +1223,7 @@ function mediaPath(input) {
   }
 
   if (method === 'GET' && pathname === '/api/events') {
-    return ok(res, events.list({ status: url.searchParams.get('status') || '', source: url.searchParams.get('source') || '', kind:url.searchParams.get('kind')||'',projectId:url.searchParams.get('projectId')||projectId,page:url.searchParams.get('page'),query:url.searchParams.get('query')||'' }));
+    return ok(res, events.list({ status: url.searchParams.get('status') || '', source: url.searchParams.get('source') || '', kind:url.searchParams.get('kind')||'',projectId:url.searchParams.get('projectId')||projectId,page:url.searchParams.get('page'),query:url.searchParams.get('query')||'',month:url.searchParams.get('month')||'',sort:url.searchParams.get('sort')||'' }));
   }
 
   if (method === 'POST' && pathname === '/api/events/import') {

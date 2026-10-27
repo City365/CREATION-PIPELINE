@@ -6151,7 +6151,7 @@ async function loadTaskLogs(force=false){
 function bindTasks(root){
   root.addEventListener('click',async event=>{
     const media=event.target.closest('[data-task-media]');
-    if(media){state.taskMedia=media.dataset.taskMedia;localStorage.setItem('h3.tasks.media',state.taskMedia);state.taskEventStatus='';state.taskEventQuery='';state.taskPages={};state.taskLogPaging=null;state.taskVideoLogs=[];state.taskImageLogs=[];state.events=[];state.eventPaging=null;await Events.load();render();return;}
+    if(media){state.taskMedia=media.dataset.taskMedia;localStorage.setItem('h3.tasks.media',state.taskMedia);state.taskEventStatus='';state.taskEventQuery='';state.taskEventMonth='';state.taskEventSort='created_desc';state.taskPages={};state.taskLogPaging=null;state.taskVideoLogs=[];state.taskImageLogs=[];state.events=[];state.eventPaging=null;await Events.load();render();return;}
     const page=event.target.closest('[data-task-page]');
     if(page&&!page.disabled){state.taskPages={...(state.taskPages||{}),[page.dataset.pageKey]:Number(page.dataset.taskPage)};if(page.dataset.pageKey==='events')await Events.load();else if(currentTaskTab()==='logs')await loadTaskLogs(true);render();return;}
     const refresh=event.target.closest('[data-task-refresh]');
@@ -6161,7 +6161,7 @@ function bindTasks(root){
       return;
     }
     const button=event.target.closest('[data-task-tab]');
-    if(button){state.taskEventStatus='';state.taskPages={...(state.taskPages||{}),events:1};state.taskTab=button.dataset.taskTab;localStorage.setItem('h3.tasks.tab',state.taskTab);await Events.load();render();return;}
+    if(button){state.taskEventStatus='';state.taskEventQuery='';state.taskEventMonth='';state.taskEventSort='created_desc';state.taskPages={...(state.taskPages||{}),events:1};state.taskTab=button.dataset.taskTab;localStorage.setItem('h3.tasks.tab',state.taskTab);await Events.load();render();return;}
   });
   Events.bind(root);
 }

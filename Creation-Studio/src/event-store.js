@@ -48,10 +48,25 @@ function query(filter={}) {
    if(statuses.length===1){conditions.push("json_extract(payload,'$.status')=?");args.push(statuses[0]);}
    else if(statuses.length>1){conditions.push("json_extract(payload,'$.status') IN ("+statuses.map(()=>'?').join(',')+")");args.push(...statuses);}
  }
- if(filter.query){conditions.push("json_extract(payload,'$.title') LIKE ?");args.push('%'+filter.query+'%');}
+ if(filter.query){
+   conditions.push("(json_extract(payload,'$.title') LIKE ? OR id LIKE ?)");
+   args.push('%'+filter.query+'%','%'+filter.query+'%');
+ }
+ if(filter.month && /^\d{4}-\d{2}$/.test(String(filter.month))){
+   const [year,month]=String(filter.month).split('-').map(Number);
+   conditions.push('created_at>=? AND created_at<?');
+   args.push(new Date(year,month-1,1).getTime(),new Date(year,month,1).getTime());
+ }
  const where=conditions.length?' WHERE '+conditions.join(' AND '):'';
  const total=db.prepare('SELECT COUNT(*) AS n FROM task_events'+where).get(...args).n,page=Math.max(1,Math.min(Math.ceil(total/10)||1,Number(filter.page)||1));
- const events=db.prepare('SELECT payload FROM task_events'+where+' ORDER BY created_at DESC,rowid DESC LIMIT 10 OFFSET ?').all(...args,(page-1)*10).map(r=>JSON.parse(r.payload));
+ const sorts={
+   created_desc:'created_at DESC,rowid DESC',
+   created_asc:'created_at ASC,rowid ASC',
+   updated_desc:"json_extract(payload,'$.updatedAt') DESC,created_at DESC",
+   title_asc:"json_extract(payload,'$.title') COLLATE NOCASE ASC,created_at DESC",
+ };
+ const order=sorts[filter.sort]||sorts.created_desc;
+ const events=db.prepare('SELECT payload FROM task_events'+where+' ORDER BY '+order+' LIMIT 10 OFFSET ?').all(...args,(page-1)*10).map(r=>JSON.parse(r.payload));
  return {events,stats,total,page,pageSize:10};
 }
 

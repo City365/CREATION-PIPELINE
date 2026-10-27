@@ -2341,4 +2341,14 @@ body.is-pane-resizing * { user-select: none !important; }
 .rename-media-row{display:grid;grid-template-columns:minmax(0,1fr) 18px minmax(0,1fr) auto;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid var(--h3-border);font-size:11px}
 .rename-media-row .old{color:var(--h3-text-3);text-decoration:line-through;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .rename-media-row .arrow{text-align:center;color:var(--h3-text-3)}
-.rename-media-row .new{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rename-media-row .new{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}/* 任务筛选：状态 / 年月 / 排序 / 搜索放在同一条 */
+.task-filter-bar{display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap;background:var(--task-surface,var(--h3-bg-1));border:1px solid var(--h3-border);border-radius:8px;padding:10px 12px;margin-bottom:12px}
+.task-filter-field{display:grid;gap:4px;min-width:128px}
+.task-filter-field>span{font-size:10px;font-weight:500;color:var(--h3-text-3)}
+.task-filter-field .input,.task-filter-field .select{height:32px;min-height:32px;padding:0 9px;font-size:12px;border-radius:6px;background:var(--task-surface,var(--h3-bg-1))}
+.task-filter-search{display:flex;align-items:center;gap:6px;flex:1 1 240px;min-width:210px}
+.task-filter-search .input{flex:1;height:32px;min-height:32px;padding:0 9px;font-size:12px;border-radius:6px;background:var(--task-surface,var(--h3-bg-1))}
+.task-filter-search .btn{height:32px;min-height:32px;padding:0 12px;font-size:12px}
+.task-filter-count{margin-left:auto;font-size:11px;color:var(--h3-text-3);padding-bottom:7px;white-space:nowrap}
+.task-filter-bar .btn.ghost{height:32px;min-height:32px;padding:0 12px;font-size:12px}
+@media(max-width:760px){.task-filter-bar{align-items:stretch}.task-filter-field{flex:1 1 140px}.task-filter-search{flex-basis:100%}.task-filter-count{margin-left:0;padding-bottom:0}}

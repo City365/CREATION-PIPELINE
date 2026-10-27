@@ -16,9 +16,9 @@ const Events = (() => {
   async function load(options = {}) {
     const pendingRender = !!state.eventRenderPending;
     try {
-      const data = await api('/api/events?kind='+encodeURIComponent(taskMedia())+'&status='+encodeURIComponent(state.taskEventStatus||'')+'&query='+encodeURIComponent(state.taskEventQuery||'')+'&page='+((state.taskPages||{}).events||1));
+      const data = await api('/api/events?kind='+encodeURIComponent(taskMedia())+'&status='+encodeURIComponent(state.taskEventStatus||'')+'&query='+encodeURIComponent(state.taskEventQuery||'')+'&month='+encodeURIComponent(state.taskEventMonth||'')+'&sort='+encodeURIComponent(state.taskEventSort||'created_desc')+'&page='+((state.taskPages||{}).events||1));
       const events = data.events || [];
-      const signature = JSON.stringify(data.stats)+JSON.stringify([data.page,data.total,taskMedia()])+JSON.stringify(events.map((e) => [e.id, e.status, e.stats && e.stats.done, e.stats && e.stats.total, e.stats && e.stats.failed, e.stats && e.stats.running, e.title]));
+      const signature = JSON.stringify(data.stats)+JSON.stringify([data.page,data.total,taskMedia(),state.taskEventStatus||'',state.taskEventQuery||'',state.taskEventMonth||'',state.taskEventSort||''])+JSON.stringify(events.map((e) => [e.id, e.status, e.stats && e.stats.done, e.stats && e.stats.total, e.stats && e.stats.failed, e.stats && e.stats.running, e.title]));
       const changed = signature !== lastSignature;
       lastSignature = signature;
       state.events = events;
@@ -71,9 +71,17 @@ const Events = (() => {
         <td class="evt-actions" data-label="操作"><button class="btn sm" data-event-detail="${esc(event.id)}">详情</button></td>
       </tr>`;
     }).join('');
+    const statusOptions = [['','全部状态'],['draft,unscheduled','待调度'],['scheduled,queued','待执行'],['running','执行中'],['paused','暂停'],['completed','完成'],['partial','部分失败'],['failed','失败'],['canceled','已取消'],['interrupted','待确认']];
+    const sortOptions = [['created_desc','最新创建'],['created_asc','最早创建'],['updated_desc','最近更新'],['title_asc','任务名称']];
     return `
-    <form class="task-search" data-events-search><label for="event-search">搜索任务</label><div><input class="input" id="event-search" name="query" value="${esc(state.taskEventQuery||'')}" placeholder="任务名称"><button class="btn" type="submit">搜索</button></div></form>
-    <div class="filters">${[['','全部'],['draft,unscheduled','待调度'],['scheduled,queued','待执行'],['running','执行中'],['paused','暂停'],['completed','完成'],['partial','部分失败'],['failed','失败'],['canceled','已取消'],['interrupted','待确认']].map(([value,label])=>`<button class="chip ${(state.taskEventStatus||'')===value?'active':''}" data-event-status="${value}">${label}</button>`).join('')}</div>
+    <div class="task-filter-bar">
+      <label class="task-filter-field"><span>任务状态</span><select class="select" id="event-status">${statusOptions.map(([value,label])=>`<option value="${value}" ${(state.taskEventStatus||'')===value?'selected':''}>${label}</option>`).join('')}</select></label>
+      <label class="task-filter-field"><span>创建时间</span><input class="input" type="month" id="event-month" value="${esc(state.taskEventMonth||'')}"></label>
+      <label class="task-filter-field"><span>排序</span><select class="select" id="event-sort">${sortOptions.map(([value,label])=>`<option value="${value}" ${(state.taskEventSort||'created_desc')===value?'selected':''}>${label}</option>`).join('')}</select></label>
+      <form class="task-filter-search" data-events-search><input class="input" id="event-search" name="query" value="${esc(state.taskEventQuery||'')}" placeholder="任务名称 / ID" aria-label="搜索任务"><button class="btn" type="submit">搜索</button></form>
+      <button class="btn sm ghost" type="button" data-event-filter-reset>重置</button>
+      <span class="task-filter-count">共 ${state.eventPaging?.total || 0} 条</span>
+    </div>
     ${state.eventError ? `<div class="card" style="padding:12px;color:var(--h3-danger)">事件加载失败：${esc(state.eventError)}</div>` : ''}
     ${rows ? `<div class="table-wrap"><table class="jobs evt-table">
       <thead><tr><th>状态</th><th>任务</th><th>调度</th><th>条目进度</th><th>耗时</th><th>创建</th><th>操作</th></tr></thead>
@@ -413,6 +421,9 @@ const Events = (() => {
       createDrafts[draft.kind] = null;
       lastSignature = '';
       state.taskEventStatus = '';
+      state.taskEventQuery = '';
+      state.taskEventMonth = '';
+      state.taskEventSort = 'created_desc';
       state.taskPages = { ...(state.taskPages || {}), events: 1 };
       state.taskTab = 'schedule';
       localStorage.setItem('h3.tasks.tab', 'schedule');
@@ -738,6 +749,8 @@ const Events = (() => {
     state.eventError = null;
     state.taskEventStatus = '';
     state.taskEventQuery = '';
+    state.taskEventMonth = '';
+    state.taskEventSort = 'created_desc';
     state.taskPages = {};
     state.eventRenderPending = false;
     createDrafts.video = null;
@@ -796,6 +809,9 @@ const Events = (() => {
       createDrafts[kind] = draftFromEvent(event);
       if (taskMedia() !== kind) { state.taskMedia = kind; localStorage.setItem('h3.tasks.media', kind); }
       state.taskEventStatus = '';
+      state.taskEventQuery = '';
+      state.taskEventMonth = '';
+      state.taskEventSort = 'created_desc';
     } else if (!createDrafts[taskMedia()]) {
       createDrafts[taskMedia()] = newDraft(taskMedia());
     }
@@ -1017,9 +1033,15 @@ const Events = (() => {
   function bind(root) {
     if (currentTaskTab() === 'create') { bindCreate(root); start(); return; }
     root.querySelector('[data-events-search]')?.addEventListener('submit',async e=>{e.preventDefault();state.taskEventQuery=new FormData(e.target).get('query')||'';state.taskPages={...(state.taskPages||{}),events:1};lastSignature='';await load();});
+    const reloadFilters=()=>{state.taskPages={...(state.taskPages||{}),events:1};lastSignature='';load();};
+    root.querySelector('#event-status')?.addEventListener('change',e=>{state.taskEventStatus=e.target.value||'';reloadFilters();});
+    root.querySelector('#event-month')?.addEventListener('change',e=>{state.taskEventMonth=e.target.value||'';reloadFilters();});
+    root.querySelector('#event-sort')?.addEventListener('change',e=>{state.taskEventSort=e.target.value||'created_desc';reloadFilters();});
     root.addEventListener('click', (event) => {
       const filter=event.target.closest('[data-event-status]');
       if(filter){state.taskEventStatus=filter.dataset.eventStatus;state.taskPages={...(state.taskPages||{}),events:1};lastSignature='';load();return;}
+      const reset=event.target.closest('[data-event-filter-reset]');
+      if(reset){state.taskEventStatus='';state.taskEventMonth='';state.taskEventSort='created_desc';state.taskEventQuery='';state.taskPages={...(state.taskPages||{}),events:1};lastSignature='';load();return;}
       const schedule=event.target.closest('[data-event-schedule]');
       if(schedule){openSchedule(schedule.dataset.eventSchedule).catch(err=>toast(err.message,true));return;}
       const create = event.target.closest('[data-event-create]');
