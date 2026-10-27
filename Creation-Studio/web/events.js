@@ -641,14 +641,21 @@ const Events = (() => {
   async function openAttempts(id) {
     const event = await api('/api/events/' + encodeURIComponent(id));
     const auditRows = (event.audit || []).map((entry) => `<li><span class="hint">${new Date(entry.at).toLocaleString('zh-CN', { hour12: false })}</span> ${esc(AUDIT_LABEL[entry.action] || entry.action)}${entry.detail ? ' · ' + esc(entry.detail) : ''}</li>`).join('') || '<li class="hint">还没有配置操作。</li>';
-    openModal(`<div class="modal-head"><h2>执行记录 · ${esc(event.title)}</h2><button class="btn" data-close="1">关闭</button></div>
-      <div class="modal-body">
-        <div class="monitor-config"><span>运行时间：${event.schedule?.startAt ? new Date(event.schedule.startAt).toLocaleString('zh-CN', { hour12: false }) : '立即'}</span><span>并发：${Number(event.policy?.concurrency) || 1}</span><span>失败处理：${event.policy?.onItemFail === 'stop' ? '失败即停' : '继续'}</span></div>
-        <h3 class="monitor-h3">配置操作</h3><ul class="monitor-audit">${auditRows}</ul>
-        <h3 class="monitor-h3">执行记录</h3>
-        <div id="attempt-wrap"><div class="hint">加载中…</div></div>
+    const panel = openModal(`<div class="modal-head"><div><h2>执行记录</h2><div class="hint">${esc(event.title)} · ${esc(event.id)}</div></div><button class="btn ghost sm" data-close="1">关闭</button></div>
+      <div class="modal-body monitor-modal">
+        <div class="monitor-config">
+          <div><span>运行时间</span><b>${event.schedule?.startAt ? new Date(event.schedule.startAt).toLocaleString('zh-CN', { hour12: false }) : '立即'}</b></div>
+          <div><span>并发</span><b>${Number(event.policy?.concurrency) || 1}</b></div>
+          <div><span>失败处理</span><b>${event.policy?.onItemFail === 'stop' ? '失败即停' : '继续执行'}</b></div>
+          <div><span>任务状态</span><b>${esc(STATUS[event.status] || event.status)}</b></div>
+        </div>
+        <div class="monitor-two-col">
+          <section class="monitor-block"><div class="evt-section-head"><h3>配置操作</h3><span class="hint">${(event.audit || []).length} 条</span></div><ul class="monitor-audit">${auditRows}</ul></section>
+          <section class="monitor-block"><div class="evt-section-head"><h3>执行记录</h3><span class="hint">按时间倒序</span></div><div id="attempt-wrap"><div class="hint">加载中…</div></div></section>
+        </div>
       </div>
       <div class="modal-foot"><span class="grow"></span><button class="btn" data-close="1">关闭</button></div>`);
+    panel.classList.add('modal-wide');
     const wrap = document.querySelector('#attempt-wrap');
     const renderPage = async (page) => {
       wrap.innerHTML = '<div class="hint">加载中…</div>';
@@ -660,12 +667,12 @@ const Events = (() => {
         <td>${itemStatusBadge(attempt.status)}</td>
         <td class="hint">${attempt.startedAt ? new Date(attempt.startedAt).toLocaleString('zh-CN', { hour12: false }) : '—'}</td>
         <td class="tnum">${attempt.startedAt ? Math.max(0, Math.round(((attempt.finishedAt || Date.now()) - attempt.startedAt) / 1000)) + 's' : '—'}</td>
-        <td class="hint">${esc(attempt.error || '')}</td>
+        <td class="hint"><div class="monitor-cell-error" title="${esc(attempt.error || '')}">${esc(attempt.error || '—')}</div></td>
       </tr>`)).join('') || '<tr><td colspan="5" class="hint">还没有执行记录。</td></tr>';
       const pages = Math.max(1, Math.ceil((data.total || 0) / (data.pageSize || 10)));
       const button = (label, target, disabled) => `<button class="btn sm" data-attempt-page="${target}" ${disabled ? 'disabled' : ''}>${label}</button>`;
       const pager = pages > 1 ? `<nav class="task-pagination"><span>共 ${data.total} 条 · 第 ${data.page} / ${pages} 页</span><div>${button('上一页', data.page - 1, data.page <= 1)}${button('下一页', data.page + 1, data.page >= pages)}</div></nav>` : '';
-      wrap.innerHTML = `<div class="table-wrap"><table class="jobs"><thead><tr><th>分镜</th><th>状态</th><th>开始</th><th>耗时</th><th>错误</th></tr></thead><tbody>${attemptRows}</tbody></table></div>${pager}`;
+      wrap.innerHTML = `<div class="table-wrap monitor-attempt-table"><table class="jobs"><thead><tr><th>分镜</th><th>状态</th><th>开始</th><th>耗时</th><th>错误</th></tr></thead><tbody>${attemptRows}</tbody></table></div>${pager}`;
       wrap.querySelectorAll('[data-attempt-page]').forEach((btn) => { btn.onclick = () => renderPage(Number(btn.dataset.attemptPage)); });
     };
     await renderPage(1);
@@ -699,15 +706,25 @@ const Events = (() => {
       <td class="hint">${esc(item.error || '—')}</td>
       <td><button class="btn sm" data-event-item-log="${esc(item.id)}" ${item.refId ? '' : 'disabled'}>日志</button></td>
     </tr>`).join('');
-    const panel = openModal(`<div class="modal-head"><h2>分镜日志 · ${esc(event.title)}</h2><button class="btn" data-close="1">关闭</button></div>
-      <div class="modal-body"><div class="table-wrap"><table class="jobs"><thead><tr><th>分镜</th><th>状态</th><th>开始</th><th>耗时</th><th>错误</th><th></th></tr></thead><tbody>${rows}</tbody></table></div><div id="evt-item-log"></div></div>
+    const panel = openModal(`<div class="modal-head"><div><h2>分镜日志</h2><div class="hint">${esc(event.title)} · ${esc(event.id)}</div></div><button class="btn ghost sm" data-close="1">关闭</button></div>
+      <div class="modal-body monitor-modal">
+        <div class="monitor-config">
+          <div><span>任务状态</span><b>${esc(STATUS[event.status] || event.status)}</b></div>
+          <div><span>进度</span><b>${event.stats?.done || 0} / ${event.stats?.total || 0}</b></div>
+          <div><span>成功</span><b>${event.stats?.success || 0}</b></div>
+          <div><span>失败</span><b>${event.stats?.failed || 0}</b></div>
+        </div>
+        <section class="monitor-block"><div class="evt-section-head"><h3>分镜状态</h3><span class="hint">点击「日志」查看完整输出</span></div><div class="table-wrap monitor-log-table"><table class="jobs"><thead><tr><th>分镜</th><th>状态</th><th>开始</th><th>耗时</th><th>错误</th><th></th></tr></thead><tbody>${rows}</tbody></table></div></section>
+        <section class="monitor-block"><div id="evt-item-log" class="evt-item-log-panel"><div class="hint">点击表格里的「日志」查看执行输出。</div></div></section>
+      </div>
       <div class="modal-foot"><span class="grow"></span><button class="btn" data-close="1">关闭</button></div>`);
+    panel.classList.add('modal-wide');
     const box = panel.querySelector('#evt-item-log');
     panel.querySelectorAll('[data-event-item-log]').forEach((button) => {
       button.onclick = async () => {
         try {
           const data = await api('/api/events/' + encodeURIComponent(id) + '/items/' + encodeURIComponent(button.dataset.eventItemLog) + '/log');
-          box.innerHTML = '<h3 class="monitor-h3">' + esc(data.item?.title || data.item?.refId || '') + '</h3>' + ((data.lines || []).length
+          box.innerHTML = '<div class="evt-section-head"><h3>' + esc(data.item?.title || data.item?.refId || '执行日志') + '</h3><span class="hint">' + ((data.lines || []).length) + ' 行</span></div>' + ((data.lines || []).length
             ? '<pre class="evt-log">' + esc(data.lines.map((line) => (line.t ? new Date(line.t).toLocaleTimeString('zh-CN', { hour12: false }) + ' ' : '') + (line.level || 'info') + ' ' + (line.text || '')).join('\n')) + '</pre>'
             : '<div class="hint">没有日志记录。</div>');
         } catch (err) { toast(err.message, true); }

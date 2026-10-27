@@ -2432,3 +2432,55 @@ body.is-pane-resizing * { user-select: none !important; }
 .evt-bar-row em{font-style:normal;text-align:right;color:var(--h3-text-2);font-variant-numeric:tabular-nums}
 .evt-bar-row small{color:var(--h3-text-3);text-align:right}
 @media(max-width:900px){.evt-drawer{width:100vw;max-width:none}.evt-shot-body{grid-template-columns:1fr}.evt-shot-video{width:100%;height:180px}.evt-drawer-head{padding:14px 16px}.evt-drawer-tabs{padding:0 12px}.evt-drawer-body{padding:12px 14px 22px}}
+/* ===== 表单与创建页：Apple 风格圆角、柔和阴影 ===== */
+.input,.select,.textarea{
+  border-radius:11px;
+  border-color:color-mix(in srgb,var(--h3-border) 82%,var(--h3-text-3));
+  background:var(--h3-bg-1);
+  box-shadow:inset 0 1px 1px #00000006,0 1px 0 #ffffff40;
+  transition:border-color .16s ease,box-shadow .16s ease,background .16s ease;
+}
+.input:hover,.select:hover,.textarea:hover{background:var(--h3-bg-0);border-color:var(--h3-border-hover)}
+.input:focus,.select:focus,.textarea:focus{border-color:var(--h3-accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--h3-accent) 16%,transparent),inset 0 1px 1px #00000006;background:var(--h3-bg-0)}
+.select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23818b87' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;background-size:10px 6px}
+.textarea{border-radius:12px;padding:10px 12px}
+.create-section{border-radius:14px}
+.create-import{border-radius:14px}
+.create-prefix .textarea{min-height:118px;resize:vertical}
+.create-drop{min-height:210px;padding:38px 24px;border-radius:14px;border-width:1.5px;background:linear-gradient(180deg,var(--h3-bg-0),color-mix(in srgb,var(--h3-bg-1) 70%,var(--h3-bg-0)))}
+.create-drop strong{font-size:13px;font-weight:600}
+.create-drop small{font-size:11px}
+.create-drop:hover,.create-drop.is-over{background:color-mix(in srgb,var(--task-blue) 7%,var(--h3-bg-0));border-color:var(--task-blue)}
+.create-import-head .btn{border-radius:9px}
+.create-table .input,.create-table .textarea,.create-table .select{border-radius:8px;box-shadow:none}
+.create-table .textarea{min-height:54px}
+@media(max-width:540px){.create-drop{min-height:160px;padding:26px 16px}.create-prefix .textarea{min-height:100px}}
+/* ===== 监控 / 日志弹窗：卡片化，不再文本堆叠 ===== */
+.monitor-modal{gap:16px}
+.monitor-modal .monitor-config{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;padding:0;border:0;background:none}
+.monitor-modal .monitor-config>div{display:grid;gap:3px;border:1px solid var(--h3-border);border-radius:10px;background:var(--h3-bg-1);padding:10px 12px;min-width:0}
+.monitor-modal .monitor-config span{font-size:10px;color:var(--h3-text-3)}
+.monitor-modal .monitor-config b{font-size:12px;font-weight:600;color:var(--h3-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.monitor-block{border-top:1px solid var(--h3-border);padding-top:12px;display:grid;gap:8px}
+.monitor-modal .monitor-audit{list-style:none;margin:0;padding:0;display:grid;gap:5px}
+.monitor-modal .monitor-audit li{display:grid;grid-template-columns:112px minmax(0,1fr);gap:8px;border:1px solid var(--h3-border);border-radius:8px;background:var(--h3-bg-1);padding:7px 10px;font-size:11px;line-height:1.5}
+.monitor-modal .monitor-audit li .hint{font-size:10px;font-variant-numeric:tabular-nums}
+.monitor-attempt-table,.monitor-log-table{border-radius:9px;max-height:360px}
+.monitor-attempt-table table,.monitor-log-table table{min-width:720px}
+.monitor-attempt-table th,.monitor-log-table th{font-size:10px;padding:8px 10px}
+.monitor-attempt-table td,.monitor-log-table td{font-size:11px;padding:8px 10px;vertical-align:middle}
+.monitor-attempt-table td:first-child,.monitor-log-table td:first-child{font-weight:600}
+.monitor-cell-error{max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--h3-text-2)}
+.evt-item-log-panel{display:grid;gap:8px;min-height:54px}
+.evt-item-log-panel .evt-log{max-height:360px;border-radius:10px;background:color-mix(in srgb,var(--h3-bg-1) 70%,#0b1512);color:var(--h3-text-2);box-shadow:inset 0 1px 2px #00000012}
+.monitor-modal .task-pagination{padding-top:4px;font-size:10px}
+@media(max-width:720px){.monitor-modal .monitor-config{grid-template-columns:repeat(2,minmax(0,1fr))}.monitor-modal .monitor-audit li{grid-template-columns:1fr}}
+.monitor-two-col{display:grid;grid-template-columns:minmax(280px,.85fr) minmax(0,1.35fr);gap:14px;align-items:start}
+.monitor-two-col .monitor-block{border-top:0;padding-top:0;min-width:0}
+.monitor-two-col .monitor-audit{max-height:450px;overflow:auto;padding-right:3px}
+@media(max-width:800px){.monitor-two-col{grid-template-columns:1fr}}
+/* Apple 风格控件圆角 */
+.btn{border-radius:9px}
+.btn.sm{border-radius:8px}
+.icon-btn{border-radius:10px}
+.chip{border-radius:8px}
