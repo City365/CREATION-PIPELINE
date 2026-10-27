@@ -156,6 +156,14 @@ test('改提示词只动这一条，并同步到执行任务记录', () => {
   }
 });
 
+test('移除已结束分镜只删除任务记录', () => {
+  const event = events.create({ title: 'remove-item', source: 'batch', items: [{ prompt: 'x' }] });
+  event.items.push({ id: 'i-remove', refType: 'job', refId: '', status: 'queued', override: 'skipped', title: '镜头 1', input: { prompt: 'x' } });
+  events.save();
+  const out = events.removeItem(event.id, 'i-remove');
+  assert.equal((out.items || []).length, 0);
+});
+
 test('改提示词拒绝空内容', () => {
   const originalList = jobs.list;
   jobs.list = () => [{ id: 'j-empty', status: 'failed' }];

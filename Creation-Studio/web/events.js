@@ -5,6 +5,7 @@ const Events = (() => {
   let lastSignature = '';
   let modalEventId = null;
   const STATUS = { draft: '待调度', unscheduled: '待调度', scheduled: '待执行', queued: '待执行', running: '执行中', paused: '暂停', completed: '完成', partial: '部分失败', failed: '失败', canceled: '已取消', interrupted: '待确认', unknown: '待确认' };
+  const TASK_STATUS = { draft: '待运行', unscheduled: '待运行', scheduled: '待运行', queued: '待运行', running: '运行中', paused: '已停止', completed: '已完成', partial: '部分失败', failed: '已失败', canceled: '已取消', interrupted: '已停止', unknown: '已停止' };
   const SOURCE = { batch: '批量导入', studio: '创作台', image: '图像台', api: '接口' };
   const ITEM = { queued: '排队', running: '执行中', success: '完成', failed: '失败', canceled: '已取消', skipped: '跳过', unknown: '未知', paused: '暂停' };
 
@@ -45,10 +46,29 @@ const Events = (() => {
     return `<span class="badge ${cls}">${esc(STATUS[status] || status)}</span>`;
   }
 
+  function taskBadge(status) {
+    const cls = status === 'completed' ? 'ok' : ['failed', 'partial'].includes(status) ? 'bad' : ['running'].includes(status) ? 'info' : ['paused', 'interrupted'].includes(status) ? 'warn' : '';
+    return `<span class="badge ${cls}">${esc(TASK_STATUS[status] || status)}</span>`;
+  }
+
+  function shortText(value, length = 10) {
+    const chars = Array.from(String(value || ''));
+    return chars.slice(0, length).join('') + (chars.length > length ? '…' : '');
+  }
+
   function duration(event) {
     const start = event.startedAt;
-    const end = event.finishedAt || Date.now();
     if (!start) return '—';
+    let end;
+    if (['completed', 'failed', 'partial', 'canceled', 'interrupted'].includes(event.status)) {
+      const lastFinished = (event.items || []).map((item) => item.finishedAt).filter(Boolean).sort().pop();
+      end = event.finishedAt || lastFinished || event.updatedAt || Date.now();
+    } else if (event.status === 'paused') {
+      const pausedAt = (event.audit || []).filter((row) => row.action === 'pause').map((row) => Number(row.at)).filter(Boolean).sort().pop();
+      end = pausedAt || event.finishedAt || start;
+    } else {
+      end = Date.now();
+    }
     const seconds = Math.max(0, Math.round((end - start) / 1000));
     if (seconds < 60) return seconds + 's';
     return Math.floor(seconds / 60) + 'm' + String(seconds % 60).padStart(2, '0') + 's';
@@ -60,15 +80,23 @@ const Events = (() => {
     const rows = page.rows.map((event) => {
       const s = event.stats || {};
       const progress = s.total ? Math.round(((s.done || 0) / s.total) * 100) : 0;
-      const when = event.schedule?.startAt ? new Date(event.schedule.startAt).toLocaleString('zh-CN', { hour12: false }) : (event.pendingSchedule ? '待调度' : '立即');
-      return `<tr>
-        <td data-label="状态">${badge(event.status)}</td>
-        <td data-label="任务"><div class="evt-title">${esc(event.title)}</div><div class="hint">${esc(event.id)}${event.status === 'interrupted' ? ' · 待对账' : ''}</div></td>
-        <td class="hint" data-label="调度">${esc(when)}</td>
-        <td data-label="条目进度"><div class="evt-progress"><span style="width:${progress}%"></span></div><div class="hint">${s.done || 0}/${s.total || 0} 已处理${s.failed ? ' · ' + s.failed + ' 失败' : ''}${s.running ? ' · ' + s.running + ' 执行中' : ''}</div></td>
+      const scheduleReady = !(event.draft || event.pendingSchedule);
+      const scheduleText = event.schedule?.startAt ? '已配置 · ' + new Date(event.schedule.startAt).toLocaleString('zh-CN', { hour12: false }) : '已配置';
+      const actions = [];
+      if (['queued', 'running'].includes(event.status)) actions.push(`<button class="btn sm ghost" data-event-action="pause" data-id="${esc(event.id)}">暂停</button>`);
+      if (event.status === 'paused') actions.push(`<button class="btn sm ghost" data-event-action="resume" data-id="${esc(event.id)}">继续</button>`);
+      if (['draft', 'unscheduled', 'scheduled', 'queued', 'running', 'paused'].includes(event.status)) actions.push(`<button class="btn sm ghost" data-event-action="cancel" data-id="${esc(event.id)}">取消</button>`);
+      if (['draft', 'unscheduled', 'canceled', 'completed', 'failed', 'partial', 'interrupted'].includes(event.status)) actions.push(`<button class="btn sm ghost danger" data-event-delete="${esc(event.id)}">删除</button>`);
+      actions.push(`<button class="btn sm" data-event-detail="${esc(event.id)}">详情</button>`);
+      return `<tr class="evt-row" data-event-open="${esc(event.id)}">
+        <td class="evt-id" data-label="任务ID"><span class="mono" title="${esc(event.id)}">${esc(event.id)}</span></td>
+        <td data-label="任务名称"><div class="evt-title" title="${esc(event.title)}">${esc(shortText(event.title, 10))}</div></td>
+        <td data-label="调度状态">${scheduleReady ? `<span class="hint">${esc(scheduleText)}</span>` : `<button class="btn sm ghost" data-event-schedule="${esc(event.id)}">配置</button>`}</td>
+        <td data-label="状态">${taskBadge(event.status)}</td>
+        <td data-label="任务进度"><div class="evt-progress"><span style="width:${progress}%"></span></div><div class="hint">${s.done || 0}/${s.total || 0}</div></td>
         <td class="tnum" data-label="耗时">${duration(event)}</td>
-        <td class="hint" data-label="创建">${event.createdAt ? new Date(event.createdAt).toLocaleString('zh-CN', { hour12: false }) : '—'}</td>
-        <td class="evt-actions" data-label="操作"><button class="btn sm" data-event-detail="${esc(event.id)}">详情</button></td>
+        <td class="hint" data-label="创建时间">${event.createdAt ? new Date(event.createdAt).toLocaleString('zh-CN', { hour12: false }) : '—'}</td>
+        <td class="evt-actions" data-label="任务操作"><div class="evt-row-actions">${actions.join('')}</div></td>
       </tr>`;
     }).join('');
     const statusOptions = [['','全部状态'],['draft,unscheduled','待调度'],['scheduled,queued','待执行'],['running','执行中'],['paused','暂停'],['completed','完成'],['partial','部分失败'],['failed','失败'],['canceled','已取消'],['interrupted','待确认']];
@@ -84,7 +112,7 @@ const Events = (() => {
     </div>
     ${state.eventError ? `<div class="card" style="padding:12px;color:var(--h3-danger)">事件加载失败：${esc(state.eventError)}</div>` : ''}
     ${rows ? `<div class="table-wrap"><table class="jobs evt-table">
-      <thead><tr><th>状态</th><th>任务</th><th>调度</th><th>条目进度</th><th>耗时</th><th>创建</th><th>操作</th></tr></thead>
+      <thead><tr><th>任务ID</th><th>任务名称</th><th>调度状态</th><th>状态</th><th>任务进度</th><th>耗时</th><th>创建时间</th><th>任务操作</th></tr></thead>
       <tbody>${rows}</tbody>
     </table></div>${page.footer}` : `<div class="card"><div class="empty"><strong>还没有任务</strong><p>在「创建任务」里上传分镜文件并保存，任务会先进入待调度。</p><button class="btn primary" data-event-create="1">去创建任务</button></div></div>`}`;
   }
@@ -690,7 +718,7 @@ const Events = (() => {
   async function confirmDelete(id) {
     const event = await api('/api/events/' + encodeURIComponent(id));
     openModal(`<div class="modal-head"><h2>删除任务</h2><button class="btn" data-close="1">关闭</button></div>
-      <div class="modal-body"><p>确定删除「${esc(event.title || event.id)}」？</p><p class="hint">删除后任务和它的执行记录都会消失，不能恢复。</p></div>
+      <div class="modal-body"><p>确定删除「${esc(event.title || event.id)}」？</p><p class="hint">删除后任务和它的执行记录都会消失，不能恢复；已生成的成片文件不会删除。</p></div>
       <div class="modal-foot"><span class="grow"></span><button class="btn" data-close="1">取消</button><button class="btn danger" id="evt-delete-confirm">删除</button></div>`);
     document.querySelector('#evt-delete-confirm').onclick = async () => {
       try {
@@ -821,7 +849,38 @@ const Events = (() => {
     window.render();
   }
 
-  async function openDetail(id) {
+  function closeDrawer(immediate = false) {
+    const drawer = document.getElementById('evt-drawer');
+    if (!drawer) return;
+    drawer.classList.remove('is-open');
+    if (immediate) drawer.remove();
+    else setTimeout(() => drawer.remove(), 180);
+    if (!document.querySelector('#modal:not([hidden])')) document.body.style.overflow = '';
+  }
+
+  function openVideoPreview(path) {
+    if (!path) return;
+    const overlay = document.createElement('div');
+    overlay.className = 'evt-video-backdrop';
+    overlay.innerHTML = `<div class="evt-video-modal"><button type="button" class="evt-video-close" aria-label="关闭">×</button><video src="/api/file?path=${encodeURIComponent(path)}" controls autoplay playsinline></video></div>`;
+    document.body.append(overlay);
+    const close = () => overlay.remove();
+    overlay.querySelector('.evt-video-close').onclick = close;
+    overlay.addEventListener('click', (event) => { if (event.target === overlay) close(); });
+    const onKey = (event) => { if (event.key === 'Escape') { close(); document.removeEventListener('keydown', onKey); } };
+    document.addEventListener('keydown', onKey);
+  }
+
+  function itemDuration(item, job) {
+    const start = (job && job.startedAt) || item.startedAt;
+    if (!start) return '—';
+    const status = item.status;
+    const stopped = ['success', 'failed', 'canceled', 'skipped', 'unknown'].includes(status);
+    const end = stopped ? ((job && job.finishedAt) || item.finishedAt || Date.now()) : Date.now();
+    return fmtMs(Math.max(0, end - start));
+  }
+
+  async function openDetailLegacy(id) {
     const event = await api('/api/events/' + encodeURIComponent(id) + '?paged=1&page=' + ((state.taskPages || {}).detail || 1));
     modalEventId = id;
     const detailItems = new Map((event.items || []).map((item) => [item.id, item]));
@@ -975,6 +1034,217 @@ const Events = (() => {
     });
   }
 
+  async function openDetail(id) {
+    closeDrawer(true);
+    const [event, jobData] = await Promise.all([
+      api('/api/events/' + encodeURIComponent(id)),
+      api('/api/jobs?eventId=' + encodeURIComponent(id)).catch(() => ({ jobs: [] })),
+    ]);
+    modalEventId = id;
+    const jobs = jobData.jobs || [];
+    const jobByItem = new Map(jobs.map((job) => [job.eventItemId || job.refId, job]));
+    const s = event.stats || {};
+    const pct = s.total ? Math.round(((s.done || 0) / s.total) * 100) : 0;
+    const managerBase = 'http://127.0.0.1:17778/tasks';
+    const itemCards = (event.items || []).map((item) => {
+      const job = jobByItem.get(item.id) || jobByItem.get(item.refId) || null;
+      const managerId = item.remoteId || (job && job.remotePromptId) || '';
+      const input = item.input || {};
+      const prompt = input.userPrompt == null ? input.prompt : input.userPrompt;
+      const prefix = input.prefixPrompt || '';
+      const video = (job && (job.outputs || []).find((out) => out.type === 'video' && out.path)) || null;
+      const actions = [];
+      if (['failed', 'canceled', 'skipped', 'success'].includes(item.status)) actions.push(`<button class="btn sm ghost" data-drawer-item-action="retry" data-item="${esc(item.id)}">重试</button>`);
+      if (['queued', 'paused'].includes(item.status)) actions.push(`<button class="btn sm ghost" data-drawer-item-action="cancel" data-item="${esc(item.id)}">取消</button>`);
+      if (['failed', 'canceled', 'skipped'].includes(item.status)) actions.push(`<button class="btn sm ghost" data-drawer-item-action="edit" data-item="${esc(item.id)}">编辑</button>`);
+      if (['success', 'failed', 'canceled', 'skipped', 'unknown'].includes(item.status)) actions.push(`<button class="btn sm ghost danger" data-drawer-item-action="delete" data-item="${esc(item.id)}">删除</button>`);
+      if (item.refId) actions.push(`<button class="btn sm ghost" data-drawer-item-action="probe" data-item="${esc(item.id)}" data-ref="${esc(item.refId)}">探针</button>`);
+      if (managerId && ['failed', 'unknown', 'canceled'].includes(item.status)) actions.push(`<button class="btn sm ghost" data-drawer-item-action="resume-original" data-item="${esc(item.id)}">继续查询</button>`);
+      return `<article class="evt-shot-card" data-drawer-item="${esc(item.id)}">
+        <div class="evt-shot-head">
+          <div class="evt-shot-id"><span class="hint">任务ID</span>${managerId ? `<a class="mono" href="${managerBase}#${encodeURIComponent(managerId)}" target="_blank" rel="noreferrer" title="打开管理器任务">${esc(managerId)}</a>` : '<span class="hint">未提交</span>'}<small class="mono">${esc(item.id)}</small></div>
+          ${itemStatusBadge(item.status)}
+        </div>
+        <div class="evt-shot-body">
+          <div class="evt-shot-info">
+            <h4>${esc(item.title || '分镜')}</h4>
+            <div class="evt-shot-meta"><span>运行时长 ${itemDuration(item, job)}</span><span>开始 ${item.startedAt ? new Date(item.startedAt).toLocaleString('zh-CN', { hour12: false }) : '—'}</span></div>
+            <div class="evt-shot-prompt"><b>提示词</b><span title="${esc(prompt || '')}">${esc(shortText(prompt, 10))}</span></div>
+            <div class="evt-shot-prompt"><b>前置提示词</b><span title="${esc(prefix || '')}">${esc(shortText(prefix, 10))}</span></div>
+            ${item.error ? `<div class="evt-shot-error" title="${esc(item.error)}">${esc(shortText(item.error, 80))}</div>` : ''}
+          </div>
+          <div class="evt-shot-media">${video ? `<div class="evt-shot-video" data-drawer-video="${esc(video.path)}"><video src="/api/file?path=${encodeURIComponent(video.path)}" preload="metadata" muted></video><span class="evt-shot-play">▶</span></div>` : '<div class="evt-shot-video is-empty">暂无成片</div>'}</div>
+        </div>
+        <div class="evt-shot-actions">${actions.join('') || '<span class="hint">没有可执行的操作</span>'}</div>
+      </article>`;
+    }).join('');
+
+    const taskActions = [
+      (event.draft || event.pendingSchedule) ? `<button class="btn" data-drawer-task-action="schedule">配置调度</button>` : '',
+      (event.draft || event.pendingSchedule) ? `<button class="btn" data-drawer-task-action="edit">编辑任务</button>` : '',
+      ['queued', 'running'].includes(event.status) ? `<button class="btn sm" data-drawer-task-action="pause">暂停</button>` : '',
+      event.status === 'paused' ? `<button class="btn sm" data-drawer-task-action="resume">继续</button>` : '',
+      ['draft', 'unscheduled', 'scheduled', 'queued', 'running', 'paused'].includes(event.status) ? `<button class="btn sm ghost" data-drawer-task-action="cancel">取消任务</button>` : '',
+      ['draft', 'unscheduled', 'canceled', 'completed', 'failed', 'partial', 'interrupted'].includes(event.status) ? `<button class="btn sm ghost danger" data-drawer-task-action="delete">删除任务</button>` : '',
+      s.failed ? `<button class="btn sm" data-drawer-task-action="retry-failed">重试失败项</button>` : '',
+    ].filter(Boolean).join('');
+
+    const drawer = document.createElement('div');
+    drawer.id = 'evt-drawer';
+    drawer.className = 'evt-drawer-backdrop';
+    drawer.innerHTML = `<aside class="evt-drawer" role="dialog" aria-modal="true" aria-label="任务详情">
+      <header class="evt-drawer-head">
+        <div><div class="eyebrow">TASK DETAIL</div><h2>${esc(event.title)}</h2><div class="hint">${esc(event.id)} · ${esc(SOURCE[event.source] || event.source)} · 创建 ${new Date(event.createdAt).toLocaleString('zh-CN', { hour12: false })}</div></div>
+        <div class="evt-drawer-head-right">${taskBadge(event.status)}<button type="button" class="btn ghost sm" data-drawer-close>关闭</button></div>
+      </header>
+      <nav class="evt-drawer-tabs" role="tablist">
+        <button type="button" data-drawer-tab="overview" aria-selected="true">任务概览</button>
+        <button type="button" data-drawer-tab="detail" aria-selected="false">任务详情</button>
+        <button type="button" data-drawer-tab="report" aria-selected="false">任务报告</button>
+      </nav>
+      <div class="evt-drawer-body">
+        <section class="evt-drawer-panel" data-drawer-panel="overview">
+          <div class="evt-summary">
+            <div class="evt-summary-top">${taskBadge(event.status)}<div class="evt-progress"><span style="width:${pct}%"></span></div><b>${s.done || 0}/${s.total || 0}</b></div>
+            <div class="evt-kpis">
+              <div><span>总条目</span><b>${s.total || 0}</b></div>
+              <div><span>成功</span><b class="is-ok">${s.success || 0}</b></div>
+              <div><span>失败</span><b class="is-bad">${s.failed || 0}</b></div>
+              <div><span>执行中</span><b>${s.running || 0}</b></div>
+              <div><span>调度</span><b>${event.schedule?.startAt ? new Date(event.schedule.startAt).toLocaleString('zh-CN', { hour12: false }) : (event.pendingSchedule ? '待调度' : '立即')}</b></div>
+              <div><span>耗时</span><b>${duration(event)}</b></div>
+            </div>
+            ${taskActions ? `<div class="evt-detail-actions">${taskActions}</div>` : ''}
+          </div>
+          <div class="evt-drawer-section">
+            <div class="evt-section-head"><h3>执行历史</h3><span id="drawer-attempt-count" class="hint"></span></div>
+            <div id="drawer-attempts" class="evt-attempt-list"><div class="hint">加载中…</div></div>
+            <div id="drawer-log" class="evt-drawer-log"><div class="hint">点击一条执行记录查看日志。</div></div>
+          </div>
+        </section>
+        <section class="evt-drawer-panel" data-drawer-panel="detail" hidden>
+          <div class="evt-drawer-section"><div class="evt-section-head"><h3>分镜列表</h3><span class="hint">共 ${(event.items || []).length} 条</span></div><div class="evt-shot-list">${itemCards || '<div class="hint">这个任务还没有分镜。</div>'}</div></div>
+        </section>
+        <section class="evt-drawer-panel" data-drawer-panel="report" hidden>
+          <div id="drawer-report" class="evt-drawer-section"><div class="hint">加载中…</div></div>
+        </section>
+      </div>
+    </aside>`;
+    document.body.append(drawer);
+    document.body.style.overflow = 'hidden';
+    requestAnimationFrame(() => drawer.classList.add('is-open'));
+    const logBox = drawer.querySelector('#drawer-log');
+    const attemptBox = drawer.querySelector('#drawer-attempts');
+
+    const showTab = (name) => {
+      drawer.querySelectorAll('[data-drawer-tab]').forEach((button) => button.setAttribute('aria-selected', String(button.dataset.drawerTab === name)));
+      drawer.querySelectorAll('[data-drawer-panel]').forEach((panel) => { panel.hidden = panel.dataset.drawerPanel !== name; });
+    };
+
+    const showLog = async (attemptId) => {
+      try {
+        const data = await api('/api/task-attempts/' + encodeURIComponent(attemptId) + '/logs');
+        logBox.innerHTML = '<div class="evt-section-head"><h3>执行日志</h3></div><pre class="evt-log">' + esc((data.lines || []).map((line) => line.text || line.message || '').join('\n')) + '</pre>' + (data.hasMore ? `<button class="btn sm ghost" data-drawer-more-log="${esc(data.id)}" data-after="${data.next}">继续加载</button>` : '');
+      } catch (error) { toast(error.message, true); }
+    };
+
+    const loadAttempts = async (page = 1, append = false) => {
+      const data = await api('/api/events/' + encodeURIComponent(id) + '/attempts?page=' + page);
+      const attempts = (data.items || []).flatMap((group) => group.attempts.map((attempt) => ({ ...attempt, title: group.title })));
+      const cards = attempts.map((attempt) => `<button type="button" class="evt-attempt-card" data-drawer-attempt-log="${esc(attempt.id)}"><div class="evt-attempt-top"><b>${esc(attempt.title || '分镜')}</b>${itemStatusBadge(attempt.status)}</div><div class="evt-attempt-meta">${new Date(attempt.createdAt).toLocaleString('zh-CN', { hour12: false })}${attempt.durationMs ? ' · ' + fmtMs(attempt.durationMs) : ''}</div>${attempt.error ? `<div class="evt-attempt-error">${esc(shortText(attempt.error, 100))}</div>` : ''}</button>`).join('');
+      drawer.querySelector('#drawer-attempt-count').textContent = '共 ' + (data.total || 0) + ' 次';
+      if (append) attemptBox.insertAdjacentHTML('beforeend', cards);
+      else attemptBox.innerHTML = cards || '<div class="hint">还没有执行记录。</div>';
+      attemptBox.querySelector('[data-drawer-attempt-more]')?.remove();
+      if ((data.total || 0) > page * 10) attemptBox.insertAdjacentHTML('beforeend', `<button class="btn sm ghost" data-drawer-attempt-more data-page="${page + 1}">加载更多</button>`);
+    };
+
+    const loadReport = async () => {
+      const reportBox = drawer.querySelector('#drawer-report');
+      try {
+        const report = await api('/api/events/' + encodeURIComponent(id) + '/report');
+        const rows = report.items || [];
+        const durations = rows.filter((row) => Number.isFinite(row.durationMs) && row.durationMs > 0).sort((a, b) => b.durationMs - a.durationMs);
+        const maxDuration = durations.length ? durations[0].durationMs : 1;
+        const totalStates = (report.success || 0) + (report.failed || 0) + (report.canceled || 0) + (report.skipped || 0) + (report.unknown || 0) || 1;
+        const failures = (report.failures || []).map((failure) => `<li><div><b>${esc(failure.provider || '未知')}</b><span class="hint">${esc(failure.channelId || '-')}</span></div><p>${esc(String(failure.error || '').slice(0, 300))}</p><em>×${failure.count}</em></li>`).join('');
+        reportBox.innerHTML = `<div class="evt-section-head"><h3>任务报告</h3><a class="btn sm ghost" href="/api/events/${encodeURIComponent(id)}/report?format=csv" download>导出 CSV</a></div>
+          <div class="evt-report-grid"><div><span>成功率</span><b>${report.successRate == null ? '—' : report.successRate + '%'}</b></div><div><span>成功 / 失败</span><b>${report.success} / ${report.failed}</b></div><div><span>取消 / 跳过 / 未知</span><b>${report.canceled} / ${report.skipped} / ${report.unknown}</b></div><div><span>耗时 P50 / P90 / 最长</span><b>${fmtMs(report.durationMs.p50)} / ${fmtMs(report.durationMs.p90)} / ${fmtMs(report.durationMs.max)}</b></div></div>
+          <div class="evt-report-block"><h4>状态分布</h4><div class="evt-dist-bar"><i class="ok" style="width:${(report.success / totalStates) * 100}%"></i><i class="bad" style="width:${(report.failed / totalStates) * 100}%"></i><i class="muted" style="width:${((report.canceled + report.skipped + report.unknown) / totalStates) * 100}%"></i></div><div class="evt-dist-legend"><span><i class="ok"></i>成功 ${report.success}</span><span><i class="bad"></i>失败 ${report.failed}</span><span><i class="muted"></i>其他 ${report.canceled + report.skipped + report.unknown}</span></div></div>
+          ${durations.length ? `<div class="evt-report-block"><h4>子任务耗时</h4><div class="evt-bars">${durations.slice(0, 20).map((row) => `<div class="evt-bar-row"><span title="${esc(row.title)}">${esc(shortText(row.title, 12))}</span><div class="evt-bar"><i style="width:${Math.max(2, (row.durationMs / maxDuration) * 100)}%"></i></div><em>${fmtMs(row.durationMs)}</em><small>×${row.attempts || 1}</small></div>`).join('')}</div></div>` : ''}
+          ${failures ? `<div class="evt-report-block"><h4>失败归因</h4><ul class="evt-failures">${failures}</ul></div>` : ''}`;
+      } catch (error) { reportBox.innerHTML = `<div class="hint">报告加载失败：${esc(error.message)}</div>`; }
+    };
+
+    drawer.addEventListener('click', async (event) => {
+      const close = event.target.closest('[data-drawer-close]');
+      if (close) return closeDrawer();
+      const tab = event.target.closest('[data-drawer-tab]');
+      if (tab) return showTab(tab.dataset.drawerTab);
+      const video = event.target.closest('[data-drawer-video]');
+      if (video) return openVideoPreview(video.dataset.drawerVideo);
+      const taskAction = event.target.closest('[data-drawer-task-action]');
+      if (taskAction) {
+        const action = taskAction.dataset.drawerTaskAction;
+        if (action === 'edit') { closeDrawer(); return openCreatePage(id); }
+        if (action === 'schedule') { closeDrawer(); return openSchedule(id); }
+        if (action === 'delete') { closeDrawer(); return confirmDelete(id); }
+        try {
+          await api('/api/events/' + encodeURIComponent(id) + '/' + action, { method: 'POST', body: {} });
+          await load();
+          await openDetail(id);
+        } catch (error) { toast(error.message, true); }
+        return;
+      }
+      const itemAction = event.target.closest('[data-drawer-item-action]');
+      if (itemAction) {
+        const action = itemAction.dataset.drawerItemAction;
+        const itemId = itemAction.dataset.item;
+        if (action === 'edit') { const item = (event.items || []).find((row) => row.id === itemId); if (item) openReviseModal(id, item); return; }
+        if (action === 'delete') {
+          openModal(`<div class="modal-head"><h2>移除分镜</h2><button class="btn" data-close="1">关闭</button></div><div class="modal-body"><p>只从任务里移除这条分镜，不删除成片和素材。</p><p class="hint">管理器的任务记录不会被删除。</p></div><div class="modal-foot"><span class="grow"></span><button class="btn" data-close="1">取消</button><button class="btn danger" id="drawer-item-delete-ok">移除</button></div>`);
+          document.querySelector('#drawer-item-delete-ok').onclick = async () => {
+            try { await api('/api/events/' + encodeURIComponent(id) + '/items/' + encodeURIComponent(itemId), { method: 'DELETE' }); closeModal(); await load(); await openDetail(id); toast('分镜已移除'); } catch (error) { toast(error.message, true); }
+          };
+          return;
+        }
+        if (action === 'probe') {
+          try {
+            const result = await api('/api/tasks/' + encodeURIComponent(itemAction.dataset.ref) + '/probe', { method: 'POST', body: {} });
+            showTab('overview');
+            logBox.innerHTML = '<div class="evt-section-head"><h3>探针结果</h3></div><pre class="evt-log">' + esc(JSON.stringify(result, null, 2)) + '</pre>';
+          } catch (error) { toast(error.message, true); }
+          return;
+        }
+        try {
+          const endpoint = action === 'cancel' ? 'skip' : action;
+          await api('/api/events/' + encodeURIComponent(id) + '/items/' + encodeURIComponent(itemId) + '/' + endpoint, { method: 'POST', body: {} });
+          await load();
+          await openDetail(id);
+          toast(action === 'retry' ? '已重新排队' : action === 'resume-original' ? '已安排继续查询' : '已取消这条分镜');
+        } catch (error) { toast(error.message, true); }
+        return;
+      }
+      const attempt = event.target.closest('[data-drawer-attempt-log]');
+      if (attempt) return showLog(attempt.dataset.drawerAttemptLog);
+      const more = event.target.closest('[data-drawer-attempt-more]');
+      if (more) return loadAttempts(Number(more.dataset.page), true);
+      const moreLog = event.target.closest('[data-drawer-more-log]');
+      if (moreLog) {
+        try {
+          const data = await api('/api/task-attempts/' + encodeURIComponent(moreLog.dataset.drawerMoreLog) + '/logs?after=' + moreLog.dataset.after);
+          logBox.querySelector('pre').textContent += '\n' + (data.lines || []).map((line) => line.text || line.message || '').join('\n');
+          moreLog.dataset.after = data.next;
+          moreLog.hidden = !data.hasMore;
+        } catch (error) { toast(error.message, true); }
+      }
+    });
+
+    drawer.addEventListener('click', (event) => { if (event.target === drawer) closeDrawer(); });
+    loadAttempts().catch(() => { attemptBox.innerHTML = '<div class="hint">执行历史读取失败。</div>'; });
+    loadReport();
+  }
+
   function openReviseModal(eventId, item) {
     const input = item.input || {};
     const prefix = String(input.prefixPrompt || '');
@@ -1042,6 +1312,8 @@ const Events = (() => {
       if(filter){state.taskEventStatus=filter.dataset.eventStatus;state.taskPages={...(state.taskPages||{}),events:1};lastSignature='';load();return;}
       const reset=event.target.closest('[data-event-filter-reset]');
       if(reset){state.taskEventStatus='';state.taskEventMonth='';state.taskEventSort='created_desc';state.taskEventQuery='';state.taskPages={...(state.taskPages||{}),events:1};lastSignature='';load();return;}
+      const openRow=event.target.closest('[data-event-open]');
+      if(openRow && !event.target.closest('button,a')){openDetail(openRow.dataset.eventOpen).catch(err=>toast(err.message,true));return;}
       const schedule=event.target.closest('[data-event-schedule]');
       if(schedule){openSchedule(schedule.dataset.eventSchedule).catch(err=>toast(err.message,true));return;}
       const create = event.target.closest('[data-event-create]');
@@ -1097,6 +1369,10 @@ const Events = (() => {
       </div>
       <div class="modal-foot"><span class="grow"></span><button class="btn" data-close="1">关闭</button></div>`);
   }
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !document.querySelector('#modal:not([hidden])') && document.getElementById('evt-drawer')) closeDrawer();
+  });
 
   return { render, renderCreate, renderSchedule, renderMonitor, renderLogs, load, bind, resetForProject, openCreatePage, openDetail, openSchedule, openAttempts, openLogs, confirmDelete };
 })();

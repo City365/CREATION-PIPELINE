@@ -36,12 +36,12 @@ test('正式HTTP：统一单条与批量、草稿不发送、定时、分页、�
   const twenty=await api('/api/events',{kind:'image',title:'20 local images',draft:true,items:Array.from({length:20},(_,i)=>({prompt:'item '+i,channelId:ch.id}))});
   const detail=await api('/api/events/'+twenty.id+'?paged=1&page=2');assert.equal(detail.items.length,10);assert.equal(detail.itemPaging.total,20);
   await api('/api/events/'+twenty.id+'/queue',{});await until(async()=>{const event=await api('/api/events/'+twenty.id);return event.status==='completed'&&event.stats.done===20;});
-  // 待调度任务：可编辑、可取消、可删除；已排期/已结束的删除与重排被拒绝
+  // 待调度任务：可编辑、可取消、可删除；已排期任务先取消，已结束任务可删除但不可重排
   const pending=await api('/api/events',{kind:'image',title:'pending one',pendingSchedule:true,items:[{prompt:'pending',channelId:ch.id}]});assert.equal(pending.status,'unscheduled');
   const edited=await api('/api/events/'+pending.id+'/draft',{title:'pending edited',items:[{prompt:'pending edited',channelId:ch.id}]});assert.equal(edited.title,'pending edited');assert.equal(edited.items.length,1);
   await api('/api/events/'+pending.id+'/schedule',{startAt:new Date(Date.now()+3600000).toISOString(),concurrency:1});
   assert.equal((await api('/api/events/'+pending.id)).status,'scheduled');
-  await assert.rejects(()=>del(pending.id),/只有尚未开始或已取消/,'已排期任务不能直接删除');
+  await assert.rejects(()=>del(pending.id),/不能删除/,'已排期任务不能直接删除');
   await api('/api/events/'+pending.id+'/cancel',{});assert.equal((await api('/api/events/'+pending.id)).status,'canceled');
   await del(pending.id);await assert.rejects(()=>api('/api/events/'+pending.id),/事件不存在/);
   await assert.rejects(()=>api('/api/events/'+twenty.id+'/schedule',{startAt:null}),/不能再改调度/,'已完成任务不能重排');

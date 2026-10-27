@@ -1165,6 +1165,8 @@ function mediaPath(input) {
   if (method === 'GET' && pathname === '/api/jobs') {
     const { status, provider } = collectJobFilters(url);
     let list = projectId ? jobs.list(projectId) : jobs.list();
+    const eventId = url.searchParams.get('eventId') || '';
+    if (eventId) list = list.filter((j) => j.eventId === eventId);
     if (status) list = list.filter((j) => j.status === status);
     if (provider) list = list.filter((j) => j.provider === provider);
     if(url.searchParams.has('page')){const total=list.length,page=Math.max(1,Math.min(Math.ceil(total/10)||1,Number(url.searchParams.get('page'))||1));list=list.slice().sort((a,b)=>b.createdAt-a.createdAt).slice((page-1)*10,page*10).map(({logs,prompt,...summary})=>summary);return ok(res,{jobs:list,total,page,pageSize:10});}
@@ -1310,6 +1312,9 @@ function mediaPath(input) {
 
   const eventItemLog = /^\/api\/events\/([^/]+)\/items\/([^/]+)\/log$/.exec(pathname);
   if (method === 'GET' && eventItemLog) return ok(res, events.itemLog(eventItemLog[1], eventItemLog[2]));
+
+  const eventItemDelete = /^\/api\/events\/([^/]+)\/items\/([^/]+)$/.exec(pathname);
+  if (method === 'DELETE' && eventItemDelete) return ok(res, events.removeItem(eventItemDelete[1], eventItemDelete[2]));
 
   const eventRoute = /^\/api\/events\/([^/]+)$/.exec(pathname);
   if(method==='GET'&&eventRoute){const event=events.get(eventRoute[1]);if(url.searchParams.get('paged')==='1'){const total=event.items.length,page=Math.max(1,Math.min(Math.ceil(total/10)||1,Number(url.searchParams.get('page'))||1));event.items=event.items.slice((page-1)*10,page*10);event.spec={...event.spec,items:[]};event.itemPaging={total,page,pageSize:10};}return ok(res,event);}

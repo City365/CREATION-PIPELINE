@@ -541,6 +541,22 @@ function skipItem(id, itemId) {
   return get(id);
 }
 
+/** 从任务里移除一条已结束的分镜；只删记录，不删成片和素材。 */
+function removeItem(id, itemId) {
+  const event = rawEvent(id);
+  const item = (event.items || []).find((row) => row.id === itemId);
+  if (!item) throw Object.assign(new Error('条目不存在'), { status: 404 });
+  const status = itemStatusOf(item, jobMapNow());
+  if (!['success', 'failed', 'canceled', 'skipped', 'unknown'].includes(status)) {
+    throw Object.assign(new Error('只能删除已结束的分镜；运行中或排队中的分镜请先取消'), { status: 409 });
+  }
+  event.items = event.items.filter((row) => row.id !== itemId);
+  event.legacy = false;
+  audit(event, 'remove-item', `移除分镜 ${item.title || item.id}`);
+  save();
+  return get(id);
+}
+
 function retryFailed(id) {
   const event=get(id);
   const targets=event.items.filter(i=>i.status==='failed');
@@ -582,7 +598,7 @@ function prepareEvent(id) {const event=rawEvent(id);const status=get(id).status;
 function removeEvent(id){
   const event=rawEvent(id);
   const status=get(id).status;
-  if(!['draft','unscheduled','canceled'].includes(status))throw Object.assign(new Error('只有尚未开始或已取消的任务可以删除'),{status:409});
+  if(!['draft','unscheduled','canceled','completed','failed','partial','interrupted'].includes(status))throw Object.assign(new Error('运行中或排队中的任务不能删除，请先取消'),{status:409});
   load();
   state.events=state.events.filter((item)=>item.id!==id);
   save();
@@ -731,4 +747,4 @@ function adoptLegacy(projectId) {
   return changed;
 }
 
-module.exports = { repository, materialize, importHistory, lookupRef, capture, scheduleEvent, queueEvent, prepareEvent, removeEvent, updateDraft, resumeOriginal, moveItem, adoptLegacy, load, save, list, get, create, createFromJobInputs, recordJobs, recordSingleJob, recordSingleImage, itemLog, hydrate, tick, start, stop, pauseEvent, resumeEvent, cancelEvent, reviseItem, retryItem, skipItem, retryFailed, report, reportCsv, reportRange, state };
+module.exports = { repository, materialize, importHistory, lookupRef, capture, scheduleEvent, queueEvent, prepareEvent, removeEvent, updateDraft, resumeOriginal, moveItem, adoptLegacy, load, save, list, get, create, createFromJobInputs, recordJobs, recordSingleJob, recordSingleImage, itemLog, hydrate, tick, start, stop, pauseEvent, resumeEvent, cancelEvent, reviseItem, removeItem, retryItem, skipItem, retryFailed, report, reportCsv, reportRange, state };
