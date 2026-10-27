@@ -301,3 +301,14 @@ footer{padding:16px 0 18px;margin-top:14px}
 .settings-grid{grid-template-columns:repeat(auto-fit,minmax(380px,1fr))}
 .settings-section{scroll-margin-top:84px}
 @media(max-width:560px){.page-tabs{flex-wrap:nowrap;overflow-x:auto}.page-tab{white-space:nowrap;font-size:11px;padding:7px 9px}}
+/* 语言名称映射：和规则表一致的表格布局 */
+.mapping-language-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:18px 0 8px}
+.mapping-language-head h3{margin:0}
+.mapping-language-table{border:1px solid var(--line);border-radius:9px;overflow:auto}
+.mapping-language-table table{font-size:12px}
+.mapping-language-table th{padding:7px 10px}
+.mapping-language-table td{padding:6px 10px}
+.mapping-language-table td:first-child{min-width:0;max-width:none}
+.mapping-language-table input{min-height:30px;margin-top:0;padding:5px 8px;font-size:12px}
+.mapping-language-table .mapping-remove-language{background:none;border:0;color:var(--danger);font-size:11px;padding:4px 6px;border-radius:5px}
+.mapping-language-table .mapping-remove-language:hover{background:#fff0f1}
