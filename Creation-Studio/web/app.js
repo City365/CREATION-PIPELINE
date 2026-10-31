@@ -643,6 +643,8 @@ function render() {
   view.replaceChildren(host);
   bindRoute(host);
   if(state.route === "studio" || state.route === "image") WB.bind(host,state.route === "studio" ? "video" : "image");
+  // 整页重画之后把结构签名对齐，避免下一条进度事件又触发一次整页重画
+  if (state.route === 'studio') { try { studioSignatureCache = studioStageSignature(); } catch { /* ignore */ } }
   applyVolume();
   updateStatus();
 }
@@ -1313,9 +1315,70 @@ function stageEmptyHtml(wf) {
   </div>`;
 }
 
+// 舞台要跟着任务进度变，但不能整页重画：整页重画会让创作台一直闪，还会打断正在播的成片
+function studioOwnJobs() {
+  const itemId = WB.context('video').itemId;
+  return (state.jobs || []).filter((j) => j.itemId === itemId);
+}
+
+function studioStageJob() {
+  const ownJobs = studioOwnJobs();
+  return ownJobs.find((j) => j.id === state.lastJobId)
+    || ownJobs.find((j) => j.status === 'running')
+    || ownJobs.slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).find((j) => (j.outputs || []).length)
+    || null;
+}
+
+// 结构签名：只有“任务集合或状态”变了才值得整页重画，进度百分比变化不算
+let studioSignatureCache = '';
+function studioStageSignature() {
+  const own = studioOwnJobs();
+  const stageId = (studioStageJob() || {}).id || '';
+  return own.map((j) => j.id + ':' + j.status).join('|') + '#' + stageId;
+}
+
+function studioLivePatch() {
+  if (state.route !== 'studio') return false;
+  const stage = document.getElementById('studio-stage');
+  const queue = document.getElementById('studio-queue');
+  if (!stage && !queue) return false;
+  const last = studioStageJob();
+  if (stage && last) {
+    const progress = last.progress || 0;
+    const bar = stage.querySelector('.stage-bar > i');
+    if (bar) bar.style.width = progress + '%';
+    const waiting = stage.querySelector('.stage-wait span:last-child');
+    if (waiting && !stage.querySelector('.stage-video video')) waiting.textContent = (last.stage || '生成中') + ' · ' + progress + '%';
+    const hint = stage.querySelector('.stage-meta .stage-line.hint span');
+    if (hint) hint.textContent = (last.stage || '') + ' · ' + progress + '%';
+    const badge = stage.querySelector('.stage-meta .stage-line .wmd-badge, .stage-meta .stage-line .badge');
+    if (badge) badge.textContent = STATUS_LABEL[last.status] || last.status;
+  }
+  if (queue) {
+    for (const row of queue.querySelectorAll('.stage-queue-row')) {
+      const job = (state.jobs || []).find((j) => j.id === row.dataset.id);
+      if (!job) continue;
+      const stateCell = row.querySelector('.stage-queue-state');
+      if (stateCell) stateCell.textContent = STATUS_LABEL[job.status] || job.status;
+      const dot = row.querySelector('.dot');
+      if (dot) dot.className = 'dot ' + (job.status === 'success' ? 'ok' : job.status === 'failed' ? 'bad' : job.status === 'running' ? 'warn' : '');
+    }
+    const head = queue.querySelector('.stage-queue-head .tnum');
+    if (head) {
+      const counts = (state.jobs || []).reduce((acc, j) => {
+        if (j.status === 'queued') acc.queued += 1;
+        else if (j.status === 'running') acc.running += 1;
+        return acc;
+      }, { queued: 0, running: 0 });
+      head.textContent = counts.queued + ' 排队 · ' + counts.running + ' 生成中';
+    }
+  }
+  return true;
+}
+
 function renderStudio() {
   const s = state.studio;
-  const ownJobs = state.jobs.filter(j => j.itemId === WB.context("video").itemId);
+  const ownJobs = studioOwnJobs();
   const wf = currentWorkflow();
   if (!wf) return `<div class="wmd-empty"><div class="wmd-empty-card"><h2 class="wmd-empty-title">没有工作流</h2><p class="wmd-empty-desc">在 设置 → 视频生成 里添加一个管理器渠道。</p></div></div>`;
   const skillFmt = studioSkillFormat(s, wf);
@@ -1329,7 +1392,7 @@ function renderStudio() {
   const audios = s.audios || [];
   const nextEmpty = images.findIndex((x) => !x);
   const mode = s.promptMode || 'tags';
-  const lastJob = ownJobs.find((j) => j.id === state.lastJobId) || ownJobs.find((j) => j.status === 'running') || ownJobs.slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).find((j) => (j.outputs || []).length) || null;
+  const lastJob = studioStageJob();
   const outputs = lastJob ? (lastJob.outputs || []) : [];
   const video = [...outputs].reverse().find((o) => o.type === 'video');
   const progress = lastJob ? lastJob.progress || 0 : 0;
@@ -1542,8 +1605,8 @@ function renderStudio() {
         <button type="button" class="wmd-btn wmd-btn-sm wmd-btn-ghost" data-act="go-jobs">任务日志</button>
       </div>
       <div class="wmd-stage-body">
-        ${stage}
-        ${queue}
+        <div id="studio-stage">${stage}</div>
+        <div id="studio-queue">${queue}</div>
       </div>
     </div>
   </div>`;
@@ -10614,18 +10677,23 @@ function connectEvents() {
       const index = state.jobs.findIndex((j) => j.id === job.id);
       if (index >= 0) state.jobs[index] = job;
       else state.jobs.unshift(job);
-      if (state.lastJobId === job.id && (job.status === 'success' || job.status === 'failed')) {
-        // Force a rerender of the studio stage when the tracked job finishes.
-      }
       clearTimeout(timer);
       timer = setTimeout(() => {
         const active = document.activeElement;
         const typing = active && (active.id === 'prompt-editor' || active.tagName === 'TEXTAREA' || active.tagName === 'INPUT');
-        if (state.route === 'studio' && typing) {
-          updateStatus();
+        if (state.route === 'studio') {
+          // 进度事件只打局部补丁；整页重画就是“屏幕一直闪”的原因
+          const signature = studioStageSignature();
+          if (!typing && signature !== studioSignatureCache) {
+            studioSignatureCache = signature;
+            render();
+          } else {
+            studioLivePatch();
+            updateStatus();
+          }
           return;
         }
-        if (state.route === 'jobs' || state.route === 'studio' || state.route === 'logs') render();
+        if (state.route === 'jobs' || state.route === 'logs') render();
         updateStatus();
       }, 400);
     } catch { /* ignore */ }
