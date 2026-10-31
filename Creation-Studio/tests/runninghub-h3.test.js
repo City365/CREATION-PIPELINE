@@ -164,6 +164,48 @@ test('扁平的 openapi/v2 失败体不会被 check 放行，节点异常能直�
  }finally{await mock.close();}
 });
 
+test('平台跑挂（805 · VRAM grow failed）自动重投一次，第二次成功',{timeout:20000},async()=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'rh-retry-'));
+ const images=[{path:tinyPng(root,'a.png'),name:'a.png'}];
+ let mock,submitted=0;
+ mock=await mockServer((req,body,res)=>{
+  if(req.url==='/openapi/v2/media/upload/binary')return {code:0,data:{fileName:'uploaded/x.png'}};
+  if(req.url.startsWith('/openapi/v2/run/ai-app/')){submitted+=1;return {taskId:submitted===1?'rh-fail-task':'rh-ok-task'};}
+  if(req.url==='/openapi/v2/query'){
+   if(body.taskId==='rh-fail-task')return {taskId:'rh-fail-task',status:'FAILED',errorCode:'805',errorMessage:'工作流运行失败',failedReason:{node_name:'SamplerAdvanced',node_id:'144',exception_message:'VRAM grow failed: 333620224 bytes'}};
+   return {taskId:'rh-ok-task',status:'SUCCESS',results:[{nodeId:'2',url:mock.base+'/final.mp4',outputType:'video'}]};
+  }
+  res.setHeader('Content-Type','video/mp4');res.end('video');
+ });
+ try{
+  const channel=siteChannel('runninghub-h3-ai',{baseUrl:mock.base,apiKey:'ai-key',id:'ch-ai'});
+  const {ctx,job,saved}=fakeCtx(channel,'rh:ch-ai:ai_1080p_hypervae',images,root);
+  await adapter.execute(ctx);
+  assert.equal(submitted,2,'第一次 805 之后应重投一次');
+  assert.equal(job.remotePromptId,'rh-ok-task');
+  assert.equal(saved.length,1);
+  assert.ok(job.logs.some(l=>/换一次重投/.test(l)),'重投要写进任务日志');
+ }finally{await mock.close();}
+});
+
+test('继续原任务时遇到 805 不会重复提交',{timeout:20000},async()=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'rh-resume-'));
+ const images=[{path:tinyPng(root,'a.png'),name:'a.png'}];
+ let mock,submitted=0;
+ mock=await mockServer((req,body,res)=>{
+  if(req.url.startsWith('/openapi/v2/run/ai-app/')){submitted+=1;return {taskId:'x'+submitted};}
+  if(req.url==='/openapi/v2/query')return {taskId:body.taskId,status:'FAILED',errorCode:'805',errorMessage:'工作流运行失败',failedReason:{node_name:'SamplerAdvanced',node_id:'144',exception_message:'VRAM grow failed: 1024 bytes'}};
+  res.end('');
+ });
+ try{
+  const channel=siteChannel('runninghub-h3-ai',{baseUrl:mock.base,apiKey:'ai-key',id:'ch-ai'});
+  const {ctx,job}=fakeCtx(channel,'rh:ch-ai:ai_1080p_hypervae',images,root);
+  job.remotePromptId='existing-task';
+  await assert.rejects(()=>adapter.resumeJob(job,ctx),/805/);
+  assert.equal(submitted,0,'继续原任务不能重新提交');
+ }finally{await mock.close();}
+});
+
 test('国际站：提交到 runninghub.ai 的应用，图片顺序按文档',{timeout:20000},async()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'rh-ai-'));
  const images=[{path:tinyPng(root,'a.png'),name:'a.png'}];

@@ -20,7 +20,7 @@ function workflows(ch){
   return {id:'rh:'+ch.id+':'+key,channelId:ch.id,channelType:ch.type,provider:'runninghub',label:application.label,note:application.note,images:(application.images?.nodes||[]).length,audios:0,videos:0,optionalImages:true,durationKey:'duration',durationDefault:duration,durationOptions:Array.from({length:duration},(_,i)=>i+1),seedKey:'',sizeMode:'wh',defaultRatio:ratioShort(application.aspect?.default)||'16:9',ratios:ratiosOf(application),megapixelsOptions:[]};
  });
 }
-async function run(ctx,{resumeOnly=false}={}){
+async function attempt(ctx,{resumeOnly=false}={}){
  const {job,workflow:wf,signal}=ctx;
  const channelId=ctx.slot?.id||job.channelId;
  const ch=ctx.channels.get('video',channelId);
@@ -73,6 +73,25 @@ async function run(ctx,{resumeOnly=false}={}){
  await ctx.saveOutputs(job,dir,result.outputs.map((v,i)=>({type:'video',filename:'video-'+i+'.mp4',url:v.url})),signal);
  ctx.writeJobMeta(job,dir,{apiUrl:job.apiUrl,worker:ch.name,site:site.id,accountIndex:index,accountTotal:accounts.length,accountName:accountLabel,applicationId:application.applicationId,applicationName:application.label,inputValues:{nodeMappingKey:keyOf((wf&&wf.id)||job.workflowId),instanceType:ch.options?.instanceType||'default',aspectRatio:job.aspectRatio,duration:job.duration}});
  return job;
+}
+// 平台侧跑挂了（805 工作流运行失败 / VRAM grow failed）不是参数或密钥问题：同一次执行重投一次，
+// 换 seed 重来；resumeOnly（继续原任务）不重投，避免同一个镜头重复计费。
+const RETRY_TEXT=/VRAM grow failed|错误码：805|错误码 805|工作流运行失败/i;
+async function run(ctx,options={}){
+ const job=ctx.job;
+ const signal=ctx.signal;
+ for(let round=0;round<2;round+=1){
+  try{return await attempt(ctx,options);}
+  catch(error){
+   const text=String(error&&error.message||'');
+   const retryable=!options.resumeOnly&&round===0&&RETRY_TEXT.test(text)&&!(signal&&signal.canceled);
+   if(!retryable)throw error;
+   ctx.log(job,'warn','平台侧运行失败（'+text.slice(0,160)+'），换一次重投');
+   job.remotePromptId='';
+   ctx.touch(job,{progress:20,stage:'平台显存不足，自动重投…'});
+  }
+ }
+ throw Error('RunningHub 连续两次运行失败，请稍后重试或改用 720P / 736P 应用');
 }
 module.exports={workflows,execute:ctx=>run(ctx),resumeJob:(job,ctx)=>run({...ctx,job},{resumeOnly:true}),submit:protocol.submit,poll:protocol.poll,test:protocol.test,slots(ch){
  const accounts=protocol.keys(ch);
