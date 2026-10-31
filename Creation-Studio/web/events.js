@@ -1212,6 +1212,17 @@ const Events = (() => {
     };
   }
 
+  // 画幅比例：分镜输入里优先，其次看子任务上真正提交时的参数；只取 16:9 这种短格式
+  function itemRatio(item, job) {
+    const raw = [
+      (item && item.input && (item.input.aspectRatio || item.input.aspect_ratio)),
+      item && item.aspectRatio,
+      job && job.aspectRatio,
+    ].find((value) => value !== undefined && value !== null && String(value).trim() !== '');
+    const short = (String(raw || '').match(/\d+:\d+/) || [])[0];
+    return short || '';
+  }
+
   function itemDuration(item, job) {
     const start = (job && job.startedAt) || item.startedAt;
     if (!start) return '—';
@@ -1414,7 +1425,7 @@ const Events = (() => {
         <div class="evt-shot-body">
           <div class="evt-shot-info">
             <h4>${esc(item.title || '分镜')}</h4>
-            <div class="evt-shot-meta"><span>运行时长 ${itemDuration(item, job)}</span><span>开始 ${item.startedAt ? new Date(item.startedAt).toLocaleString('zh-CN', { hour12: false }) : '—'}</span></div>
+            <div class="evt-shot-meta"><span>比例 ${esc(itemRatio(item, job) || '—')}</span><span>运行时长 ${itemDuration(item, job)}</span><span>开始 ${item.startedAt ? new Date(item.startedAt).toLocaleString('zh-CN', { hour12: false }) : '—'}</span></div>
             <div class="evt-shot-prompt"><b>提示词</b><span title="${esc(prompt || '')}">${esc(shortText(prompt, 10))}</span></div>
             <div class="evt-shot-prompt"><b>前置提示词</b><span title="${esc(prefix || '')}">${esc(shortText(prefix, 10))}</span></div>
             ${['failed', 'unknown', 'canceled'].includes(item.status) && reason ? `<div class="evt-shot-error" title="${esc(reason)}"><b>原因</b> ${esc(shortText(reason, 80))}</div>` : ''}
@@ -1836,6 +1847,7 @@ const Events = (() => {
           <div><span>开始</span><b>${esc(timeText(started))}</b></div>
           <div><span>结束</span><b>${esc(timeText(finished))}</b></div>
           <div><span>耗时</span><b>${itemDuration(item, job)}</b></div>
+          <div><span>比例</span><b>${esc(itemRatio(item, job) || '—')}</b></div>
           <div><span>管理器任务</span><b>${remoteId ? `<a href="${managerBase}#${encodeURIComponent(remoteId)}" target="_blank" rel="noreferrer">${esc(remoteId)}</a>` : '—'}</b></div>
         </div>
         ${reason ? `<div class="evt-shot-error"><b>原因</b> ${esc(reason)}</div>` : ''}
