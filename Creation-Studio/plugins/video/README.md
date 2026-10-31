@@ -7,6 +7,7 @@
 - autodl-h3：AutoDL 官方H3，五个公开工作流，保留两个旧工作流 ID 的历史解析。
 - browser-manager：豆包 / Gemini 浏览器管理器，包括账号槽位、提交、轮询、取消、继续原任务与结果取回。
 - generic-video：OpenAI 视频兼容与通用任务接口。
+- runninghub-h3：RunningHub H3 国内站（6 个应用）与国际站（4 个应用），节点映射来自 docs/runninghub-h3-cn-ai-api-reference.json。
 
 现有渠道 type、渠道 ID、API Key、默认设置、任务 ID 不变。凭据仍在应用配置中，插件包不保存用户密钥。
 

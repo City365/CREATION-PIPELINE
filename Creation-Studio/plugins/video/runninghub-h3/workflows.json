@@ -1,376 +1,509 @@
 {
-  "wenxi_720p_app": {
-    "label": "MiniMax H3 文戏高速 720p（国内版）",
-    "description": "RunningHub 国内版 AI 应用",
-    "workflow_id": "2104543598783057921",
-    "api_type": "ai-app",
-    "prompt_node": "528",
-    "prompt_field": "prompt",
-    "duration_node": "529",
-    "duration_field": "value",
-    "ref_image_nodes": [
-      "526",
-      "527",
-      "525",
-      "515",
-      "475",
-      "469",
-      "591",
-      "593",
-      "592"
-    ],
-    "ref_image_field": "image",
-    "default_duration": 15,
-    "max_duration": 15,
-    "aspect_ratio_node": "456",
-    "aspect_ratio_field": "aspect_ratio",
-    "aspect_ratio_default": "16:9 (Widescreen)",
-    "aspect_ratio_options": [
-      "1:1 (Square)",
-      "2:3 (Portrait Photo)",
-      "3:2 (Photo)",
-      "3:4 (Portrait Standard)",
-      "4:3 (Standard)",
-      "9:16 (Portrait Widescreen)",
-      "16:9 (Widescreen)",
-      "21:9 (Ultrawide)"
-    ],
-    "source_app_id": "2104543598783057921"
+ "schemaVersion": 2,
+ "source": "docs/runninghub-h3-cn-ai-api-reference.json",
+ "checkedDate": "2026-10-31",
+ "sites": {
+  "cn": {
+   "id": "cn",
+   "label": "RunningHub H3 国内站",
+   "channelType": "runninghub-h3-cn",
+   "baseUrl": "https://www.runninghub.cn",
+   "hosts": [
+    "www.runninghub.cn",
+    "runninghub.cn"
+   ]
   },
-  "app_413698": {
-    "label": "H3_文戏_SelfLift融合版_24G_720p_九参考图",
-    "description": "用户添加：AI 应用",
-    "workflow_id": "2105240406144413698",
-    "source_kind": "ai-app",
-    "api_type": "ai-app",
-    "source_signature": "cd24843aa9c4c9581930706143ea98040577c9527dd09dfc28982cc3d86520b1",
-    "prompt_node": "528",
-    "prompt_field": "prompt",
-    "duration_node": "529",
-    "duration_field": "value",
-    "ref_image_nodes": [
-      "591",
-      "592",
-      "593",
-      "475",
-      "515",
-      "469",
-      "525",
-      "526",
-      "527"
-    ],
-    "ref_image_fields": [
-      "image",
-      "image",
-      "image",
-      "image",
-      "image",
-      "image",
-      "image",
-      "image",
-      "image"
-    ],
-    "ref_image_field": "image",
-    "aspect_ratio_node": "603",
-    "aspect_ratio_field": "aspect_ratio",
-    "aspect_ratio_options": [
-      "1:1 (Square)",
-      "2:3 (Portrait Photo)",
-      "3:2 (Photo)",
-      "3:4 (Portrait Standard)",
-      "4:3 (Standard)",
-      "9:16 (Portrait Widescreen)",
-      "16:9 (Widescreen)",
-      "21:9 (Ultrawide)"
-    ],
-    "aspect_ratio_default": "1:1 (Square)",
-    "steps_node": "",
-    "steps_field": "",
-    "final_output_node": "",
-    "default_duration": 15,
-    "max_duration": 15,
-    "app_default_instance_type": "",
-    "avg_running_seconds": null,
-    "source_url": "https://www.runninghub.cn/call-api/api-detail/2105240406144413698"
-  },
-  "app_478785": {
-    "label": "Minimax H3-自研720p（高速推荐版）6+2",
-    "description": "用户添加：AI 应用",
-    "workflow_id": "2105187483343478785",
-    "source_kind": "ai-app",
-    "api_type": "ai-app",
-    "source_signature": "9aca27938c197c6b54abe46e61adbc41e463cb8606ffcdbc25bd292898414ae9",
-    "prompt_node": "180",
-    "prompt_field": "prompt",
-    "duration_node": "151",
-    "duration_field": "value",
-    "ref_image_nodes": [
-      "171",
-      "150",
-      "172",
-      "173",
-      "152",
-      "174",
-      "175",
-      "176",
-      "155"
-    ],
-    "ref_image_fields": [
-      "image",
-      "image",
-      "image",
-      "image",
-      "image",
-      "image",
-      "image",
-      "image",
-      "image"
-    ],
-    "ref_image_field": "image",
-    "aspect_ratio_node": "179",
-    "aspect_ratio_field": "aspect_ratio",
-    "aspect_ratio_options": [
-      "1:1 (Square)",
-      "2:3 (Portrait Photo)",
-      "3:2 (Photo)",
-      "3:4 (Portrait Standard)",
-      "4:3 (Standard)",
-      "9:16 (Portrait Widescreen)",
-      "16:9 (Widescreen)",
-      "21:9 (Ultrawide)"
-    ],
-    "aspect_ratio_default": "1:1 (Square)",
-    "steps_node": "",
-    "steps_field": "",
-    "final_output_node": "",
-    "default_duration": 15,
-    "max_duration": 15,
-    "app_default_instance_type": "",
-    "avg_running_seconds": null,
-    "source_url": "https://www.runninghub.cn/call-api/api-detail/2105187483343478785"
-  },
-  "app_825409": {
-    "label": "Minimax H3-自研720p-5+3（文字优化版）",
-    "description": "用户添加：AI 应用",
-    "workflow_id": "2105189831335825409",
-    "source_kind": "ai-app",
-    "api_type": "ai-app",
-    "source_signature": "3ae2523646ece80dc97b52435e3b6245359a9949fd96d7fb0f406f0b53e9c16c",
-    "prompt_node": "181",
-    "prompt_field": "prompt",
-    "duration_node": "151",
-    "duration_field": "value",
-    "ref_image_nodes": [
-      "150",
-      "152",
-      "175",
-      "176",
-      "155",
-      "177",
-      "156",
-      "178",
-      "179"
-    ],
-    "ref_image_fields": [
-      "image",
-      "image",
-      "image",
-      "image",
-      "image",
-      "image",
-      "image",
-      "image",
-      "image"
-    ],
-    "ref_image_field": "image",
-    "aspect_ratio_node": "182",
-    "aspect_ratio_field": "aspect_ratio",
-    "aspect_ratio_options": [
-      "1:1 (Square)",
-      "2:3 (Portrait Photo)",
-      "3:2 (Photo)",
-      "3:4 (Portrait Standard)",
-      "4:3 (Standard)",
-      "9:16 (Portrait Widescreen)",
-      "16:9 (Widescreen)",
-      "21:9 (Ultrawide)"
-    ],
-    "aspect_ratio_default": "1:1 (Square)",
-    "steps_node": "",
-    "steps_field": "",
-    "final_output_node": "",
-    "default_duration": 15,
-    "max_duration": 15,
-    "app_default_instance_type": "",
-    "avg_running_seconds": null,
-    "source_url": "https://www.runninghub.cn/call-api/api-detail/2105189831335825409"
-  },
-  "app_712642": {
-    "label": "Minimax H3-自研1080p（精调高速版）",
-    "description": "用户添加：AI 应用",
-    "workflow_id": "2105189186809712642",
-    "source_kind": "ai-app",
-    "api_type": "ai-app",
-    "source_signature": "5222f77ac812fafb0314d491108dae24f62ae3ccee4bbfcf54dd7930affd36f6",
-    "prompt_node": "176",
-    "prompt_field": "prompt",
-    "duration_node": "151",
-    "duration_field": "value",
-    "ref_image_nodes": [
-      "150",
-      "152",
-      "155",
-      "156",
-      "178",
-      "179",
-      "180",
-      "181",
-      "182"
-    ],
-    "ref_image_fields": [
-      "image",
-      "image",
-      "image",
-      "image",
-      "image",
-      "image",
-      "image",
-      "image",
-      "image"
-    ],
-    "ref_image_field": "image",
-    "aspect_ratio_node": "177",
-    "aspect_ratio_field": "aspect_ratio",
-    "aspect_ratio_options": [
-      "1:1 (Square)",
-      "2:3 (Portrait Photo)",
-      "3:2 (Photo)",
-      "3:4 (Portrait Standard)",
-      "4:3 (Standard)",
-      "9:16 (Portrait Widescreen)",
-      "16:9 (Widescreen)",
-      "21:9 (Ultrawide)"
-    ],
-    "aspect_ratio_default": "1:1 (Square)",
-    "steps_node": "",
-    "steps_field": "",
-    "final_output_node": "",
-    "default_duration": 15,
-    "max_duration": 15,
-    "app_default_instance_type": "",
-    "avg_running_seconds": null,
-    "source_url": "https://www.runninghub.cn/call-api/api-detail/2105189186809712642"
-  },
-  "app_302274": {
-    "label": "Minimax H3-自研1080p-5+3（文字优化版）",
-    "description": "用户添加：AI 应用",
-    "workflow_id": "2105208023781302274",
-    "source_kind": "ai-app",
-    "api_type": "ai-app",
-    "source_signature": "3aab0157ae12505df77c4d178cf55db7e2b36985cb2263db13cd4f65a9570a48",
-    "prompt_node": "182",
-    "prompt_field": "prompt",
-    "duration_node": "151",
-    "duration_field": "value",
-    "ref_image_nodes": [
-      "150",
-      "173",
-      "152",
-      "175",
-      "176",
-      "155",
-      "177",
-      "178",
-      "179"
-    ],
-    "ref_image_fields": [
-      "image",
-      "image",
-      "image",
-      "image",
-      "image",
-      "image",
-      "image",
-      "image",
-      "image"
-    ],
-    "ref_image_field": "image",
-    "aspect_ratio_node": "180",
-    "aspect_ratio_field": "aspect_ratio",
-    "aspect_ratio_options": [
-      "1:1 (Square)",
-      "2:3 (Portrait Photo)",
-      "3:2 (Photo)",
-      "3:4 (Portrait Standard)",
-      "4:3 (Standard)",
-      "9:16 (Portrait Widescreen)",
-      "16:9 (Widescreen)",
-      "21:9 (Ultrawide)"
-    ],
-    "aspect_ratio_default": "1:1 (Square)",
-    "steps_node": "",
-    "steps_field": "",
-    "final_output_node": "",
-    "default_duration": 15,
-    "max_duration": 15,
-    "app_default_instance_type": "",
-    "avg_running_seconds": null,
-    "source_url": "https://www.runninghub.cn/call-api/api-detail/2105208023781302274"
-  },
-  "app_731458": {
-    "label": "H3_1024p_高速版_V1_仅INT8解码加速_九参考图",
-    "description": "用户添加：AI 应用",
-    "workflow_id": "2105289610627731458",
-    "source_kind": "ai-app",
-    "api_type": "ai-app",
-    "source_signature": "5222f77ac812fafb0314d491108dae24f62ae3ccee4bbfcf54dd7930affd36f6",
-    "prompt_node": "176",
-    "prompt_field": "prompt",
-    "duration_node": "151",
-    "duration_field": "value",
-    "ref_image_nodes": [
-      "150",
-      "152",
-      "155",
-      "156",
-      "178",
-      "179",
-      "180",
-      "181",
-      "182"
-    ],
-    "ref_image_fields": [
-      "image",
-      "image",
-      "image",
-      "image",
-      "image",
-      "image",
-      "image",
-      "image",
-      "image"
-    ],
-    "ref_image_field": "image",
-    "aspect_ratio_node": "177",
-    "aspect_ratio_field": "aspect_ratio",
-    "aspect_ratio_options": [
-      "1:1 (Square)",
-      "2:3 (Portrait Photo)",
-      "3:2 (Photo)",
-      "3:4 (Portrait Standard)",
-      "4:3 (Standard)",
-      "9:16 (Portrait Widescreen)",
-      "16:9 (Widescreen)",
-      "21:9 (Ultrawide)"
-    ],
-    "aspect_ratio_default": "1:1 (Square)",
-    "steps_node": "",
-    "steps_field": "",
-    "final_output_node": "",
-    "default_duration": 15,
-    "max_duration": 15,
-    "app_default_instance_type": "",
-    "avg_running_seconds": null,
-    "source_url": "https://www.runninghub.cn/call-api/api-detail/2105289610627731458"
+  "ai": {
+   "id": "ai",
+   "label": "RunningHub H3 国际站",
+   "channelType": "runninghub-h3-ai",
+   "baseUrl": "https://www.runninghub.ai",
+   "hosts": [
+    "www.runninghub.ai",
+    "runninghub.ai"
+   ]
   }
+ },
+ "aspectOptions": [
+  "1:1 (Square)",
+  "2:3 (Portrait Photo)",
+  "3:2 (Photo)",
+  "3:4 (Portrait Standard)",
+  "4:3 (Standard)",
+  "9:16 (Portrait Widescreen)",
+  "16:9 (Widescreen)",
+  "21:9 (Ultrawide)"
+ ],
+ "apps": {
+  "cn_1080p_hypervae": {
+   "site": "cn",
+   "applicationId": "2107825677151068161",
+   "label": "H3｜1080p 多参・二采12+4 HyperVAE",
+   "short": "1080P 二采12+4",
+   "note": "国内站 · 1080P 二采12+4 · 9 张参考图 · 默认 15 秒",
+   "prompt": {
+    "nodeId": "263",
+    "fieldName": "text"
+   },
+   "duration": {
+    "nodeId": "259",
+    "fieldName": "value",
+    "default": 15
+   },
+   "aspect": {
+    "nodeId": "252",
+    "fieldName": "aspect_ratio",
+    "default": "16:9 (Widescreen)",
+    "options": [
+     "1:1 (Square)",
+     "2:3 (Portrait Photo)",
+     "3:2 (Photo)",
+     "3:4 (Portrait Standard)",
+     "4:3 (Standard)",
+     "9:16 (Portrait Widescreen)",
+     "16:9 (Widescreen)",
+     "21:9 (Ultrawide)"
+    ]
+   },
+   "images": {
+    "fieldName": "image",
+    "nodes": [
+     "51",
+     "333",
+     "335",
+     "350",
+     "337",
+     "339",
+     "341",
+     "348",
+     "349"
+    ]
+   },
+   "finalOutputNode": "",
+   "sourceUrl": "https://www.runninghub.cn/call-api/api-detail/2107825677151068161?apiType=4"
+  },
+  "cn_1080p_int8": {
+   "site": "cn",
+   "applicationId": "2108112692224544769",
+   "label": "H3｜1080P 多参·INT8解码（原1024P）",
+   "short": "1024P",
+   "note": "国内站 · 1024P · 9 张参考图 · 默认 15 秒",
+   "prompt": {
+    "nodeId": "176",
+    "fieldName": "prompt"
+   },
+   "duration": {
+    "nodeId": "151",
+    "fieldName": "value",
+    "default": 15
+   },
+   "aspect": {
+    "nodeId": "177",
+    "fieldName": "aspect_ratio",
+    "default": "9:16 (Portrait Widescreen)",
+    "options": [
+     "1:1 (Square)",
+     "2:3 (Portrait Photo)",
+     "3:2 (Photo)",
+     "3:4 (Portrait Standard)",
+     "4:3 (Standard)",
+     "9:16 (Portrait Widescreen)",
+     "16:9 (Widescreen)",
+     "21:9 (Ultrawide)"
+    ]
+   },
+   "images": {
+    "fieldName": "image",
+    "nodes": [
+     "150",
+     "152",
+     "155",
+     "156",
+     "178",
+     "179",
+     "180",
+     "181",
+     "182"
+    ]
+   },
+   "finalOutputNode": "",
+   "sourceUrl": "https://www.runninghub.cn/call-api/api-detail/2108112692224544769?apiType=4"
+  },
+  "cn_720p_dual": {
+   "site": "cn",
+   "applicationId": "2107126425336766466",
+   "label": "H3｜720p 多参·双采加强（10+4）",
+   "short": "720P",
+   "note": "国内站 · 720P · 9 张参考图 · 默认 15 秒",
+   "prompt": {
+    "nodeId": "848",
+    "fieldName": "prompt"
+   },
+   "duration": {
+    "nodeId": "259",
+    "fieldName": "value",
+    "default": 15
+   },
+   "aspect": {
+    "nodeId": "252",
+    "fieldName": "aspect_ratio",
+    "default": "16:9 (Widescreen)",
+    "options": [
+     "1:1 (Square)",
+     "2:3 (Portrait Photo)",
+     "3:2 (Photo)",
+     "3:4 (Portrait Standard)",
+     "4:3 (Standard)",
+     "9:16 (Portrait Widescreen)",
+     "16:9 (Widescreen)",
+     "21:9 (Ultrawide)"
+    ]
+   },
+   "images": {
+    "fieldName": "image",
+    "nodes": [
+     "854",
+     "856",
+     "857",
+     "858",
+     "859",
+     "860",
+     "861",
+     "862",
+     "863"
+    ]
+   },
+   "finalOutputNode": "",
+   "sourceUrl": "https://www.runninghub.cn/call-api/api-detail/2107126425336766466?apiType=4"
+  },
+  "cn_736p_single": {
+   "site": "cn",
+   "applicationId": "2109183461906014210",
+   "label": "H3｜736P-无损融合单采",
+   "short": "736P",
+   "note": "国内站 · 736P · 9 张参考图 · 默认 15 秒",
+   "prompt": {
+    "nodeId": "248",
+    "fieldName": "text"
+   },
+   "duration": {
+    "nodeId": "227",
+    "fieldName": "value",
+    "default": 15
+   },
+   "aspect": {
+    "nodeId": "228",
+    "fieldName": "aspect_ratio",
+    "default": "16:9 (Widescreen)",
+    "options": [
+     "1:1 (Square)",
+     "2:3 (Portrait Photo)",
+     "3:2 (Photo)",
+     "3:4 (Portrait Standard)",
+     "4:3 (Standard)",
+     "9:16 (Portrait Widescreen)",
+     "16:9 (Widescreen)",
+     "21:9 (Ultrawide)"
+    ]
+   },
+   "images": {
+    "fieldName": "image",
+    "nodes": [
+     "199",
+     "188",
+     "189",
+     "190",
+     "191",
+     "192",
+     "243",
+     "244",
+     "245"
+    ]
+   },
+   "finalOutputNode": "",
+   "sourceUrl": "https://www.runninghub.cn/call-api/api-detail/2109183461906014210?apiType=4"
+  },
+  "cn_736p_48g": {
+   "site": "cn",
+   "applicationId": "2107451561470418946",
+   "label": "H3｜736p 多参·双阶段通用(48G限制)",
+   "short": "736P 48G提升画质",
+   "note": "国内站 · 736P 48G提升画质 · 9 张参考图 · 默认 15 秒",
+   "prompt": {
+    "nodeId": "28",
+    "fieldName": "prompt"
+   },
+   "duration": {
+    "nodeId": "27",
+    "fieldName": "value",
+    "default": 15
+   },
+   "aspect": {
+    "nodeId": "29",
+    "fieldName": "aspect_ratio",
+    "default": "16:9 (Widescreen)",
+    "options": [
+     "1:1 (Square)",
+     "2:3 (Portrait Photo)",
+     "3:2 (Photo)",
+     "3:4 (Portrait Standard)",
+     "4:3 (Standard)",
+     "9:16 (Portrait Widescreen)",
+     "16:9 (Widescreen)",
+     "21:9 (Ultrawide)"
+    ]
+   },
+   "images": {
+    "fieldName": "image",
+    "nodes": [
+     "66",
+     "58",
+     "65",
+     "59",
+     "60",
+     "61",
+     "62",
+     "63",
+     "64"
+    ]
+   },
+   "finalOutputNode": "",
+   "sourceUrl": "https://www.runninghub.cn/call-api/api-detail/2107451561470418946?apiType=4"
+  },
+  "cn_736p_action": {
+   "site": "cn",
+   "applicationId": "2112164973278482434",
+   "label": "H3 | 官流736P（武戏/特效）",
+   "short": "736P武戏",
+   "note": "国内站 · 736P武戏 · 9 张参考图 · 默认 15 秒",
+   "prompt": {
+    "nodeId": "197",
+    "fieldName": "text"
+   },
+   "duration": {
+    "nodeId": "132",
+    "fieldName": "value",
+    "default": 15
+   },
+   "aspect": {
+    "nodeId": "115",
+    "fieldName": "aspect_ratio",
+    "default": "16:9 (Widescreen)",
+    "options": [
+     "1:1 (Square)",
+     "2:3 (Portrait Photo)",
+     "3:2 (Photo)",
+     "3:4 (Portrait Standard)",
+     "4:3 (Standard)",
+     "9:16 (Portrait Widescreen)",
+     "16:9 (Widescreen)",
+     "21:9 (Ultrawide)"
+    ]
+   },
+   "images": {
+    "fieldName": "image",
+    "nodes": [
+     "186",
+     "187",
+     "188",
+     "189",
+     "190",
+     "191",
+     "192",
+     "193",
+     "194"
+    ]
+   },
+   "finalOutputNode": "",
+   "sourceUrl": "https://www.runninghub.cn/call-api/api-detail/2112164973278482434?apiType=4"
+  },
+  "ai_1080p_hypervae": {
+   "site": "ai",
+   "applicationId": "2108408815590051841",
+   "label": "H3｜1080p 多参・二采12+4 HyperVAE",
+   "short": "国际1080P",
+   "note": "国际站 · 国际1080P · 9 张参考图 · 默认 15 秒",
+   "prompt": {
+    "nodeId": "263",
+    "fieldName": "text"
+   },
+   "duration": {
+    "nodeId": "259",
+    "fieldName": "value",
+    "default": 15
+   },
+   "aspect": {
+    "nodeId": "252",
+    "fieldName": "aspect_ratio",
+    "default": "16:9 (Widescreen)",
+    "options": [
+     "1:1 (Square)",
+     "2:3 (Portrait Photo)",
+     "3:2 (Photo)",
+     "3:4 (Portrait Standard)",
+     "4:3 (Standard)",
+     "9:16 (Portrait Widescreen)",
+     "16:9 (Widescreen)",
+     "21:9 (Ultrawide)"
+    ]
+   },
+   "images": {
+    "fieldName": "image",
+    "nodes": [
+     "333",
+     "335",
+     "350",
+     "337",
+     "339",
+     "51",
+     "341",
+     "348",
+     "349"
+    ]
+   },
+   "finalOutputNode": "",
+   "sourceUrl": "https://www.runninghub.ai/zh-CN/call-api/api-detail/2108408815590051841?apiType=4"
+  },
+  "ai_720p_dual": {
+   "site": "ai",
+   "applicationId": "2108408924982960129",
+   "label": "H3｜720p 多参·双采加强（10+4）",
+   "short": "国际720P",
+   "note": "国际站 · 国际720P · 9 张参考图 · 默认 15 秒",
+   "prompt": {
+    "nodeId": "848",
+    "fieldName": "prompt"
+   },
+   "duration": {
+    "nodeId": "259",
+    "fieldName": "value",
+    "default": 15
+   },
+   "aspect": {
+    "nodeId": "252",
+    "fieldName": "aspect_ratio",
+    "default": "16:9 (Widescreen)",
+    "options": [
+     "1:1 (Square)",
+     "2:3 (Portrait Photo)",
+     "3:2 (Photo)",
+     "3:4 (Portrait Standard)",
+     "4:3 (Standard)",
+     "9:16 (Portrait Widescreen)",
+     "16:9 (Widescreen)",
+     "21:9 (Ultrawide)"
+    ]
+   },
+   "images": {
+    "fieldName": "image",
+    "nodes": [
+     "854",
+     "856",
+     "857",
+     "858",
+     "859",
+     "860",
+     "861",
+     "862",
+     "863"
+    ]
+   },
+   "finalOutputNode": "",
+   "sourceUrl": "https://www.runninghub.ai/zh-CN/call-api/api-detail/2108408924982960129?apiType=4"
+  },
+  "ai_736p_quality": {
+   "site": "ai",
+   "applicationId": "2113984372448813058",
+   "label": "H3｜736p 多参·（提高画质）_24G防爆版",
+   "short": "国际736P提升画质",
+   "note": "国际站 · 国际736P提升画质 · 9 张参考图 · 默认 15 秒",
+   "prompt": {
+    "nodeId": "28",
+    "fieldName": "prompt"
+   },
+   "duration": {
+    "nodeId": "27",
+    "fieldName": "value",
+    "default": 15
+   },
+   "aspect": {
+    "nodeId": "29",
+    "fieldName": "aspect_ratio",
+    "default": "16:9 (Widescreen)",
+    "options": [
+     "1:1 (Square)",
+     "2:3 (Portrait Photo)",
+     "3:2 (Photo)",
+     "3:4 (Portrait Standard)",
+     "4:3 (Standard)",
+     "9:16 (Portrait Widescreen)",
+     "16:9 (Widescreen)",
+     "21:9 (Ultrawide)"
+    ]
+   },
+   "images": {
+    "fieldName": "image",
+    "nodes": [
+     "66",
+     "65",
+     "58",
+     "59",
+     "60",
+     "61",
+     "62",
+     "63",
+     "64"
+    ]
+   },
+   "finalOutputNode": "",
+   "sourceUrl": "https://www.runninghub.ai/zh-CN/call-api/api-detail/2113984372448813058?apiType=4"
+  },
+  "ai_736p_action": {
+   "site": "ai",
+   "applicationId": "2112481800195305473",
+   "label": "H3 _ 官流736P（武戏_特效）",
+   "short": "国际736P武戏",
+   "note": "国际站 · 国际736P武戏 · 9 张参考图 · 默认 15 秒",
+   "prompt": {
+    "nodeId": "197",
+    "fieldName": "text"
+   },
+   "duration": {
+    "nodeId": "132",
+    "fieldName": "value",
+    "default": 15
+   },
+   "aspect": {
+    "nodeId": "115",
+    "fieldName": "aspect_ratio",
+    "default": "16:9 (Widescreen)",
+    "options": [
+     "1:1 (Square)",
+     "2:3 (Portrait Photo)",
+     "3:2 (Photo)",
+     "3:4 (Portrait Standard)",
+     "4:3 (Standard)",
+     "9:16 (Portrait Widescreen)",
+     "16:9 (Widescreen)",
+     "21:9 (Ultrawide)"
+    ]
+   },
+   "images": {
+    "fieldName": "image",
+    "nodes": [
+     "186",
+     "187",
+     "188",
+     "189",
+     "190",
+     "191",
+     "192",
+     "193",
+     "194"
+    ]
+   },
+   "finalOutputNode": "",
+   "sourceUrl": "https://www.runninghub.ai/zh-CN/call-api/api-detail/2112481800195305473?apiType=4"
+  }
+ }
 }

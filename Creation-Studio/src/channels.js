@@ -81,6 +81,16 @@ const TYPES = {
 
 const LABEL = { llm: '语言模型', image: '图像', video: '视频' };
 
+/** 密钥可能有多行（多账号），统一按行/逗号/分号拆分去重。 */
+function keyListOf(raw) {
+  const out = [];
+  for (const part of String(raw || '').split(/[\r\n,;]+/)) {
+    const key = part.replace(/^Bearer\s+/i, '').trim();
+    if (key && !out.includes(key)) out.push(key);
+  }
+  return out;
+}
+
 function typeMeta(kind, type) {
   return (TYPES[kind] || []).find((t) => t.id === type) || null;
 }
@@ -156,8 +166,12 @@ function list(kind, { includeSecrets = false } = {}) {
   return (cfg.channels[kind] || []).map((ch) => {
     const copy = { ...ch, options: { ...(ch.options || {}) } };
     if (!includeSecrets) {
-      copy.hasKey = !!copy.apiKey;
-      copy.masked = copy.apiKey ? copy.apiKey.slice(0, 4) + '…' + copy.apiKey.slice(-4) : '';
+      const keys = keyListOf(copy.apiKey);
+      copy.hasKey = keys.length > 0;
+      copy.keyCount = keys.length;
+      copy.masked = !keys.length ? '' : keys.length > 1
+        ? keys.length + ' 个账号 · ' + keys[0].slice(0, 4) + '…'
+        : keys[0].slice(0, 4) + '…' + keys[0].slice(-4);
       delete copy.apiKey;
     }
     return copy;
@@ -234,8 +248,9 @@ function update(kind, id, patch) {
   if (index < 0) throw new Error('渠道不存在');
   const merged = { ...current[index], ...patch, id, kind };
   if (patch.options) merged.options = { ...(current[index].options || {}), ...patch.options };
-  // Empty key means "keep the existing key" (UI never sees the secret).
-  if (!String(patch.apiKey || '').trim()) merged.apiKey = current[index].apiKey;
+  // Empty key means "keep the existing key" (UI never sees the secret); clearKey removes it on purpose.
+  if (patch.clearKey === true) merged.apiKey = '';
+  else if (!String(patch.apiKey || '').trim()) merged.apiKey = current[index].apiKey;
   // 停用就顺带取消默认，启用时可以再设为默认
   if (patch.enabled === false) merged.active = false;
   if (patch.active === true) for (const c of current) c.active = false;

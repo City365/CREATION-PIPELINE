@@ -1,15 +1,16 @@
-﻿'use strict';
+'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
 const channels = require('./channels');
 
 const videoPlugins=require('./video-plugins');
 
-const PROVIDER_LABEL = { autodl: 'AutoDL 官方H3', generic: '自定义', manager: '管理器' };
+const PROVIDER_LABEL = { autodl: 'AutoDL 官方H3', generic: '自定义', manager: '管理器', runninghub: 'RunningHub H3' };
 const PROVIDER_HINT = {
   autodl: 'AutoDL 官网 API · 只需 API Key，无需开机',
   generic: '自定义视频渠道 · 直接调你填写的接口',
   manager: '外接管理器 · 用 Chrome 账号跑豆包 / Gemini',
+  runninghub: 'RunningHub AI 应用 · 上传参考图后按节点映射提交',
 };
 
 const ASPECTS = [

@@ -1,7 +1,7 @@
 {
   "id": "runninghub-h3",
-  "name": "RunningHub H3 国内站",
-  "version": "1.0.0",
+  "name": "RunningHub H3",
+  "version": "1.3.0",
   "apiVersion": 1,
   "entry": "index.js",
   "provider": "runninghub",
@@ -9,7 +9,7 @@
     {
       "id": "runninghub-h3-cn",
       "label": "RunningHub H3 国内站",
-      "hint": "原生 JavaScript 接入；7 个国内 AI 应用，先上传参考图，再按节点映射提交。",
+      "hint": "runninghub.cn · 6 个 AI 应用。密钥可填多个账号（每行一个），并发按账号分别计算。",
       "fields": [
         {
           "key": "baseUrl",
@@ -19,8 +19,15 @@
         },
         {
           "key": "apiKey",
-          "label": "API Key",
-          "type": "password"
+          "label": "API Key（多账号每行一个）",
+          "type": "textarea",
+          "placeholder": "一个账号一个 Key，每行一个；留空就是没配密钥"
+        },
+        {
+          "key": "accountNames",
+          "label": "账号名（可选，每行一个）",
+          "type": "textarea",
+          "placeholder": "与上面密钥顺序对应，填 363 / 364 / 365 / 366 这类编号"
         },
         {
           "key": "instanceType",
@@ -34,9 +41,50 @@
         },
         {
           "key": "maxConcurrent",
-          "label": "并发任务数",
-          "default": "3",
-          "placeholder": "1–16，以账号实际额度为准"
+          "label": "每个账号并发",
+          "default": "1",
+          "placeholder": "1–8；总并发 = 账号数 × 该值"
+        }
+      ]
+    },
+    {
+      "id": "runninghub-h3-ai",
+      "label": "RunningHub H3 国际站",
+      "hint": "runninghub.ai · 4 个 AI 应用。多账号每行一个 Key，任务与账号绑定，查询与继续都用同一把。",
+      "fields": [
+        {
+          "key": "baseUrl",
+          "label": "接口地址",
+          "default": "https://www.runninghub.ai",
+          "required": true
+        },
+        {
+          "key": "apiKey",
+          "label": "API Key（多账号每行一个）",
+          "type": "textarea",
+          "placeholder": "一个账号一个 Key，每行一个；例如 4 个账号就贴 4 行"
+        },
+        {
+          "key": "accountNames",
+          "label": "账号名（可选，每行一个）",
+          "type": "textarea",
+          "placeholder": "与上面密钥顺序对应，填 363 / 364 / 365 / 366 这类编号"
+        },
+        {
+          "key": "instanceType",
+          "label": "实例类型",
+          "options": [
+            "default",
+            "plus",
+            "ultra"
+          ],
+          "default": "default"
+        },
+        {
+          "key": "maxConcurrent",
+          "label": "每个账号并发",
+          "default": "1",
+          "placeholder": "1–8；总并发 = 账号数 × 该值"
         }
       ]
     }

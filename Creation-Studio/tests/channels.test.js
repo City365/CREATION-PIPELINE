@@ -67,3 +67,25 @@ test('类型元数据包含三类渠道的字段', () => {
   assert.ok(generic.fields.some((f) => f.key === 'bodyTemplate'));
 });
 
+test('多账号密钥：列表显示账号数与首个前缀，清空需要显式 clearKey', () => {
+  const ch = channels.create('video', {
+    type: 'runninghub-h3-ai',
+    name: '国际站多账号',
+    baseUrl: 'https://www.runninghub.ai',
+    apiKey: 'aaaa1111\nbbbb2222\ncccc3333',
+  });
+  const listed = channels.list('video').find((c) => c.id === ch.id);
+  assert.equal(listed.hasKey, true);
+  assert.equal(listed.keyCount, 3);
+  assert.equal(listed.masked, '3 个账号 · aaaa…');
+  assert.equal(listed.apiKey, undefined);
+  channels.update('video', ch.id, { apiKey: '' });
+  assert.equal(channels.get('video', ch.id).apiKey, 'aaaa1111\nbbbb2222\ncccc3333');
+  channels.update('video', ch.id, { clearKey: true });
+  assert.equal(channels.get('video', ch.id).apiKey, '');
+  const after = channels.list('video').find((c) => c.id === ch.id);
+  assert.equal(after.hasKey, false);
+  assert.equal(after.masked, '');
+  channels.remove('video', ch.id);
+});
+

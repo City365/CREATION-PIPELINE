@@ -1,6 +1,6 @@
 # 视频渠道插件迁移验收
 
-迁移位置：Creation-Studio/plugins/video。包括 AutoDL 官方H3、管理器（豆包/Gemini）、通用视频接口三个插件包。
+迁移位置：Creation-Studio/plugins/video。包括 AutoDL 官方H3、管理器（豆包/Gemini）、通用视频接口、RunningHub H3（国内站 + 国际站）四个插件包。
 
 核心通过 src/video-plugins.js 扫描包、注册设置类型、派生模型与资源槽、分发执行/测试/取消/继续。旧 src/manager-video.js 与 src/generic-video.js 保留兼容导出；providers.js 的 AutoDL 方法兼容导出到插件协议实现；旧 src/workflows.json 已移入 autodl-h3/workflows.json。
 
