@@ -1340,7 +1340,6 @@ html[data-theme="studio-mint"] .toast { box-shadow: 0 10px 26px rgba(32, 26, 70,
 .ask-perm.is-full { color:#c9762a; border-color:color-mix(in oklch, #c9762a 55%, var(--ask-line)); background:color-mix(in oklch, #c9762a 10%, var(--wmd-bg-0)); }
 .ask-perm-pop button b { min-width:96px; }
 .ask-perm-note { margin:6px 8px 2px; padding-top:6px; border-top:1px solid var(--ask-line); font-size:10px; line-height:1.6; color:var(--ask-muted); }
-.ask-perm-hint { margin-left:10px; opacity:.8; }
 .ask-perm-warn { margin-left:10px; color:var(--wmd-danger); }
 
 /* 命令 / 提及浮层 */

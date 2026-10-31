@@ -6585,7 +6585,7 @@ function askComposerHtml() {
           : `<button type="button" class="ask-send" data-act="ask-send" ${a.draft.trim() ? '' : 'disabled'}>发送 ↑</button>`}
       </div>
     </div>
-    <div class="ask-hint">Enter 发送 · Shift+Enter 换行 · / 命令 · @ 视角<span class="ask-perm-hint">${esc(askPermission(a.permission).desc)}</span>${a.toolsSupported === false ? '<span class="ask-perm-warn">⚠ 当前模型渠道不支持工具调用，文件与命令操作不会执行：把模型切到 deepseek-flash 或 gemini-3.8-flash</span>' : ''}</div>
+    ${a.toolsSupported === false ? '<div class="ask-hint"><span class="ask-perm-warn">⚠ 当前模型渠道不支持工具调用，文件与命令操作不会执行：把模型切到 deepseek-flash 或 gemini-3.8-flash</span></div>' : ''}
   </div>`;
 }
 
