@@ -4898,6 +4898,7 @@ async function askRestore() {
     if (state.route === 'script') askRenderAll();
     askRemember();
     askLoadActiveRuns();
+    askLoadProjectHistory().catch(() => {});
   }
 }
 
@@ -5044,6 +5045,8 @@ function askResetForProject() {
   a.error = '';
   a.trajectory = null;
   a.rename = { open: false, id: '', text: '' };
+  a.projectHistory = null;
+  a.projectHistoryAt = 0;
 }
 
 function askSelect(id) {
@@ -6762,8 +6765,7 @@ function askHeaderMenuHtml(chat) {
     '<button role="menuitem" data-act="ask-pin" data-id="'+id+'">'+(chat.pinned?'取消置顶':'置顶')+'</button><hr>'+
     '<button role="menuitem" data-act="ask-new">新建对话</button>'+
     '<button role="menuitem" data-act="ask-copy-conversation">复制对话文本</button>'+
-    '<button role="menuitem" data-act="ask-export">导出对话</button><hr>'+
-    '<button role="menuitem" data-act="ask-folder-move" data-id="'+id+'">移动到分组</button></div>';
+    '<button role="menuitem" data-act="ask-export">导出对话</button></div>';
 }
 async function askLoadSummaryFiles() {
   const a=askState(),project=askProjectId(),sid=a.activeId;
@@ -6936,15 +6938,18 @@ function askManageHtml() {
 function askHistoryHtml() {
   const a = askState();
   const search = (a.search || '').toLowerCase();
-  const filtered = (a.conversations || [])
-    .filter((c) => (c.id === a.activeId || (c.messages || []).length))
-    .filter((c) => (c.title + ' ' + (c.messages || []).map((m) => m.text).join(' ')).toLowerCase().includes(search))
-    .sort((x, y) => (y.updated || 0) - (x.updated || 0));
-  const folders = state.config.ui.conversationFolders || [];
-  const assignments = state.config.ui.conversationFolderMap || {};
-  const groups = folders.map((folder) => ({ id: folder.id, label: folder.name, items: filtered.filter((c) => assignments[c.id] === folder.id) }));
-  groups.push({ id: '', label: '未归类对话', items: filtered.filter((c) => !folders.some((folder) => folder.id === assignments[c.id])) });
-  for (const group of groups) group.items.sort((x, y) => Number(!!y.pinned) - Number(!!x.pinned) || (y.updated || 0) - (x.updated || 0));
+  const matches = (c) => (c.id === a.activeId || (c.messages || []).length)
+    && (c.title + ' ' + (c.messages || []).map((m) => m.text).join(' ')).toLowerCase().includes(search);
+  // 对话本来就按项目存在工作区里：直接按项目列，不再有本地「分组」这一层
+  const rows = (a.projectHistory && a.projectHistory.length)
+    ? a.projectHistory
+    : [{ id: askProjectId(), name: state.project?.name || '当前项目', items: a.conversations || [] }];
+  const groups = rows.map((row) => ({
+    id: row.id,
+    label: row.name,
+    error: row.error || '',
+    items: (row.items || []).filter(matches).sort((x, y) => Number(!!y.pinned) - Number(!!x.pinned) || (y.updated || 0) - (x.updated || 0)),
+  }));
   return `<aside class="ask-history ${a.historyOpen ? 'is-open' : ''}">
       <div class="ask-pane-heading">
         <span class="ask-pane-logo">Y9</span>
@@ -6958,11 +6963,10 @@ function askHistoryHtml() {
       </nav>
       <div class="ask-sidebar-conversations">
         <button type="button" class="ask-new-chat" data-act="ask-new">＋ 新建对话</button>
-        <button type="button" class="ask-new-chat ask-new-project" data-act="ask-folder-create">＋ 新建分组</button>
         <div class="ask-history-search"><span>⌕</span><input id="ask-search" placeholder="搜索对话历史" value="${esc(a.search)}" /></div>
         <div class="ask-history-list">
-          ${groups.map((g) => ((g.id || g.items.length) ? `<div class="ask-folder-heading"><button type="button" class="ask-folder-toggle" data-act="ask-folder-toggle" data-id="${esc(g.id)}" aria-expanded="${!a.collapsedFolders?.[g.id]}" title="${esc(g.label)}">${a.collapsedFolders?.[g.id] ? '▸' : '▾'} <span>${esc(g.label)}</span><small>${g.items.length}</small></button>${g.id ? `<button type="button" class="ask-folder-action" data-act="ask-folder-new" data-id="${esc(g.id)}" title="在此项目新建对话">＋</button><button type="button" class="ask-folder-action" data-act="ask-folder-rename" data-id="${esc(g.id)}" title="重命名项目">✎</button>` : ''}</div>${(!a.collapsedFolders?.[g.id] || search ? g.items : []).map((c) => `<div class="ask-history-item ${c.id === a.activeId ? 'is-on' : ''} ${askRunOf(c.id) ? 'is-running' : ''}" data-id="${esc(c.id)}">
-            <button type="button" class="ask-history-main" data-act="ask-open" data-id="${esc(c.id)}">
+          ${groups.map((g) => (g.items.length || g.id === askProjectId() ? `<div class="ask-folder-heading"><button type="button" class="ask-folder-toggle" data-act="ask-folder-toggle" data-id="${esc(g.id)}" aria-expanded="${!a.collapsedFolders?.[g.id]}" title="${esc(g.label)}">${a.collapsedFolders?.[g.id] ? '▸' : '▾'} <span>${esc(g.label)}</span><small>${g.items.length}</small>${g.id === askProjectId() ? '<em class="ask-folder-now">当前</em>' : ''}</button><button type="button" class="ask-folder-action" data-act="ask-project-new-chat" data-id="${esc(g.id)}" title="在这个项目里新建对话">＋</button></div>${g.error ? `<p class="ask-empty-history">${esc(g.error)}</p>` : ''}${(!a.collapsedFolders?.[g.id] || search ? g.items : []).map((c) => `<div class="ask-history-item ${c.id === a.activeId ? 'is-on' : ''} ${askRunOf(c.id) ? 'is-running' : ''}" data-id="${esc(c.id)}">
+            <button type="button" class="ask-history-main" data-act="ask-open" data-id="${esc(c.id)}" data-project="${esc(g.id)}">
               ${(() => {
                 const running = !!askRunOf(c.id);
                 const flag = running ? 'is-running' : '';
@@ -6972,12 +6976,66 @@ function askHistoryHtml() {
             </button>
             <button type="button" class="ask-history-more" data-act="ask-more" data-id="${esc(c.id)}" title="管理对话">⋯</button>
           </div>`).join('')}` : '')).join('')}
-          ${filtered.length ? '' : '<p class="ask-empty-history">没有匹配的对话</p>'}
+          ${groups.some((g) => g.items.length) ? '' : '<p class="ask-empty-history">还没有对话：选个项目，点「＋ 新建对话」开工</p>'}
         </div>
         ${a.removed ? `<div class="ask-undo">已删除一个对话<button type="button" data-act="ask-undo">撤销</button></div>` : ''}
       </div>
-      <div class="ask-history-foot"><span>▤ 对话按项目保存在服务端</span><span class="ask-dot"></span></div>
+      <div class="ask-history-foot"><span>▤ 对话按项目保存：切换项目即切换历史</span><span class="ask-dot"></span></div>
     </aside>`;
+}
+
+/* ------------------- 对话历史按项目分组（项目就是唯一的分组） ------------------- */
+// 把每个项目的会话都读出来，侧栏按项目列；点别的项目里的对话 = 切项目 + 打开它。
+async function askLoadProjectHistory(force = false) {
+  const a = askState();
+  const projects = state.projects || [];
+  if (!projects.length) return;
+  const now = Date.now();
+  if (!force && a.projectHistoryAt && now - a.projectHistoryAt < 10000) return;
+  a.projectHistoryAt = now;
+  const current = askProjectId();
+  a.projectHistory = projects.map((project) => {
+    const cached = (a.projectHistory || []).find((row) => row.id === project.id);
+    return { id: project.id, name: project.name,
+      items: project.id === current ? (a.conversations || []) : ((cached && cached.items) || []) };
+  });
+  if (state.route === 'script') askRenderAll();
+  for (const project of projects) {
+    if (project.id === current) continue;
+    try {
+      const list = await askApi('/sessions', { headers: { 'X-Project-Id': project.id } }).then((r) => r.json());
+      const row = (a.projectHistory || []).find((x) => x.id === project.id);
+      if (row) { row.items = Array.isArray(list) ? list : []; row.error = ''; }
+    } catch (err) {
+      const row = (a.projectHistory || []).find((x) => x.id === project.id);
+      if (row) row.error = '读取失败：' + err.message;
+    }
+    if (state.route === 'script') askRenderAll();
+  }
+}
+
+async function askOpenProjectConversation(projectId, convId) {
+  const a = askState();
+  if (projectId && projectId !== askProjectId()) {
+    if (!(state.projects || []).some((p) => p.id === projectId)) return toast('项目不存在或已删除', true);
+    await setActiveProject(projectId);
+    await askRestore();
+    askLoadProjectHistory(true).catch(() => {});
+  }
+  if (!(a.conversations || []).some((c) => c.id === convId)) return toast('这个对话已不在该项目里，可能已被删除', true);
+  return askSelect(convId);
+}
+
+async function askNewChatInProject(projectId) {
+  if (projectId && projectId !== askProjectId()) {
+    if (!(state.projects || []).some((p) => p.id === projectId)) return toast('项目不存在或已删除', true);
+    await setActiveProject(projectId);
+    await askRestore();
+    askLoadProjectHistory(true).catch(() => {});
+  }
+  const a = askState();
+  a.collapsedFolders = { ...(a.collapsedFolders || {}), [askProjectId()]: false };
+  return askNewConversation();
 }
 
 function askFilePaneHtml(embedded = false) {
@@ -7059,7 +7117,6 @@ function renderScript() {
   }
   if (a.workspacePage !== 'console') return `<div class="ask-app">${askHistoryHtml()}<section class="ask-chat" style="padding:0">${askManageHtml()}</section>
     ${a.installSkill ? askInstallSkillHtml() : ''}
-    ${a.folderDialog ? askFolderDialogHtml() : ''}
   </div>`;
 
   const active = askActive();
@@ -7109,7 +7166,6 @@ function renderScript() {
     ${a.capabilitiesOpen ? askCapabilityHtml() : ''}
     ${a.summaryOpen ? askSummaryHtml(chat) : ''}
     ${a.rename.open ? askRenameModalHtml() : ''}
-    ${a.folderDialog ? askFolderDialogHtml() : ''}
     ${a.installSkill ? askInstallSkillHtml() : ''}
     ${a.toolDetail ? askToolModalHtml() : ''}
     ${a.moreMenu ? askMoreMenuHtml() : ''}
@@ -7497,41 +7553,6 @@ async function askSaveInstallSkill() {
   }
 }
 
-function askFolderDialogHtml() {
-  const dialog = askState().folderDialog;
-  const folders = state.config.ui.conversationFolders || [];
-  const move = dialog.mode === 'move';
-  const selected = (state.config.ui.conversationFolderMap || {})[dialog.id] || '';
-  return `<div class="ask-modal-backdrop"><div class="ask-modal" role="dialog" aria-modal="true" aria-label="${move ? '移入项目' : dialog.id ? '重命名项目' : '新建项目'}">
-    <div class="ask-modal-head"><b>${move ? '移入项目' : dialog.id ? '重命名项目' : '新建项目'}</b><button type="button" data-act="ask-folder-cancel" aria-label="关闭">×</button></div>
-    <div class="ask-modal-body">${move ? `<label for="ask-folder-select">选择项目</label><select class="ask-input is-line" id="ask-folder-select"><option value="">未归类</option>${folders.map((folder) => `<option value="${esc(folder.id)}" ${folder.id === selected ? 'selected' : ''}>${esc(folder.name)}</option>`).join('')}</select>${folders.length ? '' : '<p>还没有项目，请先点击左侧“新建项目”。</p>'}` : `<label for="ask-folder-name">项目名称</label><input class="ask-input is-line" id="ask-folder-name" maxlength="40" placeholder="例如：校园短剧、小说改编" value="${esc(dialog.name || '')}" />`}</div>
-    <div class="ask-modal-foot"><button class="ask-btn" type="button" data-act="ask-folder-cancel">取消</button><button class="ask-btn is-primary" type="button" data-act="ask-folder-save">保存</button></div>
-  </div></div>`;
-}
-
-async function askSaveFolder() {
-  const a = askState();
-  const dialog = a.folderDialog;
-  if (!dialog || dialog.saving) return;
-  dialog.saving = true;
-  try {
-    if (dialog.mode === 'move') {
-      const id = $('#ask-folder-select').value;
-      await saveAppearance({ conversationFolderMap: { ...(state.config.ui.conversationFolderMap || {}), [dialog.id]: id } });
-    } else {
-      const name = $('#ask-folder-name').value.trim();
-      if (!name) throw new Error('请填写项目名称');
-      const folders = state.config.ui.conversationFolders || [];
-      if (folders.some((folder) => folder.name === name && folder.id !== dialog.id)) throw new Error('已有同名项目，请换一个名称');
-      const next = dialog.id ? folders.map((folder) => folder.id === dialog.id ? { ...folder, name } : folder) : [...folders, { id: 'folder-' + askId(), name }];
-      await saveAppearance({ conversationFolders: next });
-    }
-    a.folderDialog = null;
-    askRenderAll();
-  } catch (err) { toast(err.message, true); }
-  finally { dialog.saving = false; }
-}
-
 function askMoreMenuHtml() {
   const a = askState();
   const c = (a.conversations || []).find((x) => x.id === a.moreMenu);
@@ -7539,7 +7560,6 @@ function askMoreMenuHtml() {
   return `<div class="ask-more-menu" role="menu" aria-label="管理对话：${esc(c.title || '新的创作对话')}" style="visibility:hidden">
     <button type="button" data-act="ask-pin" data-id="${esc(c.id)}">${c.pinned ? '取消置顶' : '置顶对话'}</button>
     <button type="button" data-act="ask-rename" data-id="${esc(c.id)}">重命名</button>
-    <button type="button" data-act="ask-folder-move" data-id="${esc(c.id)}">移入项目</button>
     <button type="button" class="is-danger" data-act="ask-delete" data-id="${esc(c.id)}">删除对话</button>
   </div>`;
 }
@@ -8558,11 +8578,6 @@ function bindAsk(root) {
     renameInput.onkeydown = (event) => { if (event.key === 'Enter') askSaveRename(); };
     renameInput.focus();
   }
-  const folderName = $('#ask-folder-name');
-  if (folderName) {
-    folderName.focus();
-    folderName.onkeydown = (event) => { if (event.key === 'Enter') { event.preventDefault(); askSaveFolder(); } };
-  }
 
   if (a._askClick) root.removeEventListener('click', a._askClick);
   const askClick = async (event) => {
@@ -8753,30 +8768,12 @@ function bindAsk(root) {
       }
       if (act === 'ask-new') return askNewConversation();
       if (act === 'ask-clear-skill') { a.skillId = ''; return askRenderAll(); }
-      if (act === 'ask-folder-create' || act === 'ask-folder-rename') {
-        const folder = (state.config.ui.conversationFolders || []).find((item) => item.id === btn.dataset.id);
-        a.workspacePage = 'console';
-        a.folderDialog = { mode: 'name', id: folder?.id || '', name: folder?.name || '' };
-        return askRenderAll();
-      }
-      if (act === 'ask-folder-cancel') { a.folderDialog = null; return askRenderAll(); }
-      if (act === 'ask-folder-save') return askSaveFolder();
       if (act === 'ask-folder-toggle') {
         a.collapsedFolders = { ...(a.collapsedFolders || {}), [btn.dataset.id]: !a.collapsedFolders?.[btn.dataset.id] };
         return askRenderAll();
       }
-      if (act === 'ask-folder-new') {
-        const conversation = askNewConversation();
-        await saveAppearance({ conversationFolderMap: { ...(state.config.ui.conversationFolderMap || {}), [conversation.id]: btn.dataset.id } });
-        a.collapsedFolders = { ...(a.collapsedFolders || {}), [btn.dataset.id]: false };
-        return askRenderAll();
-      }
-      if (act === 'ask-folder-move') {
-        a.folderDialog = { mode: 'move', id: btn.dataset.id };
-        a.moreMenu = null;
-        return askRenderAll();
-      }
-      if (act === 'ask-open') { a.moreMenu = null; return askSelect(btn.dataset.id); }
+      if (act === 'ask-project-new-chat') return askNewChatInProject(btn.dataset.id);
+      if (act === 'ask-open') { a.moreMenu = null; return askOpenProjectConversation(btn.dataset.project, btn.dataset.id); }
       if (act === 'ask-more') { a.moreMenu = a.moreMenu === btn.dataset.id ? null : btn.dataset.id; return askRenderAll(); }
       if (act === 'ask-more-close') { if (!event.target.closest('.ask-more-menu')) { a.moreMenu = null; askRenderAll(); } return; }
       if (act === 'ask-pin') {
