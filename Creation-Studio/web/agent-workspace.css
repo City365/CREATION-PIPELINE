@@ -109,3 +109,10 @@
 .ask-ctx-tool-list span { white-space:nowrap; }
 .ask-summary dt { white-space:nowrap; }
 .ask-summary dd { max-width:190px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+/* 环境：三行（本机 / 项目文件夹 / git 分支），图标 + 文本，像参考那样一行一件事 */
+.ask-env-row { display:flex; align-items:center; gap:9px; padding:5px 0; font-size:12px; min-width:0; }
+.ask-env-ico { flex:none; width:16px; height:16px; display:inline-flex; align-items:center; justify-content:center; color:var(--wmd-text-3,#8993a0); }
+.ask-env-ico svg { width:15px; height:15px; }
+.ask-env-text { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--wmd-text,#1f2328); }
+.ask-env-text.is-muted { color:var(--wmd-text-3,#8993a0); }

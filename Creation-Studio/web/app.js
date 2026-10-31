@@ -6818,33 +6818,37 @@ function askContextBlockHtml(chat, stats) {
     <small class="ask-summary-hint">估算口径：ASCII 4 字符≈1 token、中文 1.5 字符≈1 token；Autocompact buffer 是给输出与压缩预留的 15%。</small>`;
 }
 
-// 环境里的路径只显示尾部两段，完整路径放 title
-function askShortPath(value) {
-  const full = String(value || '').replace(/[\\/]+/g, '\\');
-  if (!full) return '未绑定目录';
-  const parts = full.split('\\').filter(Boolean);
-  if (parts.length <= 2) return full;
-  return '…\\' + parts.slice(-2).join('\\');
+
+// 项目所在文件夹的名字（不同项目不同）：D:\…\我的同桌测试-643a02 → 我的同桌测试-643a02
+function askFolderName(value) {
+  const parts = String(value || '').replace(/[\\/]+/g, '\\').split('\\').filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : '';
+}
+
+// 环境三行：本机 / 项目文件夹 / git 分支（分支还没有 git 逻辑，先如实显示 null）
+function askEnvironmentHtml() {
+  const folder = askFolderName(state.project?.dir) || state.project?.name || askProjectId();
+  const branch = state.project?.branch ?? 'null';
+  const icon = (name) => ({
+    computer: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>',
+    folder: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>',
+    branch: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="6" cy="6" r="2.2"/><circle cx="6" cy="18" r="2.2"/><circle cx="18" cy="9" r="2.2"/><path d="M6 8.2v7.6M18 11.2c0 3.4-3 4.6-6 4.6"/></svg>',
+  }[name] || '');
+  return `<div class="ask-env-row"><span class="ask-env-ico">${icon('computer')}</span><span class="ask-env-text">This Computer</span></div>`
+    + `<div class="ask-env-row"><span class="ask-env-ico">${icon('folder')}</span><span class="ask-env-text" title="${esc(state.project?.dir || '')}">${esc(folder)}</span></div>`
+    + `<div class="ask-env-row"><span class="ask-env-ico">${icon('branch')}</span><span class="ask-env-text is-muted">${esc(branch)}</span></div>`;
 }
 
 function askSummaryHtml(chat) {
   const a=askState(),stats=askContextStats();
   const indexed=a.summaryFiles?.project===askProjectId()&&a.summaryFiles?.sid===a.activeId?a.summaryFiles:null;
   const files=indexed?indexed.items.map(file=>({type:'artifact',file})):askSessionFiles(chat);
-  const latest=[...(chat.messages||[])].reverse().find(m=>m.execution)?.execution;
-  const selected=(a.models||[]).find(m=>m.id===a.modelId);
   const outputs=files.length?files.slice(-10).map(f=>f.type==='artifact'
     ?'<button class="ask-summary-file" data-act="ask-preview" data-id="'+esc(f.file.id)+'">'+esc(f.file.name)+'</button>'
     :'<button class="ask-summary-file" data-act="ask-open-media" data-index="'+f.mi+'" data-media="'+f.fi+'">'+esc(f.name)+'</button>').join('')
     :'<p>暂无已交付文件</p>';
   return '<aside class="ask-summary" aria-label="Summary"><header><b>Summary</b><button class="ask-icon-btn" data-act="ask-summary" aria-label="关闭摘要">×</button></header>'+
-    '<details open class="ask-summary-sec"><summary>Environment</summary><dl>'+
-      '<dt>Workspace</dt><dd>此计算机</dd>'+
-      '<dt>Project</dt><dd>'+esc(state.project?.name||askProjectId())+'</dd>'+
-      '<dt>Path</dt><dd title="'+esc(state.project?.dir||'')+'">'+esc(askShortPath(state.project?.dir))+'</dd>'+
-      '<dt>Model</dt><dd>'+esc(selected?.label||latest?.model||'默认模型')+'</dd>'+
-      '<dt>Permission</dt><dd>'+esc(askPermission(a.permission).label)+'</dd>'+
-    '</dl></details>'+
+    '<details open class="ask-summary-sec"><summary>Environment</summary>'+askEnvironmentHtml()+'</details>'+
     '<details open class="ask-summary-sec"><summary>Context</summary>'+askContextBlockHtml(chat,stats)+'</details>'+
     '<details open class="ask-summary-sec"><summary>Connectors</summary><p>Local tools · '+(a.toolsSupported===false?'当前模型不支持工具调用':'工具调用可用')+'</p><p>Skill · '+esc(a.skillId?askSkill(a.skillId).name:'未选择')+'</p></details>'+
     '<details open class="ask-summary-sec"><summary>Outputs</summary>'+outputs+((indexed?.total||files.length)>10?'<small>展示最近 10 项，全部文件可在工作区查看。</small>':'')+'</details>'+

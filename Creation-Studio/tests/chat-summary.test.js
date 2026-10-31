@@ -13,6 +13,8 @@ assert.ok(start > 0 && end > start, '在 app.js 里找不到上下文分项渲�
 const box = {};
 new Function('module', 'exports', `
 const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const state = { project: { name: '我的同桌测试', dir: 'D:\\\\notebook\\\\AIGC\\\\WENYUN.M-DESKTOP-Projects\\\\我的同桌测试-643a02' } };
+const askProjectId = () => 'proj-b1a9643a02';
 const askFmtTokens = (value) => {
   const n = Math.max(0, Math.round(Number(value) || 0));
   if (n >= 1000000) return (n / 1000000).toFixed(n % 1000000 ? 1 : 0) + 'm';
@@ -20,10 +22,10 @@ const askFmtTokens = (value) => {
   return String(n);
 };
 ${source.slice(start, end)}
-module.exports = { askContextReport, askContextBlockHtml, askShortPath };
+module.exports = { askContextReport, askContextBlockHtml, askEnvironmentHtml, askFolderName };
 `)(box, box.exports);
 
-const { askContextReport, askContextBlockHtml, askShortPath } = box.exports;
+const { askContextReport, askContextBlockHtml, askEnvironmentHtml, askFolderName } = box.exports;
 
 const REPORT = {
   schema_version: 'context-report/1',
@@ -91,8 +93,17 @@ test('工具清单可以点开看具体工具名（对应参考里的 MCP tools 
   assert.match(html, /<span>run_command<\/span>/);
 });
 
-test('环境里的路径只显示尾部两段，完整路径留给 title', () => {
-  assert.equal(askShortPath('D:\\notebook\\AIGC\\WENYUN.M-DESKTOP-Projects\\我的同桌测试-643a02'), '…\\WENYUN.M-DESKTOP-Projects\\我的同桌测试-643a02');
-  assert.equal(askShortPath('D:\\x'), 'D:\\x');
-  assert.equal(askShortPath(''), '未绑定目录');
+test('环境只有三行：本机 / 项目文件夹 / git 分支（没有 git 逻辑就显示 null）', () => {
+  const html = askEnvironmentHtml();
+  assert.match(html, /This Computer/);
+  assert.match(html, /我的同桌测试-643a02/);
+  assert.match(html, />null</);
+  assert.equal((html.match(/ask-env-row/g) || []).length, 3);
+  assert.doesNotMatch(html, /Workspace|Project<|Path<|Model|Permission/);
+});
+
+test('项目文件夹名取目录最后一段，不同项目不同', () => {
+  assert.equal(askFolderName('D:\\notebook\\AIGC\\WENYUN.M-DESKTOP-Projects\\我的同桌测试-643a02'), '我的同桌测试-643a02');
+  assert.equal(askFolderName('D:\\x\\骨灯短剧'), '骨灯短剧');
+  assert.equal(askFolderName(''), '');
 });
