@@ -1337,6 +1337,20 @@ function studioStageSignature() {
   return own.map((j) => j.id + ':' + j.status).join('|') + '#' + stageId;
 }
 
+// 出片之后舞台要把 <video> 换上去；只换 .stage-video 这一块，
+// 否则用户正在文本框里打字时（我们不敢整页重画）成片永远不出现
+function studioStageMediaPatch() {
+  if (state.route !== 'studio') return false;
+  const last = studioStageJob();
+  if (!last) return false;
+  const video = [...(last.outputs || [])].reverse().find((o) => o.type === 'video');
+  if (!video) return false;
+  const box = document.querySelector('#studio-stage .stage-video');
+  if (!box || box.querySelector('video')) return false;
+  box.innerHTML = `<video src="/api/file?path=${enc(video.path)}" controls playsinline></video>`;
+  return true;
+}
+
 function studioLivePatch() {
   if (state.route !== 'studio') return false;
   const stage = document.getElementById('studio-stage');
@@ -10683,14 +10697,22 @@ function connectEvents() {
         const typing = active && (active.id === 'prompt-editor' || active.tagName === 'TEXTAREA' || active.tagName === 'INPUT');
         if (state.route === 'studio') {
           // 进度事件只打局部补丁；整页重画就是“屏幕一直闪”的原因
-          const signature = studioStageSignature();
-          if (!typing && signature !== studioSignatureCache) {
-            studioSignatureCache = signature;
-            render();
-          } else {
-            studioLivePatch();
-            updateStatus();
-          }
+          const terminal = job.status === 'success' || job.status === 'failed' || job.status === 'canceled';
+          const applyStudio = async () => {
+            // 出片的那一刻以服务端为准再取一次，确保 outputs 已经在手上
+            if (terminal) { try { await refreshJobs(); } catch { /* ignore */ } }
+            const signature = studioStageSignature();
+            if (!typing && signature !== studioSignatureCache) {
+              studioSignatureCache = signature;
+              render();
+            } else {
+              // 正在打字时不敢整页重画，但成片必须立刻露出来
+              studioStageMediaPatch();
+              studioLivePatch();
+              updateStatus();
+            }
+          };
+          applyStudio();
           return;
         }
         if (state.route === 'jobs' || state.route === 'logs') render();

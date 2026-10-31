@@ -18,6 +18,7 @@ const state = { get jobs() { return STATE.jobs; }, get lastJobId() { return STAT
 let ITEM = 'item-1';
 const WB = { context: () => ({ itemId: ITEM }) };
 const STATUS_LABEL = { queued: '排队中', running: '生成中', success: '完成', failed: '失败', canceled: '已取消' };
+const enc = (value) => encodeURIComponent(String(value));
 function makeNode(props) {
   const node = Object.assign({ style: {}, textContent: '', className: '' }, props);
   node.querySelectorAll = node.querySelectorAll || (() => []);
@@ -25,10 +26,21 @@ function makeNode(props) {
   return node;
 }
 let DOM = {};
-const document = { getElementById: (id) => DOM[id] || null };
+const document = {
+  getElementById: (id) => DOM[id] || null,
+  // 不用正则：模板字符串会把 \w / \s 吃掉，这里按空格拆选择器
+  querySelector: (selector) => {
+    const parts = String(selector).split(' ');
+    if (parts.length === 2 && parts[0].startsWith('#') && DOM[parts[0].slice(1)]) {
+      return DOM[parts[0].slice(1)].querySelector(parts[1]);
+    }
+    return null;
+  },
+  createElement: () => makeNode({}),
+};
 ${source.slice(start, end)}
 module.exports = {
-  studioOwnJobs, studioStageJob, studioStageSignature, studioLivePatch,
+  studioOwnJobs, studioStageJob, studioStageSignature, studioLivePatch, studioStageMediaPatch,
   setState: (patch) => {
     STATE = Object.assign({}, STATE, patch);
     ITEM = patch.itemId || ITEM;
@@ -38,7 +50,7 @@ module.exports = {
 };
 `)(sandbox, sandbox.exports);
 
-const { studioStageJob, studioStageSignature, studioLivePatch, setState, setDom, makeNode } = sandbox.exports;
+const { studioStageJob, studioStageSignature, studioLivePatch, studioStageMediaPatch, setState, setDom, makeNode } = sandbox.exports;
 
 const job = (id, status, progress, extra = {}) => ({ id, status, progress, itemId: 'item-1', createdAt: progress, outputs: [], ...extra });
 
@@ -105,3 +117,41 @@ test('舞台容器用 display:contents 包住，布局不变', () => {
   const css = fs.readFileSync(path.join(__dirname, '../web/styles.css'), 'utf8');
   assert.match(css, /#studio-stage, #studio-queue \{ display: contents; \}/);
 });
+
+test('打补丁的路径也要把成片换成 <video>（用户在打字时不敢整页重画）', () => {
+  const box = makeNode({});
+  let html = '';
+  Object.defineProperty(box, 'innerHTML', { get: () => html, set: (v) => { html = v; } });
+  box.querySelector = (selector) => (selector === 'video' && html.includes('<video') ? makeNode({}) : null);
+  const stage = makeNode({});
+  stage.querySelector = (selector) => (selector === '.stage-video' ? box : null);
+  setDom({ 'studio-stage': stage });
+  setState({
+    route: 'studio',
+    lastJobId: 'jv',
+    itemId: 'item-1',
+    jobs: [job('jv', 'success', 100, { outputs: [{ type: 'video', path: 'D:/media/镜头 01.mp4' }] })],
+  });
+  assert.equal(studioStageMediaPatch(), true);
+  assert.match(html, /<video src="\/api\/file\?path=/);
+  assert.match(html, /%E9%95%9C%E5%A4%B4%2001\.mp4/, '中文和空格要 URL 编码');
+  assert.equal(studioStageMediaPatch(), false, '已经有 video 就不要重建，避免打断播放');
+});
+
+test('没有成片时补丁什么都不做', () => {
+  const box = makeNode({});
+  box.innerHTML = '';
+  box.querySelector = () => null;
+  const stage = makeNode({});
+  stage.querySelector = (selector) => (selector === '.stage-video' ? box : null);
+  setDom({ 'studio-stage': stage });
+  setState({ route: 'studio', lastJobId: 'jr', itemId: 'item-1', jobs: [job('jr', 'running', 40)] });
+  assert.equal(studioStageMediaPatch(), false);
+  assert.equal(box.innerHTML, '');
+});
+
+test('connectEvents 的打补丁分支里也要调成片补丁', () => {
+  const branch = source.slice(source.indexOf("if (state.route === 'studio') {"), source.indexOf("if (state.route === 'jobs' || state.route === 'logs') render();"));
+  assert.ok(branch.includes('studioStageMediaPatch()'), '打补丁分支要负责把 <video> 露出来');
+});
+
