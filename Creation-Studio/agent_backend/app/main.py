@@ -8,6 +8,7 @@ from app.create_tools import build_creation_tools, _http
 from app.execution import content_text, tick
 from app.fs_tools import build_local_tools
 from app.interaction_tools import build_interaction_tools
+from app import choice_rescue, supplements, context_report
 from app.tool_guard import ToolGuard
 from app import permissions as perms
 from fastapi import FastAPI, HTTPException, Header
@@ -46,6 +47,77 @@ def prune_runs(keep_seconds=900):
 
 # 明确要图片的说法（配合“渠道不支持工具”时直接出图，不让模型假装调用工具）
 _IMAGE_INTENT=re.compile(r'(生成|画|绘制|出图|做|设计|来一张|来一张图|给我)[^。；\n]{0,12}?(图片|插画|壁纸|海报|封面|头像|照片|配图|插图|主视觉|图)(?!像头)', re.I)
+
+# 实时状态文案用到的参数键（挑最像「这一步在干什么」的那个值）
+_TOOL_ARG_KEYS=('command','path','file_path','target','source','name','file','prompt','query','topic','pattern','step_id')
+_TOOL_RESULT_KEYS=('error','message','stderr')
+_TOOL_OUTPUT_KEYS=('path','name','file','url','output','stdout','content','summary')
+
+def _clip(text, limit=60):
+    line=' '.join(str(text or '').split())
+    return line[:limit] + ('…' if len(line)>limit else '')
+
+def tool_detail(args):
+    """从工具参数里挑一句能说明「正在做什么」的摘要（命令、路径、文件名…）。"""
+    if not isinstance(args,dict):
+        return ''
+    for key in _TOOL_ARG_KEYS:
+        value=args.get(key)
+        if isinstance(value,str) and value.strip():
+            return _clip(value)
+    for value in args.values():
+        if isinstance(value,str) and value.strip():
+            return _clip(value)
+    return ''
+
+def tool_result_detail(text):
+    """工具结果里挑一句摘要：失败优先给原因，成功给路径/文件名/输出首行。"""
+    payload=str(text or '').strip()
+    if not payload:
+        return ''
+    try:
+        data=json.loads(payload)
+    except Exception:
+        return _clip(payload)
+    if isinstance(data,dict):
+        for key in _TOOL_RESULT_KEYS:
+            value=data.get(key)
+            if isinstance(value,str) and value.strip():
+                return _clip(value)
+        for key in _TOOL_OUTPUT_KEYS:
+            value=data.get(key)
+            if isinstance(value,str) and value.strip():
+                return _clip(value)
+    return ''
+
+def skill_material(project, topic, skill_name='', snapshot=None, plugins_fn=None):
+    """技能真正进上下文的那部分材料：插件技能定义，或内置创作指导文档。
+
+    摘要面板的 Skills 分项就按这个算——用户选了 @小说创作，就不能显示 0。
+    """
+    if not topic:
+        return '', 0
+    try:
+        if plugins_fn is None:
+            from app.workspace import plugins as plugins_fn
+        items=snapshot if isinstance(snapshot,list) and snapshot else list(plugins_fn(project,'skill') or [])
+        record=None
+        if str(topic).startswith('skill:'):
+            wanted=str(topic).split(':',1)[1]
+            record=next((item for item in items if str(item.get('id'))==wanted),None)
+        else:
+            record=next((item for item in items if item.get('topic')==topic or item.get('name')==skill_name),None)
+        if record:
+            payload={k:record.get(k) for k in ('name','description','content','prompt','files') if record.get(k)}
+            if payload:
+                return json.dumps(payload,ensure_ascii=False),1
+        from app.creation_guidance import GUIDANCE
+        doc=GUIDANCE.get(str(topic))
+        if doc:
+            return json.dumps(doc,ensure_ascii=False),1
+    except Exception:
+        return '',0
+    return '',0
 
 async def _empty_stream():
     if False:
@@ -190,6 +262,9 @@ async def _chat(req,project,authorization):
     store.save(project,c)
     locks.add(key)
     run_id=ctx.run_id if ctx else str(uuid.uuid4())
+    # 补充说明通道：本次运行独占，直发只并入这条运行，不另起任务。
+    supplement_channel=supplements.open_run(project,run_id,req.session_id)
+    supplement_middleware=None
     receipt={'schema_version':'agent-run/2.0','id':run_id,'session_id':req.session_id,'status':'running','started_at':tick(),'model':cfg.get('model'),'provider':provider,'reasoning_effort':req.reasoning_effort or 'default','skill':req.skill,'history_count':len(history)-1,'context_window':_window,'tool_count':0,'workspace_tool_count':0,'evidence_scope':'用户输入、会话历史、已读取的指导文档、工作空间文件与本地工具执行结果','input_hash':hashlib.sha256(json.dumps(history,ensure_ascii=False,sort_keys=True).encode()).hexdigest(),'steps':[],'tools':[],'summary':'','plan':None,'artifacts':[]}
     if ctx:
         ctx.receipt=receipt
@@ -232,6 +307,7 @@ async def _chat(req,project,authorization):
     if req.skill_id:
         available=skill_snapshot if skill_snapshot is not None else plugins(project,'skill')
         if not any(item.get('id')==req.skill_id and item.get('enabled',True) for item in available):
+            supplements.close_run(project,run_id)
             locks.discard(key)
             raise HTTPException(400,'所选技能不存在或已停用，请重新选择')
     tools += build_creation_tools(publish_event, project, req.session_id)
@@ -247,15 +323,24 @@ async def _chat(req,project,authorization):
         base_prompt += ('\n\n【渠道能力】当前模型所在渠道不支持工具调用（function calling），所以本地文件工具、命令工具、生图生视频工具都无法执行。'
                        '禁止声称已经调用工具或已经写盘；需要落盘/移动文件时，如实说明是渠道限制，并提示用户把模型切到支持工具调用的渠道（deepseek-flash、gemini-3.8-flash），'
                        '权限档位（' + permission['label'] + '）本身不是失败原因。')
+    # 上下文分项统计（摘要面板用）：固定环节各自占多少，算一次写进回执。
+    skill_text,skill_used=skill_material(project,topic,req.skill,skill_snapshot)
+    receipt['context']={**(receipt.get('context') or {}),'report':context_report.build(
+        history,tools,base_prompt,skill_text,_window,
+        tool_count=len(tools),skill_count=skill_used,tool_names=[getattr(tool,'name','') for tool in tools])}
     guard=None
+    # 补充说明只在模型调用边界生效：工具跑完再并入，不会打断正在执行的操作。
+    supplement_middleware=supplements.SupplementChannel(supplement_channel,publish=publish_event,receipt=receipt)
     try:
         middlewares=[]
-        if ctx:middlewares += [ModelGateway(ctx),ToolGateway(ctx,tools)]
+        if ctx:middlewares += [ModelGateway(ctx),supplement_middleware,ToolGateway(ctx,tools)]
         else:
             guard=ToolGuard()
             middlewares.append(guard)
+            middlewares.append(supplement_middleware)
         graph=create_agent(model=model,tools=tools,middleware=middlewares,system_prompt=base_prompt)
     except Exception:
+        supplements.close_run(project,run_id)
         locks.discard(key)
         raise HTTPException(503,'智能体工具初始化失败')
     async def stream():
@@ -268,6 +353,9 @@ async def _chat(req,project,authorization):
             store.append_trajectory(project,req.session_id,run_id,sequence,item)
         try:
             trajectory('user',req.text,kind='instruction')
+            # 直发进来立刻让前端看到「已收到，等下一个检查点生效」
+            supplement_middleware.record=lambda item:trajectory('user',item['text'],kind='supplement')
+            supplement_channel.notify=lambda item:pending.append({'type':'supplement_received','run_id':run_id,'items':[{'id':item['id'],'text':item['text'],'time':item['time']}]})
             yield event({'type':'start','session_id':req.session_id,'execution':receipt.copy()})
             direct_done=False
             if not tools_ok and _IMAGE_INTENT.search(req.text or ''):
@@ -315,7 +403,11 @@ async def _chat(req,project,authorization):
                     legacy_chunk=not hasattr(chunk,'type')
                     if text and (can_stream or legacy_chunk) and not getattr(chunk,'tool_call_chunks',None):
                         answer+=text
-                        yield event({'type':'delta','text':text})
+                        # 模型把工具调用写成正文时，先别往屏幕上吐原始标记，收尾时统一救回成面板。
+                        opened=answer.rfind('<ask_choice>');closed=answer.rfind('</ask_choice>')
+                        if not (opened>=0 and opened>closed):yield event({'type':'delta','text':text})
+                    # 补充说明「已收到」这类旁路事件不用等模型下一个 updates 才吐出来
+                    while pending:yield event(pending.popleft())
                 elif mode=='updates':
                     for node,state in payload.items():
                         if not isinstance(state,dict):continue
@@ -330,6 +422,9 @@ async def _chat(req,project,authorization):
                                 if calls:
                                     if answer:answer='';yield event({'type':'replace','text':''})
                                     for call in calls:
+                                        # 实时状态：前端据此显示「准备运行命令 · npm test」这类文案
+                                        pending.append({'type':'tool_call','tool':call.get('name'),
+                                                        'detail':tool_detail(call.get('args') or {}),'time':tick()})
                                         if call.get('name')=='record_step_result':
                                             step=next((s for s in (receipt.get('plan') or {}).get('steps',[]) if s['id']==call.get('args',{}).get('step_id')),None)
                                             if step and step['status']=='pending':step['status']='running';pending.append({'type':'process','plan':receipt['plan']})
@@ -338,10 +433,23 @@ async def _chat(req,project,authorization):
                                     if public!=answer:answer=public;yield event({'type':'replace','text':public})
                             elif role=='tool':
                                 receipt['tool_count']+=1
-                                receipt.setdefault('tools',[]).append({'name':getattr(msg,'name',None),'status':getattr(msg,'status','success'),'output':content_text(msg)[:300]})
-                                trajectory('tool',content_text(msg),kind='tool_result',tool_name=getattr(msg,'name',None),tool_call_id=getattr(msg,'tool_call_id',None),status=getattr(msg,'status','success'))
+                                tool_name=getattr(msg,'name',None)
+                                tool_status=getattr(msg,'status','success')
+                                tool_body=content_text(msg)
+                                receipt.setdefault('tools',[]).append({'name':tool_name,'status':tool_status,'output':tool_body[:300]})
+                                trajectory('tool',tool_body,kind='tool_result',tool_name=tool_name,tool_call_id=getattr(msg,'tool_call_id',None),status=tool_status)
+                                pending.append({'type':'tool_result','tool':tool_name,'ok':tool_status!='error',
+                                                'detail':tool_result_detail(tool_body),'time':tick()})
                     while pending:yield event(pending.popleft())
-            if not answer:raise ValueError('empty response')
+            # 有些模型会把 ask_choice 写成正文标记：剥掉标记并补发一次真正的面板事件。
+            rescued_text,rescued_choice=choice_rescue.rescue(answer,already_asked=bool(receipt.get('choices')))
+            if rescued_text!=answer:
+                answer=rescued_text
+                yield event({'type':'replace','text':answer})
+            if rescued_choice:
+                receipt.setdefault('choices',[]).append(rescued_choice)
+                yield event(rescued_choice)
+            if not answer and not rescued_choice:raise ValueError('empty response')
             if not final_observed:trajectory('assistant',answer,kind='final',tool_calls=[])
             if ctx:
                 run_store.update(project,run_id,status='validating',phase='validating')
@@ -434,6 +542,12 @@ async def _chat(req,project,authorization):
             events_buffer.append({'type':'error','message':'后台任务异常：'+str(exc)[:200],'run_id':run_id,'sequence':len(events_buffer)+1})
         finally:
             project_files.BOUND_ROOTS.reset(root_token)
+            # 没来得及在检查点并入的补充说明交回前端重新排队，不丢、不重复。
+            leftover=supplements.close_run(project,run_id)
+            if leftover:
+                events_buffer.append({'type':'supplement_undelivered','run_id':run_id,
+                    'items':[{'id':i['id'],'text':i['text'],'time':i['time']} for i in leftover],
+                    'sequence':len(events_buffer)+1})
             state['finished']=True
             RUN_ENDED[run_id]=time.time()
             if LIVE_RUNS.get(key) is state:LIVE_RUNS.pop(key,None)
@@ -452,6 +566,37 @@ async def _chat(req,project,authorization):
             if state['finished'] and cursor>=len(events_buffer):break
             await asyncio.sleep(0.05)
     return StreamingResponse(sse(),media_type='text/event-stream',headers={'Cache-Control':'no-cache','X-Accel-Buffering':'no','X-Agent-Run-Id':run_id})
+
+class SupplementRequest(BaseModel):
+    text:str=Field(min_length=1,max_length=10000)
+
+def _push_supplement(channel,text):
+    """直发 = 当前任务的补充说明：只入队，不取消、不重启任务。"""
+    if channel is None or channel.closed:
+        raise HTTPException(409,{'message':'当前没有执行中的任务，直发已退回普通发送','code':'no_active_run'})
+    try:
+        return {'ok':True,**channel.push(text)}
+    except ValueError:
+        raise HTTPException(400,'补充说明不能为空')
+    except RuntimeError as exc:
+        raise HTTPException(409,{'message':'任务已结束或补充说明过多，请稍后重试','code':str(exc),'run_id':channel.run_id})
+
+@app.post('/agent/runs/{run_id}/supplements')
+def add_supplement(run_id:str,body:SupplementRequest,project=Depends(project_id)):
+    """补充说明必须绑定正在执行的任务 ID。"""
+    return _push_supplement(supplements.channel(project,run_id),body.text)
+
+@app.post('/agent/sessions/{sid}/supplements')
+def add_supplement_for_session(sid:str,body:SupplementRequest,project=Depends(project_id)):
+    """按会话定位当前运行：没有运行中的任务就返回 409，让前端走普通发送。"""
+    if not store.get_session(project,sid):raise HTTPException(404,'会话不存在，请重新创建')
+    return _push_supplement(supplements.live_run(project,sid),body.text)
+
+@app.get('/agent/runs/{run_id}/supplements')
+def read_supplements(run_id:str,project=Depends(project_id)):
+    channel=supplements.channel(project,run_id)
+    if not channel:raise HTTPException(404,'运行记录不存在')
+    return channel.snapshot()
 
 @app.get('/agent/executions/{run_id}')
 def execution(run_id:str, project=Depends(project_id)):

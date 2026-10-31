@@ -67,3 +67,45 @@
 .agent-workspace.is-expanded>.aw-resizer { display:none; }
 .aw-is-resizing,.aw-is-resizing * { cursor:col-resize!important; user-select:none!important; }
 @media(min-width:701px) { .agent-workspace .aw-explorer { width:var(--aw-tree-width,38%); min-width:120px; max-width:45%; } }
+
+/* 上下文分项（Summary · Context）：彩色堆叠条 + 每项 tokens / 占比 */
+.ask-ctx-bar { display:flex; width:100%; height:8px; margin:6px 0 10px; border-radius:999px; overflow:hidden; background:color-mix(in srgb, var(--wmd-border,#dde2e8) 65%, transparent); }
+.ask-ctx-seg { display:block; height:100%; }
+.ask-ctx-seg.is-messages { background:#3b74f0; }
+.ask-ctx-seg.is-tools { background:#ef8b2c; }
+.ask-ctx-seg.is-skills { background:#18a97c; }
+.ask-ctx-seg.is-system { background:#dfb42a; }
+.ask-ctx-seg.is-buffer { background:#98a2ae; }
+.ask-ctx-seg.is-free { background:#e3e6ea; }
+.ask-ctx-row { display:grid; grid-template-columns:10px minmax(0,1fr) auto 48px; align-items:center; gap:8px; padding:3px 0; font-size:11.5px; }
+.ask-ctx-row.is-free { color:var(--wmd-text-3,#8993a0); }
+.ask-ctx-dot { width:8px; height:8px; border-radius:2px; }
+.ask-ctx-dot.is-messages { background:#3b74f0; }
+.ask-ctx-dot.is-tools { background:#ef8b2c; }
+.ask-ctx-dot.is-skills { background:#18a97c; }
+.ask-ctx-dot.is-system { background:#dfb42a; }
+.ask-ctx-dot.is-buffer { background:#98a2ae; }
+.ask-ctx-dot.is-free { background:#d7dbe0; }
+.ask-ctx-label { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ask-ctx-tokens, .ask-ctx-pct { color:var(--wmd-text-3,#8993a0); font-variant-numeric:tabular-nums; }
+.ask-ctx-pct { text-align:right; }
+.ask-ctx-meta { margin-top:8px; font-size:10.5px; color:var(--wmd-text-3,#8993a0); }
+.ask-summary-usage b { font-size:13.5px; }
+.ask-summary-hint { display:block; margin-top:8px; }
+.ask-changes { display:flex; align-items:center; justify-content:space-between; gap:8px; margin:6px 0 4px; }
+.ask-changes-diff { font-variant-numeric:tabular-nums; }
+.ask-changes-diff b { color:#12805c; font-weight:600; }
+.ask-changes-diff i { color:#c2410c; font-style:normal; }
+.ask-changes-pr { height:26px; padding:0 12px; border:1px solid var(--wmd-border,#dde2e8); border-radius:7px; background:transparent; color:var(--wmd-text-3,#8993a0); font-size:11.5px; cursor:not-allowed; }
+.ask-changes-note { margin:2px 0 0; font-size:10.5px; color:var(--wmd-text-3,#8993a0); }
+
+/* 上下文分项：工具清单（点开看具体工具名，对应 Codex 的「› MCP tools 90」） */
+.ask-ctx-tools { margin-top:8px; border-top:1px dashed var(--wmd-border,#dde2e8); padding-top:6px; }
+.ask-ctx-tools summary { display:flex; align-items:center; gap:6px; font-size:11.5px; color:var(--wmd-text-3,#8993a0); cursor:pointer; list-style:none; }
+.ask-ctx-tools summary::-webkit-details-marker { display:none; }
+.ask-ctx-tools summary::before { content:'›'; display:inline-block; transition:transform .15s ease; }
+.ask-ctx-tools[open] summary::before { transform:rotate(90deg); }
+.ask-ctx-tool-list { display:flex; flex-wrap:wrap; gap:4px 10px; margin:6px 0 2px; font-size:11px; color:var(--wmd-text-2,#3d4650); }
+.ask-ctx-tool-list span { white-space:nowrap; }
+.ask-summary dt { white-space:nowrap; }
+.ask-summary dd { max-width:190px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }

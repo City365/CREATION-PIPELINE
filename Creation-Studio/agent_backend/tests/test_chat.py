@@ -160,3 +160,37 @@ def test_bad_request_surfaces_upstream_reason(client,monkeypatch):
  r=client.post('/agent/chat',headers=headers(),json={'session_id':'c1','text':'hi'})
  assert 'User location is not supported' in r.text
  assert '上游拒绝请求（400）' in r.text
+
+def test_pseudo_tool_call_in_text_becomes_panel(client,monkeypatch):
+ create(client)
+ payload='''[
+  {"question":"下一步走哪条？","options":[
+    {"label":"先拆第1集分镜","why":"验证格式再批量","value":"用「分集剧本转分镜剧本」技能拆第1集","recommended":true},
+    {"label":"三集全拆","why":"一次出完","value":"用「分集剧本转分镜剧本」技能拆第1-3集"}]},
+  {"question":"时长口径？","options":[
+    {"label":"不设上限","why":"按内容自然长度","value":"剧本按内容自然长度处理"},
+    {"label":"压到90秒","why":"快节奏","value":"把三集剧本压到每集90秒"}]}
+ ]'''
+ class Graph:
+  async def astream(self,*args,**kwargs):
+   yield SimpleNamespace(content='剧本三集齐了。\n'),{}
+   yield SimpleNamespace(content='<ask_choice><questions>'),{}
+   yield SimpleNamespace(content=payload+'</questions></ask_choice>'),{}
+ monkeypatch.setattr(main,'create_chat_model',lambda: object())
+ monkeypatch.setattr(main,'create_agent',lambda **kwargs:Graph())
+ r=client.post('/agent/chat',headers=headers(),json={'session_id':'c1','text':'继续'})
+ events=[json.loads(line[6:]) for line in r.text.splitlines() if line.startswith('data: ')]
+ kinds=[e['type'] for e in events if e['type']!='trace']
+ assert 'choice' in kinds, kinds
+ choice=next(e for e in events if e['type']=='choice')
+ assert len(choice['questions'])==2
+ assert choice['questions'][0]['recommended']=='先拆第1集分镜'
+ assert choice['rescued'] is True
+ visible=''.join(e.get('text','') for e in events if e['type'] in ('delta','replace') and e is not None)
+ assert '<ask_choice>' not in str([e for e in events if e['type'] in ('delta','replace')])
+ saved=client.get('/agent/sessions',headers=headers()).json()[0]
+ text=saved['messages'][-1]['text']
+ assert '<ask_choice>' not in text and '<questions>' not in text
+ assert '剧本三集齐了。' in text
+ receipt=client.get('/agent/executions/'+events[-1]['execution']['id'],headers=headers()).json()
+ assert receipt['choices'] and len(receipt['choices'])==1

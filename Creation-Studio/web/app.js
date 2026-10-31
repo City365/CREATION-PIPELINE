@@ -1376,7 +1376,7 @@ function renderStudio() {
         <span class="wmd-remote-host">${esc((channel && channel.baseUrl) || '未填写接口')}</span>
       </button>`;
 
-  const ratioOptions = isManager && (wf.ratios || []).length ? wf.ratios : ['9:16', '16:9', '1:1'];
+  const ratioOptions = (wf.ratios || []).length ? wf.ratios : ['9:16', '16:9', '1:1'];
   const currentRatio = (String(s.aspectRatio || '').match(/\d+:\d+/) || [wf.defaultRatio || '16:9'])[0];
   const aspectField = isAuto
     ? `<div class="wmd-field wmd-compose-field is-aspect">
@@ -1433,7 +1433,7 @@ function renderStudio() {
               <select class="wmd-select" id="channel-select" title="视频渠道；默认渠道在 设置 → 视频生成 里改">${channelOptions}</select>
               <span class="wmd-select-caret">${ICON.caret}</span>
             </div>
-            <span class="wmd-workflow-tag ${isAuto ? 'is-autodl' : (isManager ? 'is-manager' : 'is-generic')}">${isAuto ? 'AutoDL 官方H3' : isManager ? '管理器' : '自定义'}</span>
+            <span class="wmd-workflow-tag ${isAuto ? 'is-autodl' : (isManager ? 'is-manager' : 'is-generic')}">${esc(wf.providerLabel || (isAuto ? 'AutoDL 官方H3' : isManager ? '管理器' : '自定义'))}</span>
           </div>
           ${remote}
         </div>
@@ -4973,7 +4973,7 @@ async function askAttachRun(chatId) {
       for (const ev of page.items || []) {
         if (typeof ev.sequence === 'number') cursor = Math.max(cursor, ev.sequence);
         if (ev.type === 'done') sawDone = true;
-        askApplyEvent(run.msg, ev);
+        askApplyEvent(run.msg, ev, chatId);
       }
       if (a.activeId === chatId) askRevealKick();
       const done = (page.items || []).some((ev) => ev.type === 'done' || ev.type === 'error');
@@ -5133,13 +5133,18 @@ async function askLoadMessageTrace(msg, runId, chatId) {
   if (!id || !sid) return;
   if (askTraceLoading.has(id)) return;
   askTraceLoading.add(id);
+  if (msg) { msg._traceLoading = true; msg._traceError = ''; }
+  if (state.route === 'script') askRenderMessages();
   try {
     const data = await askApi('/sessions/' + encodeURIComponent(sid) + '/trajectory?run_id=' + encodeURIComponent(id)).then((r) => r.json());
     msg.trajectory = (data && data.items) || [];
-  } catch {
-    msg.trajectory = [];
+  } catch (err) {
+    // 失败不要留空数组：留着未加载状态，用户还能重试
+    msg.trajectory = undefined;
+    msg._traceError = (err && err.message) || '执行过程加载失败';
   } finally {
     askTraceLoading.delete(id);
+    if (msg) msg._traceLoading = false;
   }
   if (state.route === 'script') askRenderMessages();
 }
@@ -5170,36 +5175,119 @@ function askTraceHtml(msg, pending) {
   const hasRows = rows.length > 0;
   const hasPlan = planSteps.length > 0;
   const canLoad = !loaded && !!runId;
-  const open = !!pending || !!msg.traceOpen;
+  const loading = !!msg._traceLoading;
+  const failed = !!msg._traceError;
+  const hasContent = hasRows || hasPlan || !!toolHtml || loaded || loading || failed || !!pending || (canLoad && !pending);
+  const open = !!msg.traceOpen || (!!pending && (hasRows || hasPlan || !!toolHtml || loaded));
+  const running = !!pending || exec.status === 'running';
+  if (running && msg._t0 == null) msg._t0 = Date.now();
+  const since = running ? Number(msg._t0) || Date.now() : 0;
+  const headText = askHeading(exec, pending, msg);
+  const headInner = running
+    ? `<span class="ask-trace-live" data-trace-live data-since="${since}"><span class="ask-trace-live-text">${esc(headText)}</span><span class="ask-trace-live-time"> · ${esc(askDurationText(Date.now() - since))}</span></span>`
+    : `<span>${esc(headText)}</span>`;
   const nothing = loaded && !hasRows && !hasPlan && !toolHtml;
   if (nothing && !pending) {
     // 这轮确实没有工具与步骤：只保留一行状态，不再摆空占位
-    return `<div class="ask-trace is-static"><div class="ask-trace-head is-static"><span>${esc(askHeading(exec, false))}</span></div></div>`;
+    return `<div class="ask-trace is-static"><div class="ask-trace-head is-static"><span>${esc(askHeading(exec, false, msg))}</span></div></div>`;
   }
-  if (!hasRows && !hasPlan && !toolHtml && !pending && !canLoad) return '';
+  if (!hasContent) return '';
   return `<section class="ask-trace ${pending ? 'is-running' : ''} ${open ? 'is-open' : ''}" data-trace-run="${esc(runId)}">
-    <button type="button" class="ask-trace-head" data-act="ask-trace-toggle" data-run="${esc(runId)}" aria-expanded="${open ? 'true' : 'false'}"><span>${esc(askHeading(exec, pending))}</span><span class="ask-chev">${open ? '⌄' : '›'}</span></button>
+    <button type="button" class="ask-trace-head" data-act="ask-trace-toggle" data-run="${esc(runId)}" aria-expanded="${open ? 'true' : 'false'}">${headInner}<span class="ask-chev">${open ? '⌄' : '›'}</span></button>
     ${open ? `<div class="ask-trace-body">
       ${(exec.validation_issues && exec.validation_issues.length) ? `<p class="ask-goal">${esc(exec.validation_issues.join('；'))}</p>` : ''}
       ${hasRows ? `<ul class="ask-trace-rows">${rows.map(askTraceRowHtml).join('')}</ul>` : ''}
       ${toolHtml ? `<ul class="ask-tool-runs">${toolHtml}</ul>` : ''}
       ${hasPlan ? `<section class="ask-trace-section">${exec.plan.goal ? `<p class="ask-goal">${esc(exec.plan.goal)}</p>` : ''}<ol class="ask-steps">${stepHtml}</ol></section>` : ''}
-      ${canLoad ? `<button type="button" class="ask-trace-load" data-act="ask-load-trace" data-run="${esc(runId)}">加载执行过程</button>` : ''}
+      ${(loading || (canLoad && !pending && !failed)) ? '<p class="ask-trace-empty">正在加载执行过程…</p>' : ''}
+      ${failed ? `<button type="button" class="ask-trace-load" data-act="ask-load-trace" data-run="${esc(runId)}" title="${esc(msg._traceError)}">重新加载执行过程</button>` : ''}
       ${(loaded && !hasRows && !hasPlan && !toolHtml) ? '<p class="ask-trace-empty">这次没有产生步骤记录</p>' : ''}
     </div>` : ''}
   </section>`;
 }
 
-function askHeading(exec, pending) {
-  if (pending || (exec && exec.status === 'running')) return '执行中…';
+// 展开执行过程就等于要看到内容：渲染后自动把没加载的轨迹拉回来，不再多一个「加载执行过程」按钮。
+// 流式过程中先看实时行（execution.steps / tools），本轮结束后自动补全。
+function askTraceAutoLoad(chat) {
+  if (!chat || state.route !== 'script') return;
+  for (const msg of chat.messages || []) {
+    if (!msg || msg.role !== 'assistant') continue;
+    const exec = msg.execution;
+    if (!exec || !exec.id) continue;
+    if (Array.isArray(msg.trajectory) || msg._traceError || msg._traceLoading) continue;
+    if (!msg.traceOpen || msg._streaming) continue;
+    askLoadMessageTrace(msg, exec.id, chat.id).catch(() => {});
+  }
+}
+
+/* ---- 执行中的实时状态：不是固定一句「执行中」，而是跟着工具在干什么走 ---- */
+const ASK_TOOL_ACTIONS = {
+  run_command: ['准备运行命令', '执行了命令', '命令执行失败'],
+  write_file: ['准备写入文件', '已写入文件', '写入文件失败'],
+  read_file: ['准备读取文件', '已读取文件', '读取文件失败'],
+  list_dir: ['准备查看目录', '已查看目录', '查看目录失败'],
+  make_dir: ['准备创建目录', '已创建目录', '创建目录失败'],
+  move_file: ['准备移动文件', '已移动文件', '移动文件失败'],
+  copy_file: ['准备复制文件', '已复制文件', '复制文件失败'],
+  delete_file: ['准备删除文件', '已删除文件', '删除文件失败'],
+  read_permission: ['正在确认权限', '已确认权限', '确认权限失败'],
+  generate_image: ['准备生成图片', '已生成图片', '生成图片失败'],
+  submit_video_job: ['准备提交视频任务', '已提交视频任务', '提交视频任务失败'],
+  extract_frames: ['准备抽帧', '已抽帧', '抽帧失败'],
+  create_workspace_artifact: ['准备写入交付文件', '已写入交付文件', '写入交付文件失败'],
+  publish_artifact: ['准备交付文件', '已交付文件', '交付文件失败'],
+  create_task_plan: ['正在制定计划', '已制定计划', '制定计划失败'],
+  record_step_result: ['正在记录步骤结果', '已记录步骤结果', '记录步骤结果失败'],
+  read_analysis_guidance: ['正在读取指导文档', '已读取指导文档', '读取指导文档失败'],
+  ask_choice: ['正在准备选项面板', '已发出选项面板', '选项面板失败'],
+};
+
+function askDurationText(ms) {
+  const seconds = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return minutes ? minutes + '分' + (rest ? rest + '秒' : '') : seconds + '秒';
+}
+
+// 这一步在做什么：工具名 + 参数/结果摘要（命令、路径、文件名）
+function askLiveStatus(msg) {
+  const live = (msg && msg.live) || null;
+  if (!live || !live.tool) return { text: '正在分析请求', detail: (live && live.detail) || '' };
+  const phases = ASK_TOOL_ACTIONS[live.tool];
+  const word = live.phase === 'running' ? 0 : live.phase === 'failed' ? 2 : 1;
+  const text = phases
+    ? phases[word]
+    : live.phase === 'running' ? '准备执行 ' + live.tool : live.phase === 'failed' ? '执行 ' + live.tool + ' 失败' : '已执行 ' + live.tool;
+  return { text, detail: live.detail || '' };
+}
+
+let askLiveTimer = 0;
+// 只改时间文字，不整页重绘：一次长命令跑几分钟也能一直走秒
+function askEnsureLiveTicker() {
+  if (askLiveTimer) return;
+  askLiveTimer = setInterval(() => {
+    const nodes = document.querySelectorAll('[data-trace-live]');
+    if (!nodes.length) return;
+    for (const node of nodes) {
+      const since = Number(node.dataset.since) || 0;
+      const time = node.querySelector('.ask-trace-live-time');
+      if (!since || !time) continue;
+      time.textContent = ' · ' + askDurationText(Date.now() - since);
+    }
+  }, 1000);
+}
+
+function askHeading(exec, pending, msg) {
+  if (pending || (exec && exec.status === 'running')) {
+    if (msg && msg._t0 == null) msg._t0 = Date.now();
+    const live = askLiveStatus(msg);
+    return live.detail ? live.text + ' · ' + live.detail : live.text;
+  }
   const labels = { completed: '已完成', succeeded: '已完成', partial: '部分完成', blocked: '待补充', failed: '执行失败', cancelled: '已停止', budget_exceeded: '已达预算上限', interrupted: '执行中断' };
   const status = labels[(exec && (exec.outcome || exec.status)) || ''] || '历史回复';
   const ms = exec && (exec.duration_ms != null ? exec.duration_ms : (exec.finished_at != null && exec.started_at != null ? exec.finished_at - exec.started_at : null));
   if (ms == null || !Number.isFinite(ms)) return status;
-  const seconds = Math.max(0, Math.floor(ms / 1000));
-  const minutes = Math.floor(seconds / 60);
-  const rest = seconds % 60;
-  return status + '，用时' + (minutes ? minutes + '分' + (rest ? rest + '秒' : '') : seconds + '秒');
+  return status + '，用时' + askDurationText(ms);
 }
 
 function askFilesHtml(files) {
@@ -6103,6 +6191,18 @@ function askChoiceNoteHtml(m) {
   }).join('');
 }
 
+// 直发补充说明：已并入当前任务的那几条要求，挂在这条回复里可回溯
+function askSupplementNoteHtml(m) {
+  const list = (m && m.supplements) || [];
+  if (!list.length) return '';
+  const applied = list.filter((x) => x.state !== 'received').length;
+  return `<div class="ask-sup-note">
+    <span class="ask-sup-badge">⚡ 补充说明</span>
+    <span class="ask-sup-count">${applied ? '已并入 ' + applied + ' 条' : '已收到，等检查点'}</span>
+    <span class="ask-sup-list">${list.map((x) => `<span class="ask-sup-chip${x.state === 'received' ? ' is-wait' : ''}" title="${esc(x.text)}">${esc(String(x.text || '').slice(0, 30))}${String(x.text || '').length > 30 ? '…' : ''}</span>`).join('')}</span>
+  </div>`;
+}
+
 // 输入框上方的问句条：1–4 个问题（单选 / 多选）+ 自行撰写 + 跳过 / 发送
 function askChoicePanelHtml() {
   const a = askState();
@@ -6111,35 +6211,49 @@ function askChoicePanelHtml() {
   const card = p.card;
   const questions = askChoiceQuestions(card);
   const answers = p.answers || {};
+  const custom = p.custom || {};
+  const total = questions.length || 1;
+  const page = Math.max(0, Math.min(total - 1, Number(p.page) || 0));
+  const q = questions[page] || { id: 'q1', question: '', options: [], multi: false };
+  const picked = answers[q.id] || [];
   const text = p.text || '';
-  const answeredAll = questions.length > 0 && questions.every((q) => (answers[q.id] || []).length > 0);
-  const canSend = !!(answeredAll || text.trim());
+  const answered = picked.length > 0 || !!text.trim() || !!custom[q.id];
+  const last = page >= total - 1;
+  const action = last ? '发送' : '下一步';
+  const canNext = answered || (page > 0 && custom[q.id]);
   return `<div class="ask-qpanel" id="ask-qpanel" role="group" aria-label="待回答的问题">
     <div class="ask-qpanel-head">
       <span class="ask-qpanel-icon" aria-hidden="true">?</span>
-      <span class="ask-qpanel-title">问题${questions.length > 1 ? ' · ' + questions.length : ''}</span>
+      <span class="ask-qpanel-title">问题</span>
       <span class="grow"></span>
-      <button type="button" class="ask-qpanel-close" data-act="ask-choice-skip" title="跳过这些问题">✕</button>
+      ${total > 1 ? `<span class="ask-qpanel-pager">
+        <button type="button" class="ask-qpanel-arrow" data-act="ask-choice-page" data-delta="-1" ${page === 0 ? 'disabled' : ''} title="上一个问题">‹</button>
+        <span class="ask-qpanel-of">${page + 1} of ${total}</span>
+        <button type="button" class="ask-qpanel-arrow" data-act="ask-choice-page" data-delta="1" ${last ? 'disabled' : ''} title="下一个问题">›</button>
+      </span>` : ''}
+      <button type="button" class="ask-qpanel-close" data-act="ask-choice-skip" title="关闭问题面板（这组问题先不问）">✕</button>
     </div>
-    ${questions.map((q, qi) => {
-      const picked = answers[q.id] || [];
-      return `<div class="ask-qpanel-block">
-        <div class="ask-qpanel-question">${questions.length > 1 ? `<span class="ask-qpanel-index">${qi + 1}</span>` : ''}${esc(q.question)}${q.multi ? '<span class="ask-qpanel-multi">可多选</span>' : ''}</div>
-        <div class="ask-qpanel-options" role="${q.multi ? 'group' : 'radiogroup'}">
-          ${q.options.map((o, i) => `<button type="button" class="ask-qpanel-opt${picked.includes(o.id) ? ' is-on' : ''}${q.multi ? ' is-multi' : ''}" role="${q.multi ? 'checkbox' : 'radio'}" aria-checked="${picked.includes(o.id)}" data-act="ask-choice-pick" data-question="${esc(q.id)}" data-option="${esc(o.id)}" title="${esc(o.value || o.label)}">
-            <span class="ask-qpanel-key">${q.multi ? (picked.includes(o.id) ? '✓' : '') : i + 1}</span>
-            <span class="ask-qpanel-label">${esc(o.label)}</span>
-            ${o.why ? `<span class="ask-qpanel-why">${esc(o.why)}</span>` : ''}
-            ${o.recommended ? '<span class="ask-qpanel-rec">推荐</span>' : ''}
-          </button>`).join('')}
-        </div>
-      </div>`;
-    }).join('')}
+    <div class="ask-qpanel-block">
+      <div class="ask-qpanel-question">${esc(q.question)}${q.multi ? '<span class="ask-qpanel-multi">可多选</span>' : ''}</div>
+      <div class="ask-qpanel-options" role="${q.multi ? 'group' : 'radiogroup'}">
+        ${(q.options || []).map((o, i) => `<button type="button" class="ask-qpanel-opt${picked.includes(o.id) ? ' is-on' : ''}${q.multi ? ' is-multi' : ''}" role="${q.multi ? 'checkbox' : 'radio'}" aria-checked="${picked.includes(o.id)}" data-act="ask-choice-pick" data-question="${esc(q.id)}" data-option="${esc(o.id)}" title="${esc(o.value || o.label)}">
+          <span class="ask-qpanel-key">${q.multi ? (picked.includes(o.id) ? '✓' : '') : i + 1}</span>
+          <span class="ask-qpanel-label">${esc(o.label)}</span>
+          ${o.why ? `<span class="ask-qpanel-why">${esc(o.why)}</span>` : ''}
+          ${o.recommended ? '<span class="ask-qpanel-rec">推荐</span>' : ''}
+          <span class="ask-qpanel-go" aria-hidden="true">→</span>
+        </button>`).join('')}
+      </div>
+    </div>
+    ${total > 1 ? `<div class="ask-qpanel-dots">${questions.map((item, i) => {
+      const done = ((answers[item.id] || []).length > 0) || !!custom[item.id];
+      return `<span class="ask-qpanel-dot${i === page ? ' is-on' : ''}${done ? ' is-done' : ''}" title="${esc(item.question)}"></span>`;
+    }).join('')}</div>` : ''}
     <div class="ask-qpanel-foot">
       <span class="ask-qpanel-pen" aria-hidden="true">✎</span>
       <input id="ask-choice-input" class="ask-qpanel-input" autocomplete="off" placeholder="或自行撰写回复" value="${esc(text)}" />
       <button type="button" class="ask-qpanel-skip" data-act="ask-choice-skip">跳过</button>
-      <button type="button" class="ask-qpanel-send" data-act="ask-choice-send" ${canSend ? '' : 'disabled'}>发送</button>
+      <button type="button" class="ask-qpanel-send" data-act="${last ? 'ask-choice-send' : 'ask-choice-page'}" data-delta="1" ${(last ? canNext : answered) ? '' : 'disabled'} title="${last ? '提交这组问题的答案' : '回答后进入下一个问题'}">${action}</button>
     </div>
   </div>`;
 }
@@ -6167,14 +6281,22 @@ function askChoiceBindInput() {
   input.oninput = () => {
     if (!a.choice) return;
     a.choice.text = input.value;
-    const questions = askChoiceQuestions(a.choice.card);
-    const answeredAll = questions.every((q) => ((a.choice.answers || {})[q.id] || []).length > 0);
-    const send = $('#ask-qpanel .ask-qpanel-send');
-    if (send) send.disabled = !(input.value.trim() || answeredAll);
+    const q = askChoiceQuestions(a.choice.card)[Number(a.choice.page) || 0];
+    const picked = ((a.choice.answers || {})[q && q.id] || []).length;
+    const action = $('#ask-qpanel .ask-qpanel-send');
+    if (action) action.disabled = !(input.value.trim() || picked);
   };
   input.onkeydown = (event) => {
     if (event.isComposing) return;
-    if (event.key === 'Enter') { event.preventDefault(); askChoiceSend(); }
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      const a2 = askState();
+      const total = askChoiceQuestions(a2.choice && a2.choice.card).length || 1;
+      if ((Number(a2.choice && a2.choice.page) || 0) < total - 1) askChoicePage(1);
+      else askChoiceSend();
+    }
+    if (event.key === 'ArrowRight' && !input.value) { event.preventDefault(); askChoicePage(1); }
+    if (event.key === 'ArrowLeft' && !input.value) { event.preventDefault(); askChoicePage(-1); }
     if (event.key === 'Escape') { event.preventDefault(); askChoiceSkip(); }
   };
 }
@@ -6208,7 +6330,7 @@ function askChoicePick(questionId, optionId) {
   const a = askState();
   if (!a.choice) return;
   const questions = askChoiceQuestions(a.choice.card);
-  const q = questions.find((x) => x.id === questionId) || questions[0];
+  const q = questions.find((x) => x.id === questionId) || questions[a.choice.page || 0] || questions[0];
   if (!q) return;
   a.choice.answers = a.choice.answers || {};
   const current = a.choice.answers[q.id] || [];
@@ -6220,9 +6342,35 @@ function askChoicePick(questionId, optionId) {
     a.choice.answers[q.id] = [optionId];
   }
   a.choice.text = '';
+  if (a.choice.custom) delete a.choice.custom[q.id];
   const input = $('#ask-choice-input');
   if (input) input.value = '';
   askChoiceRefresh();
+}
+
+// 翻页：同一组问题一页一题，-1 上一题 / +1 下一题（到最后一题时由发送按钮接棒）
+function askChoicePage(delta) {
+  const a = askState();
+  const p = a.choice;
+  if (!p || p.closed) return;
+  const questions = askChoiceQuestions(p.card);
+  const total = questions.length || 1;
+  const from = Math.max(0, Math.min(total - 1, Number(p.page) || 0));
+  const q = questions[from];
+  // 翻页前把当前页手写的回答记住，切回来还在
+  const text = String(p.text || '').trim();
+  if (q && text && !((p.answers || {})[q.id] || []).length) {
+    p.custom = p.custom || {};
+    p.custom[q.id] = text;
+  }
+  p.text = '';
+  const to = Math.max(0, Math.min(total - 1, from + Number(delta || 0)));
+  p.page = to;
+  const next = questions[to];
+  if (next && p.custom && p.custom[next.id]) p.text = p.custom[next.id];
+  askChoiceRefresh();
+  const input = $('#ask-choice-input');
+  if (input) { input.value = p.text || ''; input.focus(); }
 }
 
 function askChoiceSummary() {
@@ -6230,17 +6378,21 @@ function askChoiceSummary() {
   if (!p) return { text: '', values: [], skills: [] };
   const questions = askChoiceQuestions(p.card);
   const answers = p.answers || {};
+  const custom = p.custom || {};
   const lines = [];
   const values = [];
   const skills = [];
   for (const q of questions) {
     const picked = (answers[q.id] || []).map((id) => (q.options || []).find((o) => o.id === id)).filter(Boolean);
-    if (!picked.length) continue;
-    lines.push('- ' + q.question + ' → ' + picked.map((o) => o.label).join('、'));
+    const typed = String(custom[q.id] || '').trim();
+    if (!picked.length && !typed) continue;
+    const label = picked.length ? picked.map((o) => o.label).join('、') : '（自定）' + typed;
+    lines.push('- ' + q.question + ' → ' + label);
     for (const o of picked) {
       values.push(o.value || o.label);
       if (o.skill_id) skills.push(o.skill_id);
     }
+    if (typed && !picked.length) values.push(typed);
   }
   return { text: lines.join('\n'), values, skills };
 }
@@ -6250,16 +6402,17 @@ function askChoiceSend() {
   const p = a.choice;
   if (!p || p.closed) return;
   const card = p.card;
-  const typed = String(p.text || '').trim();
-  const summary = askChoiceSummary();
-  if (!typed && !summary.values.length) return toast('先选一个选项，或写一句你自己的回复', true);
-  let message;
-  if (typed && !summary.values.length) {
-    message = typed;
-  } else {
-    message = ['【智能推荐 · 用户已确认】', summary.text, typed ? '补充：' + typed : '', '按以上选择继续，不要再重复确认。']
-      .filter(Boolean).join('\n');
+  const currentQ = askChoiceQuestions(card)[Number(p.page) || 0];
+  const currentText = String(p.text || '').trim();
+  if (currentQ && currentText) {
+    p.custom = p.custom || {};
+    p.custom[currentQ.id] = currentText;
+    if (!((p.answers || {})[currentQ.id] || []).length) p.text = '';
   }
+  const summary = askChoiceSummary();
+  if (!summary.values.length) return toast('先选一个选项，或写一句你自己的回复', true);
+  const message = ['【智能推荐 · 用户已确认】', summary.text, '按以上选择继续，不要再重复确认。']
+    .filter(Boolean).join('\n');
   const msg = askChoiceMessage();
   if (msg) {
     const answers = [];
@@ -6268,9 +6421,10 @@ function askChoiceSend() {
         const option = (q.options || []).find((o) => o.id === id);
         if (option) answers.push({ question: q.question, label: option.label, value: option.value || option.label });
       }
+      const typed = String((p.custom || {})[q.id] || '').trim();
+      if (typed && !((p.answers || {})[q.id] || []).length) answers.push({ question: q.question, label: '（自定）' + typed, value: typed });
     }
     if (answers.length) msg.choiceAnswers = { ...(msg.choiceAnswers || {}), [card.id]: answers };
-    if (typed) msg.choiceTyped = { ...(msg.choiceTyped || {}), [card.id]: typed };
   }
   if (summary.skills.length) a.skillId = summary.skills[0];
   p.closed = true;
@@ -6307,6 +6461,7 @@ function askMessageHtml(m, index, messages, a) {
         <span class="ask-media-name">${esc(f.name || '')}</span>
       </button>`).join('')}</div>` : ''}
       ${mine ? '' : askChoiceNoteHtml(m)}
+      ${mine ? '' : askSupplementNoteHtml(m)}
       ${mine ? '' : askQuickHtml(m, index)}
       ${(!mine && !pending) ? `<div class="ask-reply-actions">
         ${m.execution && m.execution.checkpoint_available && ['partial', 'failed', 'cancelled', 'budget_exceeded', 'interrupted'].includes(m.execution.outcome || m.execution.status) ? `<button type="button" data-act="ask-resume" data-index="${index}" title="从最近检查点继续，只读恢复">继续任务</button>` : ''}
@@ -6409,7 +6564,7 @@ function askComposerHtml() {
     <div class="ask-composer">
       ${askQueueHtml()}
       <div class="ask-popups" id="ask-popups"></div>
-      <textarea id="ask-input" class="ask-input" rows="2" maxlength="3000" placeholder="${a.generating ? '当前回复生成中：Enter 加入队列' : '聊聊你的想法，或输入 @ 选择技能'}">${esc(a.draft)}</textarea>
+      <textarea id="ask-input" class="ask-input" rows="2" maxlength="3000" placeholder="${a.generating ? '当前回复生成中：Enter 加入队列 · 直发＝补充要求给当前任务' : '聊聊你的想法，或输入 @ 选择技能'}">${esc(a.draft)}</textarea>
       <div class="ask-composer-bar">
         <button type="button" class="ask-icon-btn" data-act="ask-attach" title="添加附件（最多 5 个，单文件 10MB）">📎</button>
         <button type="button" class="ask-icon-btn" data-act="ask-skill-picker" title="插入 @视角">@</button>
@@ -6423,7 +6578,7 @@ function askComposerHtml() {
         <span class="grow"></span>
         ${askContextMeterHtml()}
         ${a.generating
-          ? `<button type="button" class="ask-send ask-send-queue" data-act="ask-send" ${a.draft.trim() ? '' : 'disabled'} title="加入队列，当前回复结束后依次发送">排队 ↑</button><button type="button" class="ask-send is-stop" data-act="ask-stop" title="停止生成">■ 停止</button>`
+          ? `<button type="button" class="ask-send ask-send-queue" data-act="ask-send" ${a.draft.trim() ? '' : 'disabled'} title="普通发送：加入队列，当前回复结束后依次发送">排队 ↑</button><button type="button" class="ask-send ask-send-direct" data-act="ask-send-direct" ${a.draft.trim() ? '' : 'disabled'} title="直接发送：作为补充说明交给正在执行的任务，不中断执行">直发 ⚡</button><button type="button" class="ask-send is-stop" data-act="ask-stop" title="停止生成">■ 停止</button>`
           : `<button type="button" class="ask-send" data-act="ask-send" ${a.draft.trim() ? '' : 'disabled'}>发送 ↑</button>`}
       </div>
     </div>
@@ -6608,18 +6763,79 @@ async function askLoadSummaryFiles() {
     a.summaryFiles={project,sid,...result};if(a.summaryOpen)askRenderAll();
   }catch(err){if(a.summaryOpen)toast(err.message,true);}
 }
+// 最近一次运行带来的上下文分项统计（后端算好写进回执）
+function askContextReport(chat) {
+  const list = (chat && chat.messages) || [];
+  for (let i = list.length - 1; i >= 0; i -= 1) {
+    const report = list[i].execution && list[i].execution.context && list[i].execution.context.report;
+    if (report && Array.isArray(report.items) && report.items.length) return report;
+  }
+  return null;
+}
+
+function askContextBlockHtml(chat, stats) {
+  const report = askContextReport(chat);
+  if (!report) {
+    const ratio = Math.max(0, Math.min(1, stats.ratio || 0));
+    return `<div class="ask-summary-usage"><b>${Math.round(ratio * 100)}% used</b><span>${askFmtTokens(stats.used)} / ${askFmtTokens(stats.total)}</span></div>
+      <div class="ask-ctx-bar"><i class="ask-ctx-seg is-messages" style="width:${(ratio * 100).toFixed(2)}%"></i></div>
+      <p class="ask-summary-hint">这个会话还没跑过：分项统计在第一次运行后出现。</p>`;
+  }
+  const total = Math.max(1, Number(report.window) || stats.total || 1);
+  const items = report.items || [];
+  const width = (item) => Math.min(100, Math.max(0, (Number(item.tokens) || 0) / total * 100)).toFixed(2);
+  const segments = items.map((item) => `<i class="ask-ctx-seg is-${esc(item.key)}" style="width:${width(item)}%" title="${esc(item.label)} · ${askFmtTokens(item.tokens)}"></i>`).join('');
+  const rows = items.map((item) => `<div class="ask-ctx-row${item.key === 'free' ? ' is-free' : ''}">
+      <span class="ask-ctx-dot is-${esc(item.key)}"></span>
+      <span class="ask-ctx-label">${esc(item.label)}</span>
+      <span class="ask-ctx-tokens">${askFmtTokens(item.tokens)}</span>
+      <span class="ask-ctx-pct">${(Number(item.percent) || 0).toFixed(1)}%</span>
+    </div>`).join('');
+  const meta = [report.messages ? report.messages + ' messages' : '', report.tool_count ? report.tool_count + ' tools' : '',
+    report.skill_count ? report.skill_count + ' skills' : ''].filter(Boolean).join(' · ');
+  const names = Array.isArray(report.tool_names) ? report.tool_names : [];
+  const toolsMore = (report.tool_count || names.length)
+    ? `<details class="ask-ctx-tools"><summary>Tools · ${report.tool_count || names.length}</summary><div class="ask-ctx-tool-list">${names.length ? names.map((name) => `<span>${esc(name)}</span>`).join('') : '<span>未记录工具名</span>'}</div></details>`
+    : '';
+  return `<div class="ask-summary-usage"><b>${(Number(report.used_percent) || 0).toFixed(0)}% used</b><span>${askFmtTokens(report.used)} / ${askFmtTokens(total)}</span></div>
+    <div class="ask-ctx-bar">${segments}</div>
+    ${rows}
+    ${meta ? `<div class="ask-ctx-meta">${esc(meta)}</div>` : ''}
+    ${toolsMore}
+    <small class="ask-summary-hint">估算口径：ASCII 4 字符≈1 token、中文 1.5 字符≈1 token；Autocompact buffer 是给输出与压缩预留的 15%。</small>`;
+}
+
+// 环境里的路径只显示尾部两段，完整路径放 title
+function askShortPath(value) {
+  const full = String(value || '').replace(/[\\/]+/g, '\\');
+  if (!full) return '未绑定目录';
+  const parts = full.split('\\').filter(Boolean);
+  if (parts.length <= 2) return full;
+  return '…\\' + parts.slice(-2).join('\\');
+}
+
 function askSummaryHtml(chat) {
   const a=askState(),stats=askContextStats();
   const indexed=a.summaryFiles?.project===askProjectId()&&a.summaryFiles?.sid===a.activeId?a.summaryFiles:null;
   const files=indexed?indexed.items.map(file=>({type:'artifact',file})):askSessionFiles(chat);
   const latest=[...(chat.messages||[])].reverse().find(m=>m.execution)?.execution;
   const selected=(a.models||[]).find(m=>m.id===a.modelId);
-  const used=latest?.usage?.input_tokens;
-  return '<aside class="ask-summary" aria-label="对话摘要"><header><b>摘要</b><button class="ask-icon-btn" data-act="ask-summary" aria-label="关闭摘要">×</button></header>'+
-    '<details open><summary>环境</summary><dl><dt>项目</dt><dd>'+esc(state.project?.name||askProjectId())+'</dd><dt>模型</dt><dd>'+esc(selected?.label||latest?.model||'默认模型')+'</dd><dt>权限</dt><dd>'+esc(askPermission(a.permission).label)+'</dd></dl></details>'+
-    '<details open><summary>上下文</summary><div class="ask-summary-usage"><b>'+Math.round(stats.ratio*100)+'% '+(stats.exact?'参考占用':'估算占用')+'</b><span>'+askFmtTokens(stats.used)+' / '+askFmtTokens(stats.total)+'</span></div><meter min="0" max="1" value="'+stats.ratio+'" aria-label="上下文估算占用"></meter><dl><dt>消息</dt><dd>'+(chat.messages||[]).length+' 条</dd><dt>最近输入用量</dt><dd>'+(used?askFmtTokens(used)+' tokens':'暂无渠道用量')+'</dd><dt>工具 / 技能 / 系统提示词</dt><dd>暂无分项计量</dd></dl><small>总占用基于最近用量和新增文本估算，不代表逐项精确计量。</small></details>'+
-    '<details><summary>连接与能力</summary><p>本地文件工具 · '+(a.toolsSupported===false?'当前模型不支持工具调用':'工具调用可用')+'</p><p>当前技能：'+esc(a.skillId?askSkill(a.skillId).name:'未选择')+'</p></details>'+
-    '<details open><summary>产出文件</summary>'+(files.length?files.slice(-10).map(f=>f.type==='artifact'?'<button class="ask-summary-file" data-act="ask-preview" data-id="'+esc(f.file.id)+'">'+esc(f.file.name)+'</button>':'<button class="ask-summary-file" data-act="ask-open-media" data-index="'+f.mi+'" data-media="'+f.fi+'">'+esc(f.name)+'</button>').join(''):'<p>暂无已交付文件</p>')+((indexed?.total||files.length)>10?'<small>展示最近 10 项，全部文件可在工作区查看。</small>':'')+'</details></aside>';
+  const outputs=files.length?files.slice(-10).map(f=>f.type==='artifact'
+    ?'<button class="ask-summary-file" data-act="ask-preview" data-id="'+esc(f.file.id)+'">'+esc(f.file.name)+'</button>'
+    :'<button class="ask-summary-file" data-act="ask-open-media" data-index="'+f.mi+'" data-media="'+f.fi+'">'+esc(f.name)+'</button>').join('')
+    :'<p>暂无已交付文件</p>';
+  return '<aside class="ask-summary" aria-label="Summary"><header><b>Summary</b><button class="ask-icon-btn" data-act="ask-summary" aria-label="关闭摘要">×</button></header>'+
+    '<details open class="ask-summary-sec"><summary>Environment</summary><dl>'+
+      '<dt>Workspace</dt><dd>此计算机</dd>'+
+      '<dt>Project</dt><dd>'+esc(state.project?.name||askProjectId())+'</dd>'+
+      '<dt>Path</dt><dd title="'+esc(state.project?.dir||'')+'">'+esc(askShortPath(state.project?.dir))+'</dd>'+
+      '<dt>Model</dt><dd>'+esc(selected?.label||latest?.model||'默认模型')+'</dd>'+
+      '<dt>Permission</dt><dd>'+esc(askPermission(a.permission).label)+'</dd>'+
+    '</dl></details>'+
+    '<details open class="ask-summary-sec"><summary>Context</summary>'+askContextBlockHtml(chat,stats)+'</details>'+
+    '<details open class="ask-summary-sec"><summary>Connectors</summary><p>Local tools · '+(a.toolsSupported===false?'当前模型不支持工具调用':'工具调用可用')+'</p><p>Skill · '+esc(a.skillId?askSkill(a.skillId).name:'未选择')+'</p></details>'+
+    '<details open class="ask-summary-sec"><summary>Outputs</summary>'+outputs+((indexed?.total||files.length)>10?'<small>展示最近 10 项，全部文件可在工作区查看。</small>':'')+'</details>'+
+    '<details open class="ask-summary-sec"><summary>Changes</summary><div class="ask-changes"><span class="ask-changes-diff"><b>+0</b><i>−0</i></span><button type="button" class="ask-changes-pr" disabled title="尚未接入 GitHub">Create PR</button></div><p class="ask-changes-note">GitHub 改动统计待接入，框位保留。</p></details></aside>';
 }
 
 /* 知识库 / 插件管理 */
@@ -6859,7 +7075,7 @@ function renderScript() {
         </div>
         <div class="ask-head-actions">
           <button type="button" class="ask-icon-btn" data-act="ask-head-menu" aria-label="管理" aria-haspopup="menu" aria-expanded="${!!a.headerMenu}" title="管理">⋯</button>
-          <button type="button" class="ask-icon-btn ${a.summaryOpen?'is-on':''}" data-act="ask-summary" aria-label="摘要" aria-expanded="${!!a.summaryOpen}" title="摘要"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="5" cy="6" r="2"/><circle cx="5" cy="17" r="2"/><path d="M11 6h10M11 12h10M11 18h10"/></svg></button>
+          <button type="button" class="ask-icon-btn ${a.summaryOpen?'is-on':''}" data-act="ask-summary" aria-label="Summary" aria-expanded="${!!a.summaryOpen}" title="Summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="5" cy="6" r="2"/><circle cx="5" cy="17" r="2"/><path d="M11 6h10M11 12h10M11 18h10"/></svg></button>
           <span class="aw-head-divider"></span><button type="button" class="ask-icon-btn" data-act="ask-new-workspace" aria-label="新建标签页" title="新建标签页"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M12 7v10M7 12h10"/></svg></button>
 
           ${a.headerMenu?askHeaderMenuHtml(chat):''}
@@ -6939,11 +7155,100 @@ function askEnqueue(raw, chatId) {
   toast('已排队第 ' + list.length + ' 条，当前回复结束后依次发送');
 }
 
-async function askWaitRunEnd(chatId, timeoutMs = 20000) {
-  const started = Date.now();
-  while (askRunOf(chatId) && Date.now() - started < timeoutMs) {
-    await new Promise((resolve) => setTimeout(resolve, 200));
+/* ------------------- 直发 = 当前任务的补充说明（不是新任务） ------------------- */
+// 有任务在跑时：这句话并进当前运行，任务不中断、不重启、已完成步骤与中间结果全部保留。
+async function askSupplementSend(text, chatId) {
+  const a = askState();
+  const id = chatId || a.activeId;
+  const body = String(text || '').trim();
+  const run = askRunOf(id);
+  const runId = (run && run.runId) || '';
+  if (!id || !body) return { ok: false, code: 'empty' };
+  const url = runId
+    ? '/api/agent/runs/' + encodeURIComponent(runId) + '/supplements'
+    : '/api/agent/sessions/' + encodeURIComponent(id) + '/supplements';
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Project-Id': askProjectId() },
+      body: JSON.stringify({ text: body }),
+      signal: AbortSignal.timeout(10000),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const detail = data.detail || {};
+      return {
+        ok: false,
+        code: (detail && detail.code) || 'error',
+        message: typeof detail === 'string' ? detail : ((detail && detail.message) || '补充说明未送达'),
+        runId,
+      };
+    }
+    return { ok: true, ...data, runId: data.run_id || runId };
+  } catch (err) {
+    return { ok: false, code: 'network', message: err.message || '补充说明未送达', runId };
   }
+}
+
+function askQueueMark(chatId, ids, state) {
+  const a = askState();
+  const id = chatId || a.activeId;
+  const list = askLoadQueue(id);
+  const wanted = ids || [];
+  let hit = false;
+  for (const item of list) {
+    if (item.sup && wanted.includes(item.sup.id)) { item.sup.state = state; hit = true; }
+  }
+  if (hit) { askSaveQueue(id); if (a.activeId === id) askRenderSoon(); }
+}
+
+function askQueueAck(chatId, ids) {
+  const a = askState();
+  const id = chatId || a.activeId;
+  const list = askLoadQueue(id);
+  const wanted = ids || [];
+  if (!list.length || !wanted.length) return;
+  let hit = false;
+  for (let i = list.length - 1; i >= 0; i -= 1) {
+    const item = list[i];
+    if (item.sup && wanted.includes(item.sup.id)) { list.splice(i, 1); hit = true; }
+  }
+  if (hit) { askSaveQueue(id); if (a.activeId === id) askRenderSoon(); }
+}
+
+// 一轮收尾：以服务端记录为准核对每条补充说明——已并入的删掉，没赶上的退回普通排队继续发。
+async function askQueueSettle(chatId, runId) {
+  const a = askState();
+  const id = chatId || a.activeId;
+  const list = askLoadQueue(id);
+  const marks = list.filter((x) => x.sup);
+  if (!marks.length) return;
+  const target = runId || (marks[0].sup && marks[0].sup.runId) || '';
+  let snapshot = null;
+  if (target) {
+    try {
+      const res = await fetch('/api/agent/runs/' + encodeURIComponent(target) + '/supplements', {
+        headers: { 'X-Project-Id': askProjectId() }, signal: AbortSignal.timeout(8000),
+      });
+      if (res.ok) snapshot = await res.json();
+    } catch { /* 拿不到就用本地状态兜底 */ }
+  }
+  const status = new Map(((snapshot && snapshot.items) || []).map((x) => [x.id, x.status]));
+  const keep = [];
+  let back = 0;
+  for (const item of list) {
+    if (!item.sup) { keep.push(item); continue; }
+    const state = status.get(item.sup.id) || (item.sup.state === 'applied' ? 'applied' : '');
+    if (state === 'applied') continue;           // 已并入当前任务，删掉
+    delete item.sup;                             // 没赶上检查点：退回普通排队
+    back += 1;
+    keep.push(item);
+  }
+  list.length = 0;
+  list.push(...keep);
+  askSaveQueue(id);
+  if (a.activeId === id) askRenderAll();
+  if (back) toast(back + ' 条补充说明没赶上执行检查点，已退回队列接着发送');
 }
 
 // 一轮结束后只发队首那一条，剩下继续排队
@@ -6963,16 +7268,19 @@ function askQueueHtml() {
   const a = askState();
   const list = askLoadQueue(a.activeId);
   if (!list.length) return '';
-  const first = list[0];
+  const running = !!askRunOf(a.activeId);
+  const rows = list.slice(0, 3).map((item, i) => `<div class="ask-queue-item">
+      <span class="ask-queue-idx">${i + 1}</span>
+      <span class="ask-queue-text" title="${esc(item.text)}">${esc(item.text)}</span>
+      ${item.sup ? `<span class="ask-queue-state">${item.sup.state === 'applied' ? '已并入' : '等检查点'}</span>` : ''}
+      ${(i === 0 && !item.sup) ? `<button type="button" class="ask-queue-btn is-direct" data-act="ask-queue-now" data-id="${esc(item.id)}" title="${running ? '直接发送：作为补充说明交给正在执行的任务，不中断执行' : '马上发送这条'}">${running ? '直发' : '↑'}</button>` : ''}
+      <button type="button" class="ask-queue-btn is-danger" data-act="ask-queue-cancel" data-id="${esc(item.id)}" title="从队列里取消这条">×</button>
+    </div>`).join('');
+  const hint = running ? '直发＝补充给当前任务，不中断执行' : '当前没有任务在跑，点 ↑ 立即发送';
   return `<div class="ask-queue" role="region" aria-label="待发送队列">
-    <div class="ask-queue-head"><span>待发送 <b>${list.length}</b> 条</span><span class="ask-queue-hint">当前回复结束后依次发送</span></div>
-    <div class="ask-queue-item">
-      <span class="ask-queue-idx">1</span>
-      <span class="ask-queue-text" title="${esc(first.text)}">${esc(first.text)}</span>
-      <button type="button" class="ask-queue-btn" data-act="ask-queue-now" data-id="${esc(first.id)}" title="立即补充：中断当前回复并马上发送这条">↑</button>
-      <button type="button" class="ask-queue-btn is-danger" data-act="ask-queue-cancel" data-id="${esc(first.id)}" title="从队列里取消这条">×</button>
-    </div>
-    ${list.length > 1 ? `<div class="ask-queue-rest">后面还有 ${list.length - 1} 条，依次排队</div>` : ''}
+    <div class="ask-queue-head"><span>待发送 <b>${list.length}</b> 条</span><span class="ask-queue-hint">${hint}</span></div>
+    ${rows}
+    ${list.length > 3 ? `<div class="ask-queue-rest">后面还有 ${list.length - 3} 条，依次排队</div>` : ''}
   </div>`;
 }
 
@@ -7557,6 +7865,8 @@ function askRenderMessages() {
   else if (askLastScroll(a)) askHoldScroll(host, askLastScroll(a));
   else if (askFollowBottom()) host.scrollTop = host.scrollHeight;
   askReportScrollJump(view, host, 'askRenderMessages');
+  askEnsureLiveTicker();
+  askTraceAutoLoad(chat);
 }
 
 /* ------------------------------- 行为 ------------------------------- */
@@ -7585,7 +7895,7 @@ function askSyncEffort() {
   if (!efforts.includes(a.effort)) a.effort = efforts.includes('high') ? 'high' : (efforts[0] || '');
 }
 
-function askApplyEvent(msg, data) {
+function askApplyEvent(msg, data, chatId) {
   if (data.type === 'start' && data.execution) msg.execution = data.execution;
   if (data.type === 'process' && data.plan) { msg.execution = msg.execution || {}; msg.execution.plan = data.plan; }
   if (data.type === 'trace') {
@@ -7600,6 +7910,13 @@ function askApplyEvent(msg, data) {
     }
   }
   if (data.type === 'summary' && msg.execution) msg.execution.summary = data.text;
+  if (data.type === 'tool_call') {
+    msg.live = { tool: data.tool || '', detail: data.detail || '', phase: 'running', time: Number(data.time) || Date.now() };
+    if (msg._t0 == null) msg._t0 = Number(data.time) || Date.now();
+  }
+  if (data.type === 'tool_result') {
+    msg.live = { tool: data.tool || '', detail: data.detail || '', phase: data.ok === false ? 'failed' : 'done', time: Number(data.time) || Date.now() };
+  }
   if (data.type === 'media' && Array.isArray(data.files)) {
     msg.media = msg.media || [];
     for (const file of data.files) {
@@ -7643,12 +7960,41 @@ function askApplyEvent(msg, data) {
       msg.choices.push(card);
       // 有待回答的问题就把它抬到输入框上方（最新的问题覆盖上一张）
       const a = askState();
-      a.choice = { messageId: msg.id || '', card, answers: {}, text: '', closed: false };
+      a.choice = { messageId: msg.id || '', card, answers: {}, custom: {}, text: '', page: 0, closed: false };
       askChoiceRefresh();   // 首次没有面板节点时会整块重绘，把问句条挂上去
     }
   }
+  if (data.type === 'supplement_received' && Array.isArray(data.items)) {
+    msg.supplements = msg.supplements || [];
+    for (const item of data.items) {
+      const at = msg.supplements.findIndex((x) => x.id === item.id);
+      const next = { id: item.id, text: item.text, time: item.time, state: 'received' };
+      if (at >= 0) msg.supplements[at] = { ...msg.supplements[at], ...next };
+      else msg.supplements.push(next);
+    }
+    askQueueMark(chatId, data.items.map((x) => x.id), 'received');
+    askRenderSoon();
+  }
+  if (data.type === 'supplement' && Array.isArray(data.items)) {
+    msg.supplements = msg.supplements || [];
+    for (const item of data.items) {
+      const at = msg.supplements.findIndex((x) => x.id === item.id);
+      const next = { id: item.id, text: item.text, time: item.time, state: 'applied' };
+      if (at >= 0) msg.supplements[at] = { ...msg.supplements[at], ...next };
+      else msg.supplements.push(next);
+    }
+    // 已并入当前任务：从待发送队列抹掉，不会被当成新任务再发一遍
+    askQueueAck(chatId, data.items.map((x) => x.id));
+    askRenderSoon();
+  }
   if (data.type === 'replace') msg.text = String(data.text || '');
   if (data.type === 'delta') msg.text = (msg.text || '') + String(data.text || '');
+  // 模型正在组织回复（没有工具在跑）：状态行跟一句它正在写的内容，像实时字幕
+  if ((data.type === 'delta' || data.type === 'replace') && (!msg.live || msg.live.phase !== 'running')) {
+    const line = String(msg.text || '').replace(/\s+/g, ' ').trim().slice(-60);
+    msg.live = { tool: '', detail: line, phase: 'thinking', time: Date.now() };
+    if (msg._t0 == null) msg._t0 = Date.now();
+  }
   if (data.type === 'start' && data.execution) {
     const a = askState();
     const next = data.execution.tools_supported !== false;
@@ -7695,7 +8041,7 @@ async function askQueueReply(chat, question, insertAt, fileIds = [], resumeId = 
       if (data.sequence <= lastSeq) return;
       lastSeq = data.sequence;
     }
-    askApplyEvent(msg, data);
+    askApplyEvent(msg, data, chat.id);
   };
   try {
     if (!resumeId) {
@@ -7811,6 +8157,8 @@ async function askQueueReply(chat, question, insertAt, fileIds = [], resumeId = 
     if (msg.execution && msg.execution.id && !(msg.execution.plan && (msg.execution.plan.steps || []).length)) {
       setTimeout(() => { askLoadMessageTrace(msg, '', chat.id).catch(() => {}); }, 30);
     }
+    // 补充说明核对：已并入当前任务的移出队列，没赶上检查点的退回普通排队继续发
+    try { await askQueueSettle(chat.id, runId); } catch { /* ignore */ }
     // 队列只发下一条
     askDrainQueue(chat.id);
   }
@@ -7879,6 +8227,32 @@ async function askSend(text, chatId) {
   askPersist();
   askRenderAll();
   askQueueReply(chat, raw, undefined, attached.map((f) => f.id));
+}
+
+// 输入框「直发」：有任务在跑就作为补充说明并进当前任务；没有任务时照旧开新一轮
+async function askSendDirect() {
+  const a = askState();
+  const chatId = a.activeId;
+  const text = String(a.draft || '').trim();
+  if (!chatId || !text) return;
+  if (!askRunOf(chatId)) { await askSend(text, chatId); return; }
+  const res = await askSupplementSend(text, chatId);
+  if (!res.ok) {
+    if (res.code === 'no_active_run') { await askSend(text, chatId); return; }
+    toast(res.message || '补充说明未送达，请稍后重试', true);
+    return;
+  }
+  // 记进本地队列：没赶上检查点也能在收尾时退回普通发送，不会丢
+  const list = askLoadQueue(chatId);
+  list.push({ id: askId(), text, time: Date.now(), sup: { id: res.id, runId: res.runId, state: 'queued', position: res.position } });
+  askSaveQueue(chatId);
+  a.draft = '';
+  const input = $('#ask-input');
+  if (input) input.value = '';
+  askRenderPopups();
+  askRenderAll();
+  toast('已作为补充说明发给当前任务（第 ' + res.position + ' 条），下个检查点生效，任务不中断');
+  if ((a.attachments || []).length) toast('直发只带文字，附件仍留在输入框里', true);
 }
 
 async function askStop() {
@@ -8204,15 +8578,17 @@ function bindAsk(root) {
         const item = list.find((x) => x.id === btn.dataset.id) || list[0];
         const idx = list.findIndex((x) => x.id === item.id);
         if (askRunOf(chatId)) {
-          if (!confirm('当前回复还在生成，立即补充会中断它并马上发送这条，继续？')) return;
-          // 先挪到队首，停止后由队列自然发出队首，避免和“停止后的自动发送”重复
-          if (idx > 0) { list.splice(idx, 1); list.unshift(item); }
-          askSaveQueue(chatId);
-          askRenderAll();
-          await askStop();
-          await askWaitRunEnd(chatId);
-          if (!askRunOf(chatId) && askLoadQueue(chatId)[0]?.id === item.id) askDrainQueue(chatId);
-          return;
+          // 直发：交给正在执行的这条任务当补充说明，不中断、不重启
+          const res = await askSupplementSend(item.text, chatId);
+          if (res.ok) {
+            item.sup = { id: res.id, runId: res.runId, state: 'queued', position: res.position };
+            askSaveQueue(chatId);
+            askRenderAll();
+            toast('已作为补充说明发给当前任务（第 ' + res.position + ' 条），下个检查点生效，任务不中断');
+            return;
+          }
+          if (res.code !== 'no_active_run') { toast(res.message || '补充说明未送达，请稍后重试', true); return; }
+          // 任务刚好结束：退回普通发送
         }
         if (idx >= 0) list.splice(idx, 1);
         askSaveQueue(chatId);
@@ -8220,13 +8596,14 @@ function bindAsk(root) {
         await askSend(item.text, chatId);
         return;
       }
+      if (act === 'ask-send-direct') { await askSendDirect(); return; }
       if (act === 'ask-trace-toggle') {
         const run = btn.dataset.run || '';
         const chat = askActive();
         const target = chat && (chat.messages || []).find((m) => m.execution && m.execution.id === run);
         if (!target) return;
         target.traceOpen = !target.traceOpen;
-        if (target.traceOpen && !Array.isArray(target.trajectory)) return askLoadMessageTrace(target, run);
+        // 展开就等于要看：轨迹由 askTraceAutoLoad 自动拉，不用再点一次
         return askRenderMessages();
       }
       if (act === 'ask-load-trace') {
@@ -8541,6 +8918,7 @@ function bindAsk(root) {
         return;
       }
       if (act === 'ask-choice-pick') return askChoicePick(btn.dataset.question, btn.dataset.option);
+      if (act === 'ask-choice-page') return askChoicePage(Number(btn.dataset.delta) || 1);
       if (act === 'ask-choice-send') return askChoiceSend();
       if (act === 'ask-choice-skip') return askChoiceSkip();
       if (act === 'ask-choice-type') {
@@ -9735,6 +10113,8 @@ function collectChannelDraft(kind, draft) {
     if (scope === 'options') draft.options[key] = value;
     else draft[key] = value;
   }
+  const clearKey = $('#ch-clear-key');
+  draft.clearKey = !!(clearKey && clearKey.dataset.on === '1');
   const maxTokens = $('#ch-max-tokens');
   if (maxTokens) draft.maxTokens = Math.max(0, Number(maxTokens.value) || 0);
   const contextWindow = $('#ch-context-window');
@@ -9841,6 +10221,13 @@ function openChannelDialog(kind, channel, opts = {}) {
       }
       if (f.key === 'apiKey') {
         const value = draft.apiKey || '';
+        const count = String(value).split(/[\r\n,;]+/).map((v) => v.trim()).filter(Boolean).length;
+        if (f.type === 'textarea') {
+          return `<div class="field full"><label>${esc(f.label)} <span class="hint">本机明文保存</span></label>
+          <textarea class="input mono" data-ch-key="apiKey" data-ch-scope="top" rows="4" spellcheck="false" autocomplete="off" placeholder="${esc(f.placeholder || '每行一个 Key')}">${esc(value)}</textarea>
+          <div class="hint"><span id="ch-key-count">${count ? `已填 ${count} 个账号，每个账号各算一路并发` : '还没填密钥；留空保存会保留原密钥'}</span>
+            <button type="button" class="wmd-btn wmd-btn-sm" id="ch-clear-key" data-on="0" style="margin-left:8px">清空密钥</button></div></div>`;
+        }
         return `<div class="field"><label>${esc(f.label)} <span class="hint">本机明文保存</span></label>
           <input class="input mono" data-ch-key="apiKey" data-ch-scope="top" type="text" value="${esc(value)}" placeholder="${esc(f.placeholder || 'sk-…')}" autocomplete="off" />
           <div class="hint">直接显示并保存在 data/config.json；留空保存 = 保留原 Key</div></div>`;
@@ -9920,6 +10307,26 @@ function openChannelDialog(kind, channel, opts = {}) {
     $('#modal-panel').classList.add('modal-channel');
     const mgrLoad = $('#ch-manager-load');
     if (mgrLoad) mgrLoad.onclick = () => loadManagerAccounts(false);
+    const keyArea = $('[data-ch-key="apiKey"]');
+    const keyCount = $('#ch-key-count');
+    if (keyArea && keyCount) {
+      const refreshCount = () => {
+        const n = String(keyArea.value || '').split(/[\r\n,;]+/).map((v) => v.trim()).filter(Boolean).length;
+        keyCount.textContent = n ? `已填 ${n} 个账号，每个账号各算一路并发` : '还没填密钥；留空保存会保留原密钥';
+      };
+      keyArea.oninput = refreshCount;
+      refreshCount();
+    }
+    const clearKey = $('#ch-clear-key');
+    if (clearKey) {
+      clearKey.onclick = () => {
+        const on = clearKey.dataset.on !== '1';
+        clearKey.dataset.on = on ? '1' : '0';
+        if (keyArea) keyArea.value = '';
+        if (keyCount) keyCount.textContent = on ? '保存后该渠道没有任何密钥' : '还没填密钥；留空保存会保留原密钥';
+        clearKey.textContent = on ? '撤销清空' : '清空密钥';
+      };
+    }
 
     $('#ch-type').onchange = () => {
       const current = collectChannelDraft(kind, draft);
@@ -10205,7 +10612,10 @@ async function setActiveProject(id, opts = {}) {
   if (previousId && previousId !== id) { await WB.flushAll(); studioFlush(previousId); }
   state.projectId = id;
   state.project = project;
-  try { localStorage.setItem('wmd.projectId', id); } catch { /* ignore */ }
+  try {
+    localStorage.setItem('wmd.projectId', id);
+    localStorage.removeItem('wmd.projectNone');
+  } catch { /* ignore */ }
   state.styleDetail = await api('/api/styles/' + encodeURIComponent(project.styleId)).catch(() => null);
   // 必须先等服务端记住当前项目，再重新读素材/媒体/任务，否则会读到上一个项目的数据。
   await fetch('/api/auth/project', {
@@ -10311,32 +10721,92 @@ function bindProjects(root) {
 async function askOpenProjectPicker() {
   if (askState().generating) return toast('请等待当前任务完成，再切换项目', true);
   await loadProjects();
-  openModal('<div class="agent-project-picker"><div class="modal-head"><h2>选择项目</h2><button type="button" data-close="1" aria-label="关闭">×</button></div><input class="input" id="agent-project-search" placeholder="搜索项目" aria-label="搜索项目" /><div id="agent-project-options" role="listbox" aria-label="已有项目"></div><button type="button" class="agent-project-new" id="agent-project-new">＋ 新建项目</button></div>');
+  openModal('<div class="agent-project-picker">'
+    +'<div class="app-picker-search"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7.1" cy="7.1" r="4.5"/><path d="M10.5 10.5 13.9 13.9"/></svg><input id="agent-project-search" placeholder="搜索项目" aria-label="搜索项目" /></div>'
+    +'<div id="agent-project-options" role="listbox" aria-label="已有项目"></div>'
+    +'<div class="app-picker-foot">'
+    +'<button type="button" id="agent-project-new"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.6v8.8M3.6 8h8.8"/></svg>新建项目</button>'
+    +'<button type="button" id="agent-project-none"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>不在项目中工作</button>'
+    +'</div></div>');
   const trigger=document.querySelector('.ask-project-trigger').getBoundingClientRect();
   const panel=$('#modal-panel');panel.classList.add('modal-project-picker');
-  panel.style.setProperty('--project-picker-left',Math.max(12,Math.min(trigger.left,window.innerWidth-432))+'px');
+  panel.style.setProperty('--project-picker-left',Math.max(12,Math.min(trigger.left,window.innerWidth-412))+'px');
   panel.style.setProperty('--project-picker-bottom',Math.max(12,window.innerHeight-trigger.top+6)+'px');
+  let cursor=0;
+  const suffixOf=(p)=>{const seg=String(p.dir||'').replaceAll(String.fromCharCode(92),'/').split('/').filter(Boolean).pop()||'';return seg&&seg!==p.name?seg:'';};
   const draw=()=>{
     const q=$('#agent-project-search').value.trim().toLowerCase();
-    $('#agent-project-options').innerHTML=(state.projects||[]).filter(p=>p.name.toLowerCase().includes(q)).map(p=>'<button type="button" role="option" aria-selected="'+(p.id===state.projectId)+'" data-project-select="'+esc(p.id)+'"><span>▱ '+esc(p.name)+'</span><small>'+esc(p.dir||'')+'</small>'+(p.id===state.projectId?'<b>✓</b>':'')+'</button>').join('')||'<p class="hint">没有匹配的项目</p>';
+    $('#agent-project-options').innerHTML=(state.projects||[]).filter(p=>p.name.toLowerCase().includes(q)).map(p=>{
+      const selected=p.id===state.projectId;const suffix=suffixOf(p);
+      return '<button type="button" role="option" aria-selected="'+selected+'" data-project-select="'+esc(p.id)+'" title="'+esc(p.dir||p.name)+'">'
+        +'<span class="app-picker-ico">'+AP_FOLDER_SVG+'</span>'
+        +'<span class="app-picker-name">'+esc(p.name)+'</span>'
+        +(suffix?'<small>'+esc(suffix)+'</small>':'')
+        +(selected?'<b>✓</b>':'')
+        +'</button>';
+    }).join('')||'<p class="hint">没有匹配的项目</p>';
     document.querySelectorAll('#agent-project-options [data-project-select]').forEach(btn=>btn.onclick=async()=>{try{await setActiveProject(btn.dataset.projectSelect);closeModal();}catch(e){toast(e.message,true);}});
+    const list=projectRows();
+    const active=list.findIndex((btn)=>btn.getAttribute('aria-selected')==='true');
+    cursor=active>=0?active:0;
+    paintCursor();
   };
-  $('#agent-project-search').oninput=draw;
+  const projectRows=()=>Array.from(document.querySelectorAll('#agent-project-options [data-project-select]'));
+  const paintCursor=()=>projectRows().forEach((btn,i)=>btn.classList.toggle('is-cursor',i===cursor));
+  $('#agent-project-search').oninput=()=>{cursor=0;draw();};
+  $('#agent-project-search').onkeydown=(event)=>{
+    const list=projectRows();
+    if(!list.length)return;
+    if(event.key==='ArrowDown'||event.key==='ArrowUp'){
+      event.preventDefault();
+      cursor=(cursor+(event.key==='ArrowDown'?1:list.length-1))%list.length;
+      paintCursor();
+      list[cursor].scrollIntoView({block:'nearest'});
+    }else if(event.key==='Enter'){
+      event.preventDefault();
+      (list[cursor]||list[0]).click();
+    }
+  };
   $('#agent-project-new').onclick=()=>askCreateProjectDialog();
+  $('#agent-project-none').onclick=async()=>{
+    try{
+      await api('/api/auth/project',{method:'POST',body:{projectId:''}});
+      try{localStorage.removeItem('wmd.projectId');localStorage.setItem('wmd.projectNone','1');}catch{/* ignore */}
+      closeModal();
+      location.reload();
+    }catch(e){toast(e.message,true);}
+  };
   draw();$('#agent-project-search').focus();
 }
+const AP_FOLDER_SVG='<svg class="ap-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M1.9 4.6A1.6 1.6 0 0 1 3.5 3h2.4c.43 0 .84.17 1.14.47L8.2 4.9h4.3a1.6 1.6 0 0 1 1.6 1.6v4.9a1.6 1.6 0 0 1-1.6 1.6h-9a1.6 1.6 0 0 1-1.6-1.6z"/></svg>';
 function askCreateProjectDialog() {
   let folders=[],browsing=false;
-  openModal('<div class="agent-project-create"><div class="modal-head"><h2>创建项目</h2><button type="button" data-close="1" aria-label="关闭">×</button></div><label for="agent-project-name">项目名称</label><input class="input" id="agent-project-name" maxlength="60" placeholder="项目名称" /><div class="agent-source-title"><b>源文件夹</b><span>▰ 此计算机</span></div><div id="agent-source-list"></div><p class="hint">第一个文件夹作为主要工作区，产出文件保存在这里。工作区权限覆盖所有已添加文件夹。</p><div class="modal-foot"><button type="button" data-close="1" class="wmd-btn">取消</button><button type="button" class="wmd-btn wmd-btn-primary" id="agent-project-create">创建项目</button></div></div>');
+  openModal('<div class="agent-project-create">'
+    +'<div class="apc-head"><h2>创建项目</h2><button type="button" class="apc-close" data-close="1" aria-label="关闭">×</button></div>'
+    +'<div class="apc-field"><svg class="apc-input-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M1.9 4.6A1.6 1.6 0 0 1 3.5 3h2.4c.43 0 .84.17 1.14.47L8.2 4.9h4.3a1.6 1.6 0 0 1 1.6 1.6v4.9a1.6 1.6 0 0 1-1.6 1.6h-9a1.6 1.6 0 0 1-1.6-1.6z"/></svg>'
+    +'<input id="agent-project-name" maxlength="60" placeholder="项目名称" aria-label="项目名称" /></div>'
+    +'<div class="apc-label">源文件夹</div>'
+    +'<div class="apc-source" id="agent-source-box"><div id="agent-source-list"></div></div>'
+    +'<div class="apc-foot"><button type="button" class="apc-ghost" data-close="1">取消</button><button type="button" class="apc-primary" id="agent-project-create">创建项目</button></div>'
+    +'</div>');
   const draw=()=>{
-    $('#agent-source-list').innerHTML=folders.map((p,i)=>'<div class="agent-source-row"><span title="'+esc(p)+'"><b>▱ '+esc(p.replaceAll(String.fromCharCode(92),'/').split('/').filter(Boolean).pop())+'</b><small>'+esc(p)+'</small></span>'+(i===0?'<small>主要</small>':'<button type="button" data-primary="'+i+'">设为主要</button>')+'<button type="button" data-remove="'+i+'" aria-label="移除文件夹">×</button></div>').join('')+'<button type="button" class="agent-project-new" id="agent-folder-add">＋ 添加文件夹</button>';
+    const list=$('#agent-source-list');
+    if(!folders.length){
+      list.innerHTML='<div class="apc-empty">'
+        +'<div class="apc-empty-text">在此电脑上添加文件夹<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></div>'
+        +'<button type="button" class="apc-add" id="agent-folder-add"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.6v8.8M3.6 8h8.8"/></svg>添加</button>'
+        +'</div>';
+    }else{
+      list.innerHTML=folders.map((p,i)=>'<div class="agent-source-row"><span title="'+esc(p)+'"><b>'+esc(p.replaceAll(String.fromCharCode(92),'/').split('/').filter(Boolean).pop())+'</b><small>'+esc(p)+'</small></span>'+(i===0?'<small class="apc-tag">主要</small>':'<button type="button" class="apc-mini" data-primary="'+i+'">设为主要</button>')+'<button type="button" class="apc-x" data-remove="'+i+'" aria-label="移除文件夹">×</button></div>').join('')
+        +'<button type="button" class="apc-add-row" id="agent-folder-add"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.6v8.8M3.6 8h8.8"/></svg>添加文件夹</button>';
+    }
     document.querySelectorAll('#agent-source-list [data-remove]').forEach(b=>b.onclick=()=>{folders.splice(Number(b.dataset.remove),1);draw();});
     document.querySelectorAll('#agent-source-list [data-primary]').forEach(b=>b.onclick=()=>{folders.unshift(folders.splice(Number(b.dataset.primary),1)[0]);draw();});
-    $('#agent-folder-add').onclick=()=>browse();
+    const add=$('#agent-folder-add');if(add)add.onclick=()=>browse();
   };
   const browse=async()=>{
     if(browsing)return;
-    browsing=true;const add=$('#agent-folder-add');add.disabled=true;add.textContent='等待系统选择文件夹…';
+    browsing=true;const add=$('#agent-folder-add');if(add){add.disabled=true;add.textContent='等待系统选择文件夹…';}
     try{
       const data=await api('/api/project-folders/pick',{method:'POST',body:{}});
       if(data.path&&!folders.some(p=>p.toLowerCase()===data.path.toLowerCase()))folders.push(data.path);
@@ -10502,9 +10972,11 @@ async function init() {
     await loadProjects();
     let storedProject = '';
     try { storedProject = localStorage.getItem('wmd.projectId') || ''; } catch { storedProject = ''; }
-    const activeProject = (state.projects || []).find((p) => p.id === storedProject) || (state.projects || [])[0] || null;
+    let noProject = false;
+    try { noProject = localStorage.getItem('wmd.projectNone') === '1'; } catch { noProject = false; }
+    const activeProject = noProject ? null : ((state.projects || []).find((p) => p.id === storedProject) || (state.projects || [])[0] || null);
     if (activeProject) await setActiveProject(activeProject.id, { silent: true });
-    else { await studioLoadForProject('default'); await WB.load('default'); }
+    else { state.projectId = ''; state.project = null; await studioLoadForProject('default'); await WB.load('default'); }
     applyTheme();
     setRoute();
     state.assets = await api('/api/assets');
