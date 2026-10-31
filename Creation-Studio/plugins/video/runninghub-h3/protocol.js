@@ -13,12 +13,33 @@ function app(key){const found=CONFIG.apps[key];if(!found)throw Error('RunningHub
 function appsFor(siteId){return Object.entries(CONFIG.apps).filter(([,a])=>a.site===siteId);}
 function ratioShort(value){return (String(value||'').match(/\d+:\d+/)||[])[0]||'';}
 function redact(ch,message){let text=String(message||'未知错误');for(const key of keys(ch))if(key.length>=8)text=text.split(key).join('[密钥已隐藏]');return text;}
+// 网络层错误（连接被重置 / 超时 / DNS 抖动）文案只有一句 "fetch failed"，真正的原因在 error.cause 里
+const NETWORK_ERROR=/ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|EPIPE|EHOSTUNREACH|ENETUNREACH|socket hang up|other side closed|fetch failed|UND_ERR/i;
+const sleep=(ms)=>new Promise((resolve)=>setTimeout(resolve,ms));
+function networkText(error){
+ const message=String((error&&error.message)||'网络请求失败');
+ const cause=error&&error.cause;
+ const detail=cause?String(cause.code||cause.errno||cause.message||'').trim():'';
+ if(!detail||message.includes(detail))return message;
+ return message+'（'+detail+'）';
+}
 async function request(ch,route,body,options={}){
  const key=keyAt(ch,options.keyIndex);
- try{const res=await httpJson(base(ch)+route,{method:'POST',headers:{Authorization:'Bearer '+key,'Content-Type':options.contentType||'application/json'},body:options.raw?body:JSON.stringify(body),timeoutMs:options.timeoutMs||30000});
- if(!res.ok){const error=Error('RunningHub HTTP '+res.status);error.status=res.status;throw error;}
- const data=res.data;if(!data||typeof data!=='object')throw Error('RunningHub 返回格式异常');return data;
- }catch(e){const err=Error(redact(ch,e.message));err.status=e.status;throw err;}
+ const attempts=Math.max(1,Math.min(5,Number(options.attempts)||1));
+ for(let attempt=0;attempt<attempts;attempt+=1){
+  if(attempt)await sleep(600*attempt);
+  try{const res=await httpJson(base(ch)+route,{method:'POST',headers:{Authorization:'Bearer '+key,'Content-Type':options.contentType||'application/json'},body:options.raw?body:JSON.stringify(body),timeoutMs:options.timeoutMs||30000});
+  if(!res.ok){const error=Error('RunningHub HTTP '+res.status);error.status=res.status;throw error;}
+  const data=res.data;if(!data||typeof data!=='object')throw Error('RunningHub 返回格式异常');return data;
+  }catch(e){
+   const text=networkText(e);
+   // 只重试纯网络抖动；带 HTTP 状态的（4xx/5xx）重试没意义，也不该重复提交
+   const retryable=!e.status&&NETWORK_ERROR.test(text);
+   if(retryable&&attempt<attempts-1)continue;
+   const err=Error(redact(ch,text));err.status=e.status;throw err;
+  }
+ }
+ throw Error('RunningHub 请求重试后仍失败');
 }
 // RunningHub 有两套响应外壳：uc/* 用 {code,msg}，openapi/v2/* 直接扁平返回 {taskId,status,errorCode,errorMessage}
 function failure(data){
@@ -32,7 +53,7 @@ function check(data){
  const bad=failure(data);
  if(bad)throw Error('RunningHub 拒绝请求，错误码：'+bad.code+(bad.message?'（'+bad.message+'）':''));
 }
-async function upload(ch,image,keyIndex=0){const file=fs.readFileSync(image.path);const form=encodeMultipart([{name:'file',filename:path.basename(image.name||image.path),mime:mimeFor(image.path),content:file}]);const data=await request(ch,'/openapi/v2/media/upload/binary',form.body,{raw:true,contentType:form.contentType,timeoutMs:120000,keyIndex});check(data);const d=data.data||data;const fileRef=d.download_url||d.url||d.fileUrl||d.fileName||d.file_url;if(!fileRef)throw Error('上传响应缺少文件标识');return String(fileRef);}
+async function upload(ch,image,keyIndex=0){const file=fs.readFileSync(image.path);const form=encodeMultipart([{name:'file',filename:path.basename(image.name||image.path),mime:mimeFor(image.path),content:file}]);const data=await request(ch,'/openapi/v2/media/upload/binary',form.body,{raw:true,contentType:form.contentType,timeoutMs:120000,keyIndex,attempts:3});check(data);const d=data.data||data;const fileRef=d.download_url||d.url||d.fileUrl||d.fileName||d.file_url;if(!fileRef)throw Error('上传响应缺少文件标识');return String(fileRef);}
 function nodeInfo(application,job,uploads){
  const nodes=[{nodeId:String(application.prompt.nodeId),fieldName:application.prompt.fieldName||'text',fieldValue:job.prompt}];
  if(application.duration?.nodeId)nodes.push({nodeId:String(application.duration.nodeId),fieldName:application.duration.fieldName||'value',fieldValue:Number(job.duration)});

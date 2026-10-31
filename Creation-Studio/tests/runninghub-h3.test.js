@@ -206,6 +206,50 @@ test('继续原任务时遇到 805 不会重复提交',{timeout:20000},async()=>
  }finally{await mock.close();}
 });
 
+test('上传遇到连接重置会自动重试，不把网络抖动判成整单失败',{timeout:20000},async()=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'rh-net-'));
+ const images=[{path:tinyPng(root,'a.png'),name:'a.png'}];
+ let mock,hits=0;
+ mock=await mockServer((req,body,res)=>{
+  if(req.url==='/openapi/v2/media/upload/binary'){
+   hits+=1;
+   if(hits===1){res.destroy();return undefined;}   // 第一次直接掐断连接：等价于 ECONNRESET
+   return {code:0,data:{fileName:'uploaded/x.png'}};
+  }
+  if(req.url.startsWith('/openapi/v2/run/ai-app/'))return {taskId:'net-task'};
+  if(req.url==='/openapi/v2/query')return {status:'SUCCESS',results:[{nodeId:'2',url:mock.base+'/final.mp4',outputType:'video'}]};
+  res.setHeader('Content-Type','video/mp4');res.end('v');
+ });
+ try{
+  const channel=siteChannel('runninghub-h3-ai',{baseUrl:mock.base,apiKey:'ai-key',id:'ch-ai'});
+  const {ctx,job,saved}=fakeCtx(channel,'rh:ch-ai:ai_1080p_hypervae',images,root);
+  await adapter.execute(ctx);
+  assert.equal(hits,2,'上传应重试一次后成功');
+  assert.equal(job.remotePromptId,'net-task');
+  assert.equal(saved.length,1);
+ }finally{await mock.close();}
+});
+
+test('网络一直断时，报错要带底层原因而不是干巴巴的 fetch failed',{timeout:30000},async()=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'rh-net-dead-'));
+ const images=[{path:tinyPng(root,'a.png'),name:'a.png'}];
+ let mock,hits=0;
+ mock=await mockServer((req,body,res)=>{
+  if(req.url==='/openapi/v2/media/upload/binary'){hits+=1;res.destroy();return undefined;}
+  res.end('');
+ });
+ try{
+  const channel=siteChannel('runninghub-h3-ai',{baseUrl:mock.base,apiKey:'ai-key',id:'ch-ai'});
+  const {ctx}=fakeCtx(channel,'rh:ch-ai:ai_1080p_hypervae',images,root);
+  await assert.rejects(()=>adapter.execute(ctx),(error)=>{
+   assert.match(String(error.message),/fetch failed|ECONNRESET|socket|other side closed/i);
+   assert.ok(String(error.message).length>12,'错误要带底层 cause，不能只有 fetch failed');
+   return true;
+  });
+  assert.equal(hits,3,'上传最多重试 3 次');
+ }finally{await mock.close();}
+});
+
 test('国际站：提交到 runninghub.ai 的应用，图片顺序按文档',{timeout:20000},async()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'rh-ai-'));
  const images=[{path:tinyPng(root,'a.png'),name:'a.png'}];

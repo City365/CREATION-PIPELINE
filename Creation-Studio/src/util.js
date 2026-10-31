@@ -108,9 +108,13 @@ async function httpJson(url, opts = {}) {
     }
     return { ok: res.ok, status: res.status, data, text, headers: res.headers };
   } catch (err) {
-    const message = err && err.name === 'AbortError' ? `请求超时（${Math.round(timeoutMs / 1000)} 秒）` : (err && err.message) || String(err);
-    const error = new Error(message);
+    const aborted = !!(err && err.name === 'AbortError');
+    const base = aborted ? `请求超时（${Math.round(timeoutMs / 1000)} 秒）` : (err && err.message) || String(err);
+    // undici 只抛一句 "fetch failed"，真正原因（ECONNRESET / ENOTFOUND / OTHER_SIDE_CLOSED…）在 err.cause 里，别丢
+    const cause = !aborted && err && err.cause ? String(err.cause.code || err.cause.errno || err.cause.message || '').trim() : '';
+    const error = new Error(cause && !String(base).includes(cause) ? `${base}（${cause}）` : String(base));
     error.status = 0;
+    error.cause = err;
     throw error;
   } finally {
     clearTimeout(timer);
