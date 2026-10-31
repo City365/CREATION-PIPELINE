@@ -27,6 +27,8 @@ CAPABILITIES.update({
     'run_command': 'shell',
     # 把磁盘上已有的文件登记为交付文件（脚本产物的出卡片通道）
     'publish_artifact': 'workspace_write',
+    # 智能推荐：向用户出决策选择卡，只读不写盘
+    'ask_choice': 'interaction',
 })
 
 # Match the underlying HTTP operations, including video polling's caller budget.
@@ -34,7 +36,7 @@ TOOL_TIMEOUTS = {'generate_image': 310, 'submit_video_job': 70, 'probe_video': 7
                  'extract_frames': 250, 'describe_image': 190,
                  'read_permission': 20, 'list_dir': 60, 'read_file': 60, 'write_file': 120,
                  'make_dir': 30, 'move_file': 300, 'copy_file': 300, 'delete_file': 120,
-                 'publish_artifact': 120}
+                 'publish_artifact': 120, 'ask_choice': 20}
 
 def tool_timeout(name, args, default):
     if name == 'wait_video_job':

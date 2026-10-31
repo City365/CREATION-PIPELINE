@@ -1,0 +1,93 @@
+{
+  "id": "generic-video",
+  "name": "通用视频接口",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "entry": "index.js",
+  "provider": "generic",
+  "channelTypes": [
+    {
+      "id": "openai-video",
+      "label": "OpenAI 视频（Sora 兼容）",
+      "hint": "POST {base}/videos → 轮询 GET {base}/videos/{id} → GET …/content",
+      "fields": [
+        {
+          "key": "baseUrl",
+          "label": "Base URL",
+          "placeholder": "https://api.example.com/v1",
+          "required": true
+        },
+        {
+          "key": "apiKey",
+          "label": "API Key",
+          "type": "password"
+        },
+        {
+          "key": "model",
+          "label": "模型 ID",
+          "placeholder": "sora-2 / veo-3",
+          "required": true
+        },
+        {
+          "key": "seconds",
+          "label": "默认时长（秒）",
+          "placeholder": "10"
+        }
+      ]
+    },
+    {
+      "id": "generic-task",
+      "label": "自定义任务式接口",
+      "hint": "自己填提交/查询路径、字段路径，适配可灵、即梦、Runway 等异步接口",
+      "fields": [
+        {
+          "key": "baseUrl",
+          "label": "Base URL",
+          "placeholder": "https://api.example.com",
+          "required": true
+        },
+        {
+          "key": "apiKey",
+          "label": "API Key",
+          "type": "password"
+        },
+        {
+          "key": "model",
+          "label": "模型 ID",
+          "placeholder": "kling-v3"
+        },
+        {
+          "key": "submitPath",
+          "label": "提交路径",
+          "placeholder": "/v1/videos/generations"
+        },
+        {
+          "key": "pollPath",
+          "label": "查询路径模板",
+          "placeholder": "/v1/videos/generations/{id}"
+        },
+        {
+          "key": "bodyTemplate",
+          "label": "请求体模板（JSON）",
+          "type": "textarea",
+          "placeholder": "{\"model\":\"{model}\",\"prompt\":\"{prompt}\",\"duration\":{duration},\"image\":\"{image0}\"}"
+        },
+        {
+          "key": "idPath",
+          "label": "任务 ID 字段",
+          "placeholder": "data.id"
+        },
+        {
+          "key": "statusPath",
+          "label": "状态字段",
+          "placeholder": "data.status"
+        },
+        {
+          "key": "resultPath",
+          "label": "结果 URL 字段",
+          "placeholder": "data.url"
+        }
+      ]
+    }
+  ]
+}

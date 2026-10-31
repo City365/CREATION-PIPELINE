@@ -8,7 +8,7 @@ const WB = (() => {
   const current=k=>books[k]?.items.find(i=>i.id===books[k].activeId);
   const context=k=>({projectId:books[k]?.projectId||studioProjectId(),kind:k,itemId:books[k]?.activeId||null});
   function snapshot(k,source=runtime(k)) {
-    const keys=k==='video'?['workflowId','channelId','prompt','promptMode','images','audios','aspectRatio','resolution','megapixels','megapixels2','duration','seed','count','panelWidth','prefixPrompt']:['channelId','tab','prompt','size','count','refs','source','reverseText','results','previewIndex','zoom','panelWidth','_imageRunId','prefixPrompt','styleLayer','imageRatio','imageLayoutId','layoutPrompt'];
+    const keys=k==='video'?['workflowId','channelId','prompt','promptMode','images','audios','videos','aspectRatio','resolution','megapixels','megapixels2','duration','seed','count','panelWidth','prefixPrompt']:['channelId','tab','prompt','size','count','refs','source','reverseText','results','previewIndex','zoom','panelWidth','_imageRunId','prefixPrompt','styleLayer','imageRatio','imageLayoutId','layoutPrompt'];
     const out={};for(const key of keys)if(source[key]!==undefined)out[key]=clone(source[key]);return out;
   }
   function adopt(k,item) {
@@ -80,7 +80,7 @@ const WB = (() => {
         }catch{}
       }
       if(current(k))adopt(k,current(k));
-      else if(k==='video')state.studio={...clone(defaults[k]),prompt:'',images:[],audios:[],_restored:true};
+      else if(k==='video')state.studio={...clone(defaults[k]),prompt:'',images:[],audios:[],videos:[],_restored:true};
       else state.image={...clone(defaults[k]),prompt:'',results:[],source:null};
     }
   }
@@ -110,7 +110,7 @@ const WB = (() => {
   }
   async function newItem(k,draft,title) {
     await flush(k);const b=books[k];
-    const blank=k==='video'?{...defaults[k],prompt:'',images:[],audios:[]}:{...defaults[k],prompt:'',source:null,refs:[],results:[],reverseText:''};
+    const blank=k==='video'?{...defaults[k],prompt:'',images:[],audios:[],videos:[]}:{...defaults[k],prompt:'',source:null,refs:[],results:[],reverseText:''};
     const item=await api('/api/workbench/items',{method:'POST',body:{projectId:b.projectId,kind:k,title,draft:draft||blank}});
     b.items.push(item);await selectItem(k,item.id);
   }
@@ -166,7 +166,7 @@ const WB = (() => {
     document.querySelectorAll('[data-run-new]').forEach(el=>el.onclick=()=>newItem(k,draftFrom(runs[Number(el.dataset.runNew)].snapshot,k),'历史记录副本').then(closeModal).catch(e=>toast(e.message,true)));
     document.querySelectorAll('[data-run-output]').forEach(el=>el.onclick=()=>openMediaDetail({path:el.dataset.runOutput,name:el.textContent,kind:k,bytes:0}));
   }
-  function draftFrom(s,k){return {...s,prompt:s.userPrompt??s.prompt??'',...(k==='video'?{images:s.images||s.refs||[],audios:s.audios||[]}:{refs:s.refs||s.images||[],results:[]})};}
+  function draftFrom(s,k){return {...s,prompt:s.userPrompt??s.prompt??'',...(k==='video'?{images:s.images||s.refs||[],audios:s.audios||[],videos:s.videos||[]}:{refs:s.refs||s.images||[],results:[]})};}
   async function trash(k) {
     const b=books[k],data=await api('/api/workbench/items?projectId='+enc(b.projectId)+'&kind='+k+'&deleted=1');
     openModal('<div class="modal-head"><h2>回收站</h2><button class="btn" data-close="1">关闭</button></div><div class="modal-body">'+(data.items.map((i,n)=>'<p>'+esc(i.title)+' <button class="btn" data-restore="'+n+'">恢复</button></p>').join('')||'回收站为空')+'</div>');

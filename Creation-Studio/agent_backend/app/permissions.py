@@ -42,6 +42,7 @@ DANGEROUS = [
 ]
 
 _PROJECT_DIR_CACHE = {}
+_PROJECT_SOURCE_CACHE = {}
 
 
 def normalize(mode):
@@ -94,6 +95,7 @@ def project_dir(project, ttl=300):
         items = data if isinstance(data, list) else ((data or {}).get('items') or [])
         found = next((item for item in items if item.get('id') == project), None)
         path = str((found or {}).get('dir') or '') or path
+        _PROJECT_SOURCE_CACHE[project] = list((found or {}).get('sourceFolders') or [])
     except Exception:
         pass
     _PROJECT_DIR_CACHE[project] = (time.time(), path)
@@ -113,6 +115,7 @@ def allowed_roots(project='', extra=None):
         found = project_dir(project)
         if found:
             raw.append(Path(found))
+        raw += [Path(item) for item in _PROJECT_SOURCE_CACHE.get(project, [])]
     raw.append(AGENT_WORKSPACE)
     raw += [Path(item) for item in settings_roots()]
     raw += [Path(item) for item in (extra or [])]

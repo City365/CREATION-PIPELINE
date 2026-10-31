@@ -2,8 +2,8 @@
   {
     "id": "minimax_h3_zm_u24",
     "provider": "autodl",
-    "label": "U24 多参画质",
-    "note": "官网 API · 9 图 3 音频 · 最长 15 秒",
+    "label": "H3多图多音频生视频(升级画质)",
+    "note": "MiniMax H3多图参考生成视频，最长支持15秒视频",
     "images": 9,
     "audios": 3,
     "resolutions": [
@@ -39,7 +39,24 @@
     "megapixelsOptions": [],
     "megapixelsDefault": 0,
     "megapixelsLabel": "分辨率",
-    "sizeMultiple": 16
+    "sizeMultiple": 16,
+    "hidden": false,
+    "videos": 0,
+    "optionalImages": false,
+    "promptRequired": true,
+    "imageKeys": [
+      "ref_image_0",
+      "ref_image_1",
+      "ref_image_2",
+      "ref_image_3",
+      "ref_image_4",
+      "ref_image_5",
+      "ref_image_6",
+      "ref_image_7",
+      "ref_image_8"
+    ],
+    "videoKeys": [],
+    "requiredVideos": 0
   },
   {
     "id": "minimax_h3_zm_u08",
@@ -81,13 +98,14 @@
     "megapixelsOptions": [],
     "megapixelsDefault": 0,
     "megapixelsLabel": "分辨率",
-    "sizeMultiple": 16
+    "sizeMultiple": 16,
+    "hidden": true
   },
   {
     "id": "minimax_h3_image_audio_to_video_v2_15s",
     "provider": "autodl",
-    "label": "U6v2 多参图音 15 秒",
-    "note": "官网 API · 9 图 3 音频 · 最长 15 秒",
+    "label": "H3多图多音频生视频15秒",
+    "note": "MiniMax H3多图多音频参考生视频，最长支持15秒视频，该工作流未做任何包装门槛较高，需精确控制提示词来使用",
     "images": 9,
     "audios": 3,
     "resolutions": [
@@ -121,13 +139,30 @@
     "megapixelsOptions": [],
     "megapixelsDefault": 0,
     "megapixelsLabel": "分辨率",
-    "sizeMultiple": 16
+    "sizeMultiple": 16,
+    "hidden": false,
+    "videos": 0,
+    "optionalImages": true,
+    "promptRequired": true,
+    "imageKeys": [
+      "ref_image_0",
+      "ref_image_1",
+      "ref_image_2",
+      "ref_image_3",
+      "ref_image_4",
+      "ref_image_5",
+      "ref_image_6",
+      "ref_image_7",
+      "ref_image_8"
+    ],
+    "videoKeys": [],
+    "requiredVideos": 0
   },
   {
     "id": "minimax_h3_lightx2v_v5_15s",
     "provider": "autodl",
-    "label": "U6v5 多参多图 15 秒",
-    "note": "官网 API · 9 图 · 无音频 · 最长 15 秒",
+    "label": "H3多图生视频15秒",
+    "note": "MiniMax H3多图参考生成视频，最长支持15秒视频",
     "images": 9,
     "audios": 0,
     "resolutions": [
@@ -163,7 +198,24 @@
     "megapixelsOptions": [],
     "megapixelsDefault": 0,
     "megapixelsLabel": "分辨率",
-    "sizeMultiple": 16
+    "sizeMultiple": 16,
+    "hidden": false,
+    "videos": 0,
+    "optionalImages": false,
+    "promptRequired": true,
+    "imageKeys": [
+      "ref_image_0",
+      "ref_image_1",
+      "ref_image_2",
+      "ref_image_3",
+      "ref_image_4",
+      "ref_image_5",
+      "ref_image_6",
+      "ref_image_7",
+      "ref_image_8"
+    ],
+    "videoKeys": [],
+    "requiredVideos": 0
   },
   {
     "id": "minimax_h3_image_audio_to_video_v2",
@@ -205,13 +257,14 @@
     "megapixelsOptions": [],
     "megapixelsDefault": 0,
     "megapixelsLabel": "分辨率",
-    "sizeMultiple": 16
+    "sizeMultiple": 16,
+    "hidden": true
   },
   {
     "id": "minimax_h3_lightx2v_v5",
     "provider": "autodl",
-    "label": "U6v5 多参多图",
-    "note": "官网 API · 9 图 · 无音频 · 最长 15 秒 · 支持 1080p",
+    "label": "H3多图参考生视频",
+    "note": "MiniMax H3多图参考生成视频",
     "images": 9,
     "audios": 0,
     "resolutions": [
@@ -238,18 +291,60 @@
       7,
       8,
       9,
-      10,
-      11,
-      12,
-      13,
-      14,
-      15
+      10
     ],
     "seedKey": "seed",
     "sizeMode": "resolution",
     "megapixelsOptions": [],
     "megapixelsDefault": 0,
     "megapixelsLabel": "分辨率",
-    "sizeMultiple": 16
+    "sizeMultiple": 16,
+    "hidden": false,
+    "videos": 0,
+    "optionalImages": false,
+    "promptRequired": true,
+    "imageKeys": [
+      "ref_image_0",
+      "ref_image_1",
+      "ref_image_2",
+      "ref_image_3",
+      "ref_image_4",
+      "ref_image_5",
+      "ref_image_6",
+      "ref_image_7",
+      "ref_image_8"
+    ],
+    "videoKeys": [],
+    "requiredVideos": 0
+  },
+  {
+    "id": "wan2.2animate-v4-motion_retargeting",
+    "provider": "autodl",
+    "sizeMode": "resolution",
+    "megapixelsOptions": [],
+    "hidden": false,
+    "label": "动作迁移",
+    "note": "动作迁移",
+    "images": 1,
+    "audios": 0,
+    "videos": 1,
+    "optionalImages": false,
+    "promptRequired": false,
+    "durationKey": "",
+    "durationDefault": 0,
+    "durationOptions": [],
+    "resolutions": [
+      "464*832px(竖版)",
+      "832*464px(横版)"
+    ],
+    "defaultResolution": "464*832px(竖版)",
+    "seedKey": "seed",
+    "imageKeys": [
+      "ref_image"
+    ],
+    "videoKeys": [
+      "ref_video"
+    ],
+    "requiredVideos": 1
   }
 ]

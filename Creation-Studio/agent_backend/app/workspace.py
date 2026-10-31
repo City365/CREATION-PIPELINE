@@ -105,7 +105,7 @@ def parse_file(data,suffix):
   return text,'indexed' if text.strip() else 'needs_ocr'
  raise ValueError('不支持该文件类型')
 
-def save_upload(project,name,data,session_id=None,collection_id=None,source=None,existing_path=None,origin='input'):
+def save_upload(project,name,data,session_id=None,collection_id=None,source=None,existing_path=None,origin='input',recognize=True):
  suffix=Path(name).suffix.lower()
  if suffix not in EXTENSIONS:raise HTTPException(400,'不支持该文件类型')
  if not data or (existing_path is None and len(data)>MAX_BYTES):raise HTTPException(400,'文件不能为空且不能超过 10 MB')
@@ -135,7 +135,7 @@ def save_upload(project,name,data,session_id=None,collection_id=None,source=None
   chunks=[text[i:i+3000] for i in range(0,len(text),2800)] or ['文件名：'+item['name']]
   for i,chunk in enumerate(chunks):db.execute('INSERT INTO file_index (text,project,file_id,part) VALUES (?,?,?,?)',(item['name']+'\n'+chunk,project,file_id,i))
  project_files.attach(file_id,project,session_id,path,origin,category,root)
- if status=='pending_recognition':recognize_image_async(project,file_id)
+ if status=='pending_recognition' and recognize:recognize_image_async(project,file_id)
  return {k:v for k,v in file_record(project,file_id).items() if k!='text'}
 
 def search_documents(project,session_id,query,limit=6):
@@ -269,6 +269,9 @@ def reindex(item,data):
   for i,start in enumerate(range(0,len(text),2800)):
    db.execute('INSERT INTO file_index VALUES(?,?,?,?)',(item['name']+'\n'+text[start:start+3000],item['project'],item['id'],i))
 
+class OpenWorkspaceFile(BaseModel):
+ relative_path:str=Field(max_length=2000)
+
 class RegisterFileInput(BaseModel):
  session_id:str
  path:str
@@ -276,6 +279,12 @@ class RegisterFileInput(BaseModel):
 
 def router_for(project_dep):
  router=APIRouter(prefix='/agent',tags=['workspace'])
+ @router.get('/workspace/tree')
+ def tree(path:str='',offset:int=0,project=Depends(project_dep)):
+  return project_files.directory(project,path,offset)
+ @router.post('/workspace/open')
+ def open_file(body:OpenWorkspaceFile,project=Depends(project_dep)):
+  return project_files.open_relative(project,body.relative_path)
  @router.post('/workspace/register')
  def register_file(body:RegisterFileInput,project=Depends(project_dep)):
   item=project_files.register_existing(project,body.session_id,body.path,origin='input' if body.origin=='input' else 'generated')
@@ -343,7 +352,8 @@ def router_for(project_dep):
   source=str(item.get('source') or '').strip()
   target=Path(source) if source else None
   from_source=bool(target and target.exists())
-  if not from_source:target=file_path(item)
+  if project_files.location(file_id):target=file_path(item);from_source=False
+  elif not from_source:target=file_path(item)
   if not target.exists():raise HTTPException(404,'文件不在磁盘上，可能已经被删除')
   if os.name!='nt':return {'ok':False,'error':'只有 Windows 支持在资源管理器中定位'}
   try:subprocess.Popen(['explorer','/select,'+str(target)])

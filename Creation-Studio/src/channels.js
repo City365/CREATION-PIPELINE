@@ -76,47 +76,7 @@ const TYPES = {
       ],
     },
   ],
-  video: [
-    {
-      id: 'manager-video',
-      label: '外接管理器（豆包 / Gemini）',
-      hint: '调用 管理器7.8.7/rebuild 的本地服务（默认 127.0.0.1:17778），用真实 Chrome 账号跑豆包 / Gemini 网页生成；凭据在 rebuild/data/connection.json',
-      fields: [
-        { key: 'baseUrl', label: '管理器地址', placeholder: 'http://127.0.0.1:17778', required: true, default: 'http://127.0.0.1:17778' },
-        { key: 'apiKey', label: '连接凭据 apiToken', type: 'password', placeholder: 'connection.json 里的 apiToken' },
-        { key: 'accountId', label: '指定账号（可选）', placeholder: '留空 = 该平台第一个可用账号' },
-        { key: 'model', label: '豆包模型（可选）', placeholder: '留空用管理器默认' },
-        { key: 'seconds', label: '默认时长（豆包，5–15 秒）', placeholder: '10' },
-      ],
-    },
-    {
-      id: 'openai-video',
-      label: 'OpenAI 视频（Sora 兼容）',
-      hint: 'POST {base}/videos → 轮询 GET {base}/videos/{id} → GET …/content',
-      fields: [
-        { key: 'baseUrl', label: 'Base URL', placeholder: 'https://api.example.com/v1', required: true },
-        { key: 'apiKey', label: 'API Key', type: 'password' },
-        { key: 'model', label: '模型 ID', placeholder: 'sora-2 / veo-3', required: true },
-        { key: 'seconds', label: '默认时长（秒）', placeholder: '10' },
-      ],
-    },
-    {
-      id: 'generic-task',
-      label: '自定义任务式接口',
-      hint: '自己填提交/查询路径、字段路径，适配可灵、即梦、Runway 等异步接口',
-      fields: [
-        { key: 'baseUrl', label: 'Base URL', placeholder: 'https://api.example.com', required: true },
-        { key: 'apiKey', label: 'API Key', type: 'password' },
-        { key: 'model', label: '模型 ID', placeholder: 'kling-v3' },
-        { key: 'submitPath', label: '提交路径', placeholder: '/v1/videos/generations' },
-        { key: 'pollPath', label: '查询路径模板', placeholder: '/v1/videos/generations/{id}' },
-        { key: 'bodyTemplate', label: '请求体模板（JSON）', type: 'textarea', placeholder: '{"model":"{model}","prompt":"{prompt}","duration":{duration},"image":"{image0}"}' },
-        { key: 'idPath', label: '任务 ID 字段', placeholder: 'data.id' },
-        { key: 'statusPath', label: '状态字段', placeholder: 'data.status' },
-        { key: 'resultPath', label: '结果 URL 字段', placeholder: 'data.url' },
-      ],
-    },
-  ],
+  video: require('./video-plugins').types(),
 };
 
 const LABEL = { llm: '语言模型', image: '图像', video: '视频' };

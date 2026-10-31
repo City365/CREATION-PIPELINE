@@ -7,6 +7,7 @@ from app.task_tools import build_task_tools
 from app.create_tools import build_creation_tools, _http
 from app.execution import content_text, tick
 from app.fs_tools import build_local_tools
+from app.interaction_tools import build_interaction_tools
 from app.tool_guard import ToolGuard
 from app import permissions as perms
 from fastapi import FastAPI, HTTPException, Header
@@ -234,6 +235,8 @@ async def _chat(req,project,authorization):
             locks.discard(key)
             raise HTTPException(400,'所选技能不存在或已停用，请重新选择')
     tools += build_creation_tools(publish_event, project, req.session_id)
+    # 智能推荐：出决策选择卡。只读、不落盘，任何权限档位都保留。
+    tools += build_interaction_tools(publish_event, receipt)
     tools += build_local_tools(project=project, session_id=req.session_id, mode=mode, roots=perm_roots,
                                publish=pending.append, receipt=receipt)
     if mode=='readonly':

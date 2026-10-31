@@ -13,7 +13,7 @@ test('技能清单来自统一接口，工作区改为文件视图', () => {
   assert.ok(list.includes('a.skills'), '清单优先用服务端数据');
   const panel = source.slice(source.indexOf('function askCapabilityHtml('), source.indexOf('function askFilePaneHtml('));
   assert.ok(panel.includes('AgentWorkspace.html'), '右侧工作区展示当前会话文件');
-  assert.ok(panel.includes('产出文件') && panel.includes('输入材料'), '文件与输入材料分开');
+  assert.ok(panel.includes('askSummaryHtml') && panel.includes('askWorkspaceContext'), '摘要和独立工作区分开');
   const manage = source.slice(source.indexOf("const systemSkills ="), source.indexOf('const row = (item, isSystem)'));
   assert.ok(manage.includes('a.skills'), '插件管理的系统内置也读同一份数据');
   assert.equal(/const systemSkills = ASK_SKILLS/.test(source), false, '不应再直接写死 ASK_SKILLS');

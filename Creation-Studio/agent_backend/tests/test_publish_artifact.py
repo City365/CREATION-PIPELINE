@@ -70,3 +70,14 @@ def test_workspace_blocks_generic_command(setup):
     _,tools,_,_=setup
     result=tools['run_command'].invoke({'command':'echo 1'})
     assert not result['ok'] and result['blocked']
+
+
+def test_move_updates_stable_file_reference(setup):
+    root,tools,_,_=setup
+    item=tools['write_file'].invoke({'path':'原名.md','content':'keep'})
+    record=workspace.file_record('p1',item['file_id'])
+    old=workspace.file_path(record)
+    result=tools['move_file'].invoke({'src':str(old),'dst':str(root/'assets'/'新名.md')})
+    assert result['ok'],result
+    new=workspace.file_path(workspace.file_record('p1',item['file_id']))
+    assert new.name=='新名.md' and new.read_text()=='keep'

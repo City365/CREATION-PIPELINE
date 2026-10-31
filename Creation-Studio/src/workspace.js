@@ -23,6 +23,7 @@ function folderName(project) {
 }
 
 function dirFor(project) {
+  if (project?.sourceFolders?.length) return path.resolve(project.sourceFolders[0]);
   return path.join(root(), folderName(project));
 }
 

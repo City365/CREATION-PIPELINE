@@ -170,7 +170,7 @@ function studioSnapshot() {
   const s = state.studio;
   return {
     workflowId: s.workflowId, prompt: s.prompt, promptMode: s.promptMode,
-    images: s.images || [], audios: s.audios || [],
+    images: s.images || [], audios: s.audios || [], videos: s.videos || [],
     aspectRatio: s.aspectRatio, resolution: s.resolution,
     megapixels: s.megapixels, megapixels2: s.megapixels2,
     duration: s.duration, seed: s.seed, count: s.count,
@@ -187,6 +187,7 @@ function studioApply(saved) {
   if (typeof saved.prompt === 'string') s.prompt = saved.prompt;
   if (saved.promptMode === 'tags' || saved.promptMode === 'code') s.promptMode = saved.promptMode;
   if (Array.isArray(saved.images)) s.images = saved.images.filter(Boolean);
+  s.videos = Array.isArray(saved.videos) ? saved.videos.filter(Boolean) : [];
   if (Array.isArray(saved.audios)) s.audios = saved.audios.filter(Boolean);
   for (const key of ['aspectRatio', 'resolution', 'seed']) if (saved[key] !== undefined) s[key] = saved[key];
   for (const key of ['megapixels', 'megapixels2', 'duration', 'count']) if (Number.isFinite(saved[key])) s[key] = saved[key];
@@ -246,7 +247,7 @@ async function studioLoadForProject(project) {
     s.prompt = '';
     s.promptMode = 'tags';
     s.images = [];
-    s.audios = [];
+    s.audios = []; s.videos = [];
     s.seed = '';
     s._restored = true;
   }
@@ -279,7 +280,7 @@ function workflowById(id) {
 function openModal(html) {
   const panel = $('#modal-panel');
   // 清掉上一个弹窗留下来的尺寸类（比如设置页固定 820 高），换弹窗时不串味
-  panel.classList.remove('modal-settings', 'modal-channel', 'modal-wide', 'ce-full');
+  panel.classList.remove('modal-settings', 'modal-channel', 'modal-wide', 'ce-full', 'modal-project-picker');
   panel.innerHTML = html;
   $('#modal').hidden = false;
   document.body.style.overflow = 'hidden';
@@ -1292,6 +1293,8 @@ function bindStudioRichEditor(editor) {
 }
 
 function stageEmptyHtml(wf) {
+  if(wf.videos) return '<div class="wmd-empty"><div class="wmd-empty-card"><h2 class="wmd-empty-title">让人物跟随参考视频动作</h2><p class="wmd-empty-desc">添加一张人物图片和一段 MP4 / WebM 动作视频，选择输出分辨率后生成。无需填写提示词或指定时长，按实际生成视频时长计费。</p><button type="button" class="wmd-btn" data-act="go-jobs">查看任务日志</button></div></div>';
+
   return `<div class="wmd-empty">
     <div class="wmd-empty-card">
       <h2 class="wmd-empty-title">把参考图拖到左侧开始</h2>
@@ -1335,7 +1338,7 @@ function renderStudio() {
   const recent = ownJobs.slice(0, 5);
 
   const videoChannels = (state.channels.video || []).filter((c) => c.enabled !== false);
-  const autodlWorkflows = state.workflows.filter((w) => w.provider === 'autodl');
+  const autodlWorkflows = state.workflows.filter((w) => w.provider === 'autodl' && (!wf.channelId || w.channelId===wf.channelId));
   const channelWorkflows = wf.channelId ? state.workflows.filter((w) => w.channelId === wf.channelId) : [];
   const channelOptions = videoChannels.length
     ? videoChannels.map((c) => `<option value="${esc(c.id)}" ${c.id === wf.channelId ? 'selected' : ''}>${esc(c.name)}${c.active ? ' · 默认' : ''}</option>`).join('')
@@ -1347,7 +1350,7 @@ function renderStudio() {
     return name;
   };
   const modelOptions = isAuto
-    ? autodlWorkflows.map((w) => `<option value="${esc(w.id)}" ${w.id === wf.id ? 'selected' : ''}>${esc(String(w.display).replace(/^\[官网API\]\s*/, ''))}</option>`).join('')
+    ? autodlWorkflows.map((w) => `<option value="${esc(w.id)}" ${w.id === wf.id ? 'selected' : ''}>${esc(w.label)}</option>`).join('')
     : (channelWorkflows.length
       ? channelWorkflows.map((w) => `<option value="${esc(w.id)}" ${w.id === wf.id ? 'selected' : ''}>${esc(shortModel(w))}</option>`).join('')
       : `<option value="${esc(wf.id)}" selected>${esc((channel && (channel.model || channel.name)) || wf.label)}</option>`);
@@ -1362,9 +1365,9 @@ function renderStudio() {
       <button type="button" class="wmd-btn wmd-btn-sm wmd-btn-ghost" data-act="open-manager" title="打开管理器工作台（本机 17778）">打开管理器</button>
     </div>`
     : isAuto
-    ? `<button type="button" class="wmd-remote wmd-panel-remote is-ready" data-act="go-keys" title="官网 API 直接按 Key 计费调用，无需开云端机器">
+    ? `<button type="button" class="wmd-remote wmd-panel-remote is-ready" data-act="go-video-channels" title="官网 API 直接按 Key 计费调用，无需开云端机器">
         <span class="wmd-remote-dot"></span>
-        <span class="wmd-remote-msg is-strong">AutoDL 官网 API · ${keyCount} 个 Key</span>
+        <span class="wmd-remote-msg is-strong">AutoDL 官方H3 · ${(channel?.hasKey || channel?.apiKey) ? '已配置密钥' : keyCount ? keyCount + ' 个 Key' : '待填写密钥'}</span>
         <span class="wmd-remote-host">autodl.art</span>
       </button>`
     : `<button type="button" class="wmd-remote wmd-panel-remote ${channel ? 'is-ready' : 'is-unconfigured'}" data-act="go-video-channels" title="自定义视频渠道：填你自己的接口地址与 Key">
@@ -1430,12 +1433,14 @@ function renderStudio() {
               <select class="wmd-select" id="channel-select" title="视频渠道；默认渠道在 设置 → 视频生成 里改">${channelOptions}</select>
               <span class="wmd-select-caret">${ICON.caret}</span>
             </div>
-            <span class="wmd-workflow-tag ${isAuto ? 'is-autodl' : (isManager ? 'is-manager' : 'is-generic')}">${isAuto ? '官网API' : isManager ? '管理器' : '自定义'}</span>
+            <span class="wmd-workflow-tag ${isAuto ? 'is-autodl' : (isManager ? 'is-manager' : 'is-generic')}">${isAuto ? 'AutoDL 官方H3' : isManager ? '管理器' : '自定义'}</span>
           </div>
           ${remote}
         </div>
 
-        ${generationPrefixHtml('video')}
+        ${wf.promptRequired === false ? '' : generationPrefixHtml('video')}
+
+        <div class="wmd-field" ${wf.videos ? '' : 'style="display:none"'}><div class="wmd-field-head"><span class="wmd-field-label">动作参考视频（必填）</span></div><button type="button" class="wmd-btn" data-act="upload-motion-video">${esc(s.videos?.[0]?.name||'选择动作视频 MP4 / WebM')}</button>${s.videos?.length?'<button type="button" class="wmd-btn" data-act="remove-motion-video">移除视频</button>':''}<p class="hint">上传一张人物图片和一段动作视频，按实际生成时长计费。</p></div>
         <div class="wmd-slots" id="slot-strip">
           <div class="wmd-slots-head">
             <span class="wmd-eyebrow">图像参考</span>
@@ -1458,7 +1463,7 @@ function renderStudio() {
           <input type="file" id="studio-image-file" accept="image/*" multiple hidden />
         </div>
 
-        <div class="wmd-field wmd-field-grow">
+        <div class="wmd-field wmd-field-grow" ${wf.promptRequired === false ? 'style="display:none"' : ''}>
           <div class="wmd-field-head is-prompt-head">
             <span class="wmd-field-label">提示词</span>
             <span class="wmd-field-right">
@@ -1495,11 +1500,11 @@ function renderStudio() {
             <div class="wmd-field wmd-compose-field is-model">
               <div class="wmd-field-head"><span class="wmd-field-label">视频模型</span></div>
               <div class="wmd-select-wrap"><select class="wmd-select" id="p-model" title="${esc(wf.note || '')}">
-                ${modelChoices.map((w) => `<option value="${esc(w.id)}" ${w.id === wf.id ? 'selected' : ''}>${esc(shortModel(w))}</option>`).join('')}
+                ${modelOptions}
               </select><span class="wmd-select-caret">${ICON.caret}</span></div>
             </div>
             ${aspectField}
-            <div class="wmd-field wmd-compose-field is-duration">
+            <div class="wmd-field wmd-compose-field is-duration" ${!wf.durationKey ? 'style="display:none"' : ''}>
               <div class="wmd-field-head"><span class="wmd-field-label">时长</span></div>
               <div class="wmd-select-wrap"><select class="wmd-select" id="p-duration" ${(wf.durationOptions || []).length === 1 ? 'disabled' : ''}>
                 ${((wf.durationOptions && wf.durationOptions.length) ? wf.durationOptions : Array.from({ length: 15 }, (_, i) => i + 1)).map((n) => `<option value="${n}" ${n === Number(s.duration) ? 'selected' : ''}>${n} 秒</option>`).join('')}
@@ -1522,7 +1527,7 @@ function renderStudio() {
           </div>
           <div class="wmd-generate">
             <button type="button" class="wmd-btn wmd-btn-primary wmd-btn-lg" data-act="generate" ${state.busy ? 'disabled' : ''}>生成视频</button>
-            <div class="wmd-generate-hint"><span class="tnum">${isAuto ? '官网 API' : esc(wf.providerLabel || '自定义')} · ${esc(isAuto ? (s.resolution || wf.defaultResolution) : s.aspectRatio.split(' ')[0])} · ${s.duration}s</span></div>
+            <div class="wmd-generate-hint"><span class="tnum">${isAuto ? '官网 API' : esc(wf.providerLabel || '自定义')} · ${esc(isAuto ? (s.resolution || wf.defaultResolution) : s.aspectRatio.split(' ')[0])} · ${wf.durationKey ? s.duration + 's' : '按实际生成时长'}</span></div>
           </div>
         </div>
       </div>
@@ -1651,6 +1656,12 @@ function bindStudio(root) {
     if (!target) return;
     const act = target.dataset.act;
     try {
+      if (act === 'remove-motion-video') {s.videos=[];return render();}
+      if (act === 'upload-motion-video') {
+        const picker=document.createElement('input');picker.type='file';picker.accept='video/mp4,video/webm';
+        picker.onchange=async()=>{if(!picker.files[0])return;try{const context=WB.context('video');const project=state.projectId;const video=await uploadFile(picker.files[0],'video');if(project!==state.projectId||context.itemId!==WB.context('video').itemId)return toast('已切换分镜，请重新选择视频',true);s.videos=[video];render();}catch(e){toast(e.message,true);}};
+        picker.click();return;
+      }
       if (act === 'upload-images') { const el = $('#studio-image-file'); if (el) el.click(); return; }
       if (act === 'upload-audio') {
         const wf = currentWorkflow();
@@ -1722,7 +1733,7 @@ function bindStudio(root) {
       if (act === 'go-video-channels') return openSettings('channels');
       if (act === 'go-keys') return openSettings('keys');
       if (act === 'pick-asset') { const slot = s.images.findIndex((x) => !x); return openImagePicker(slot < 0 ? 0 : slot); }
-      if (act === 'clear-assets') { s.images = s.images.map(() => null); s.audios = s.audios.map(() => null); return render(); }
+      if (act === 'clear-assets') { s.images = s.images.map(() => null); s.audios = s.audios.map(() => null); s.videos=[]; return render(); }
       if (act === 'llm-channel') return openSettings('channels');
     } catch (err) {
       toast(err.message, true);
@@ -2087,7 +2098,8 @@ async function generate() {
   const workbenchContext = WB.context("video");
   await WB.flush("video");
   const wf = currentWorkflow();
-  if (!s.prompt.trim()) return toast('提示词不能为空', true);
+  if (wf.promptRequired !== false && !s.prompt.trim()) return toast('提示词不能为空', true);
+  if (wf.videos && !s.videos?.length) return toast('请添加动作参考视频',true);
   if (!s.images.filter(Boolean).length) return toast('至少添加一张参考图', true);
   state.busy = true;
   render();
@@ -2098,8 +2110,9 @@ async function generate() {
       workflowId: wf.id,
       prompt: s.prompt,
       prefixPrompt:generationPrefixValue('video'),
-      images: s.images.filter(Boolean).map((img) => ({ path: img.path, name: img.name, subject: img.subject || '' })),
-      audios: s.audios.filter(Boolean).map((audio) => ({ path: audio.path, name: audio.name })),
+      images: s.images.slice(0,wf.images).filter(Boolean).map((img) => ({ path: img.path, name: img.name, subject: img.subject || '' })),
+      audios: s.audios.slice(0,wf.audios).filter(Boolean).map((audio) => ({ path: audio.path, name: audio.name })),
+      videos: (s.videos || []).slice(0,wf.videos||0).map(video=>({path:video.path,name:video.name})),
       duration: s.duration,
       resolution: s.resolution || wf.defaultResolution,
       aspectRatio: s.aspectRatio,
@@ -6059,6 +6072,224 @@ function askShownText(m, index, messages, a) {
   return shown >= text.length ? text : text.slice(0, shown);
 }
 
+// 智能推荐：对话里只留一行记录（真正的选择在输入框上方的问句条里）
+function askChoiceQuestions(card) {
+  if (!card) return [];
+  if (Array.isArray(card.questions) && card.questions.length) return card.questions;
+  if (card.question) {
+    return [{ id: 'q1', question: card.question, options: card.options || [], multi: !!card.multi, allow_text: card.allow_text !== false }];
+  }
+  return [];
+}
+
+function askChoiceNoteHtml(m) {
+  const cards = (m && m.choices) || [];
+  if (m.role === 'user' || !cards.length) return '';
+  return cards.map((card) => {
+    const questions = askChoiceQuestions(card);
+    const answered = (m.choiceAnswers || {})[card.id] || null;
+    const typed = (m.choiceTyped || {})[card.id] || '';
+    const skipped = m.choiceSkipped === card.id;
+    let verdict = '等待选择';
+    if (answered) verdict = '已选择 ' + answered.length + ' 项';
+    else if (typed) verdict = '已回复：' + (typed.length > 28 ? typed.slice(0, 28) + '…' : typed);
+    else if (skipped) verdict = '已跳过';
+    const head = questions.length > 1 ? questions[0].question + '（等 ' + questions.length + ' 个问题）' : (questions[0] || {}).question || '';
+    return `<div class="ask-choice-note${answered || typed ? ' is-done' : ''}${skipped ? ' is-skipped' : ''}" data-choice="${esc(card.id)}">
+      <span class="ask-choice-note-badge">✦ 智能推荐</span>
+      <span class="ask-choice-note-q">${esc(head)}</span>
+      <span class="ask-choice-note-v">${esc(verdict)}</span>
+    </div>`;
+  }).join('');
+}
+
+// 输入框上方的问句条：1–4 个问题（单选 / 多选）+ 自行撰写 + 跳过 / 发送
+function askChoicePanelHtml() {
+  const a = askState();
+  const p = a.choice;
+  if (!p || p.closed) return '';
+  const card = p.card;
+  const questions = askChoiceQuestions(card);
+  const answers = p.answers || {};
+  const text = p.text || '';
+  const answeredAll = questions.length > 0 && questions.every((q) => (answers[q.id] || []).length > 0);
+  const canSend = !!(answeredAll || text.trim());
+  return `<div class="ask-qpanel" id="ask-qpanel" role="group" aria-label="待回答的问题">
+    <div class="ask-qpanel-head">
+      <span class="ask-qpanel-icon" aria-hidden="true">?</span>
+      <span class="ask-qpanel-title">问题${questions.length > 1 ? ' · ' + questions.length : ''}</span>
+      <span class="grow"></span>
+      <button type="button" class="ask-qpanel-close" data-act="ask-choice-skip" title="跳过这些问题">✕</button>
+    </div>
+    ${questions.map((q, qi) => {
+      const picked = answers[q.id] || [];
+      return `<div class="ask-qpanel-block">
+        <div class="ask-qpanel-question">${questions.length > 1 ? `<span class="ask-qpanel-index">${qi + 1}</span>` : ''}${esc(q.question)}${q.multi ? '<span class="ask-qpanel-multi">可多选</span>' : ''}</div>
+        <div class="ask-qpanel-options" role="${q.multi ? 'group' : 'radiogroup'}">
+          ${q.options.map((o, i) => `<button type="button" class="ask-qpanel-opt${picked.includes(o.id) ? ' is-on' : ''}${q.multi ? ' is-multi' : ''}" role="${q.multi ? 'checkbox' : 'radio'}" aria-checked="${picked.includes(o.id)}" data-act="ask-choice-pick" data-question="${esc(q.id)}" data-option="${esc(o.id)}" title="${esc(o.value || o.label)}">
+            <span class="ask-qpanel-key">${q.multi ? (picked.includes(o.id) ? '✓' : '') : i + 1}</span>
+            <span class="ask-qpanel-label">${esc(o.label)}</span>
+            ${o.why ? `<span class="ask-qpanel-why">${esc(o.why)}</span>` : ''}
+            ${o.recommended ? '<span class="ask-qpanel-rec">推荐</span>' : ''}
+          </button>`).join('')}
+        </div>
+      </div>`;
+    }).join('')}
+    <div class="ask-qpanel-foot">
+      <span class="ask-qpanel-pen" aria-hidden="true">✎</span>
+      <input id="ask-choice-input" class="ask-qpanel-input" autocomplete="off" placeholder="或自行撰写回复" value="${esc(text)}" />
+      <button type="button" class="ask-qpanel-skip" data-act="ask-choice-skip">跳过</button>
+      <button type="button" class="ask-qpanel-send" data-act="ask-choice-send" ${canSend ? '' : 'disabled'}>发送</button>
+    </div>
+  </div>`;
+}
+
+// 兜底：模型在正文里问了却没有出卡时，也给两个可点的默认动作，别让用户自己猜着写
+function askQuickHtml(m, index) {
+  if (!m || m.role === 'user' || m._streaming || m.error) return '';
+  if ((m.choices || []).length) return '';
+  const text = String(m.text || '').trim();
+  if (!text) return '';
+  const tail = text.slice(-140);
+  const asking = /[?？]\s*$/.test(text.slice(-40)) || /继续|要不要|是否需要|请回复|告诉我|确认一下|下一步/.test(tail);
+  if (!asking) return '';
+  return `<div class="ask-quick">
+    <button type="button" data-act="ask-quick" data-index="${index}" data-value="继续，按你的推荐执行" title="把决定权交给智能体，按它推荐的方案往下做">按推荐继续</button>
+    <button type="button" data-act="ask-quick" data-index="${index}" data-value="" title="收起快捷项，自己输入">其他：我自己说</button>
+  </div>`;
+}
+
+/* ------------------------- 问句条：选择 / 发送 / 跳过 ------------------------- */
+function askChoiceBindInput() {
+  const a = askState();
+  const input = $('#ask-choice-input');
+  if (!input) return;
+  input.oninput = () => {
+    if (!a.choice) return;
+    a.choice.text = input.value;
+    const questions = askChoiceQuestions(a.choice.card);
+    const answeredAll = questions.every((q) => ((a.choice.answers || {})[q.id] || []).length > 0);
+    const send = $('#ask-qpanel .ask-qpanel-send');
+    if (send) send.disabled = !(input.value.trim() || answeredAll);
+  };
+  input.onkeydown = (event) => {
+    if (event.isComposing) return;
+    if (event.key === 'Enter') { event.preventDefault(); askChoiceSend(); }
+    if (event.key === 'Escape') { event.preventDefault(); askChoiceSkip(); }
+  };
+}
+
+// 只换问句条这一块，保留输入焦点与已输入的文字
+function askChoiceRefresh() {
+  const a = askState();
+  const host = $('#ask-qpanel');
+  const html = askChoicePanelHtml();
+  if (!host) { askRenderAll(); return; }
+  if (!html) { host.remove(); return; }
+  const wrap = document.createElement('div');
+  wrap.innerHTML = html;
+  host.replaceWith(wrap.firstElementChild);
+  const input = $('#ask-choice-input');
+  if (input && a.choice) {
+    input.value = a.choice.text || '';
+    if (a.choice.focusInput) { input.focus(); a.choice.focusInput = false; }
+  }
+  askChoiceBindInput();
+}
+
+function askChoiceMessage() {
+  const a = askState();
+  const chat = askActive();
+  const id = a.choice && a.choice.messageId;
+  return (chat && (chat.messages || []).find((m) => m.id === id)) || null;
+}
+
+function askChoicePick(questionId, optionId) {
+  const a = askState();
+  if (!a.choice) return;
+  const questions = askChoiceQuestions(a.choice.card);
+  const q = questions.find((x) => x.id === questionId) || questions[0];
+  if (!q) return;
+  a.choice.answers = a.choice.answers || {};
+  const current = a.choice.answers[q.id] || [];
+  if (q.multi) {
+    a.choice.answers[q.id] = current.includes(optionId)
+      ? current.filter((id) => id !== optionId)
+      : [...current, optionId];
+  } else {
+    a.choice.answers[q.id] = [optionId];
+  }
+  a.choice.text = '';
+  const input = $('#ask-choice-input');
+  if (input) input.value = '';
+  askChoiceRefresh();
+}
+
+function askChoiceSummary() {
+  const p = askState().choice;
+  if (!p) return { text: '', values: [], skills: [] };
+  const questions = askChoiceQuestions(p.card);
+  const answers = p.answers || {};
+  const lines = [];
+  const values = [];
+  const skills = [];
+  for (const q of questions) {
+    const picked = (answers[q.id] || []).map((id) => (q.options || []).find((o) => o.id === id)).filter(Boolean);
+    if (!picked.length) continue;
+    lines.push('- ' + q.question + ' → ' + picked.map((o) => o.label).join('、'));
+    for (const o of picked) {
+      values.push(o.value || o.label);
+      if (o.skill_id) skills.push(o.skill_id);
+    }
+  }
+  return { text: lines.join('\n'), values, skills };
+}
+
+function askChoiceSend() {
+  const a = askState();
+  const p = a.choice;
+  if (!p || p.closed) return;
+  const card = p.card;
+  const typed = String(p.text || '').trim();
+  const summary = askChoiceSummary();
+  if (!typed && !summary.values.length) return toast('先选一个选项，或写一句你自己的回复', true);
+  let message;
+  if (typed && !summary.values.length) {
+    message = typed;
+  } else {
+    message = ['【智能推荐 · 用户已确认】', summary.text, typed ? '补充：' + typed : '', '按以上选择继续，不要再重复确认。']
+      .filter(Boolean).join('\n');
+  }
+  const msg = askChoiceMessage();
+  if (msg) {
+    const answers = [];
+    for (const q of askChoiceQuestions(card)) {
+      for (const id of ((p.answers || {})[q.id] || [])) {
+        const option = (q.options || []).find((o) => o.id === id);
+        if (option) answers.push({ question: q.question, label: option.label, value: option.value || option.label });
+      }
+    }
+    if (answers.length) msg.choiceAnswers = { ...(msg.choiceAnswers || {}), [card.id]: answers };
+    if (typed) msg.choiceTyped = { ...(msg.choiceTyped || {}), [card.id]: typed };
+  }
+  if (summary.skills.length) a.skillId = summary.skills[0];
+  p.closed = true;
+  askRenderAll();
+  askPersist();
+  return askSend(message);
+}
+
+function askChoiceSkip() {
+  const a = askState();
+  const p = a.choice;
+  if (!p || p.closed) return;
+  const msg = askChoiceMessage();
+  if (msg) msg.choiceSkipped = p.card.id;
+  p.closed = true;
+  askRenderAll();
+  askPersist();
+}
+
 function askMessageHtml(m, index, messages, a) {
   const mine = m.role === 'user';
   const pending = a.generating && index === messages.length - 1;
@@ -6075,6 +6306,8 @@ function askMessageHtml(m, index, messages, a) {
         ${f.kind === 'video' ? `<video src="${esc(f.url)}" muted preload="metadata"></video><span class="ask-media-play">▶</span>` : `<img src="${esc(f.url)}" alt="" loading="lazy" />`}
         <span class="ask-media-name">${esc(f.name || '')}</span>
       </button>`).join('')}</div>` : ''}
+      ${mine ? '' : askChoiceNoteHtml(m)}
+      ${mine ? '' : askQuickHtml(m, index)}
       ${(!mine && !pending) ? `<div class="ask-reply-actions">
         ${m.execution && m.execution.checkpoint_available && ['partial', 'failed', 'cancelled', 'budget_exceeded', 'interrupted'].includes(m.execution.outcome || m.execution.status) ? `<button type="button" data-act="ask-resume" data-index="${index}" title="从最近检查点继续，只读恢复">继续任务</button>` : ''}
         ${(() => {
@@ -6167,11 +6400,12 @@ function askComposerHtml() {
   const efforts = askEfforts();
   return `<div class="ask-composer-area">
     <div class="ask-composer-context">
-      <span>🗂 ${esc((state.project && state.project.name) || askProjectId())}</span>
+      <button type="button" class="ask-project-trigger" data-act="ask-project-picker" aria-label="选择项目"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7V5a1 1 0 0 1 1-1h5l2 3h9a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7Z"/></svg><span class="ask-project-name">${esc(state.project?.name || '选择项目')}</span><svg class="ask-project-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></button><span>▰ 此计算机</span>
       ${state.styleDetail ? `<span>🎨 ${esc(state.styleDetail.name)}</span>` : ''}
-      <span>✧ ${esc(skill.name)}${a.skillId ? ' <button type="button" data-act="ask-clear-skill" title="移除技能，返回普通聊天">×</button>' : ''}</span>
+      <span class="ask-skill-context">✧ ${esc(skill.name)}${a.skillId ? ' <button type="button" data-act="ask-clear-skill" title="移除技能，返回普通聊天">×</button>' : ''}</span>
       ${(a.attachments || []).map((f) => `<span class="ask-attach" data-act="ask-preview" data-id="${esc(f.id)}" title="点击预览">📎 ${esc(f.name)}<small>${askAttachStatusText(f)}</small><button type="button" data-act="ask-detach" data-id="${esc(f.id)}">×</button></span>`).join('')}
     </div>
+    ${askChoicePanelHtml()}
     <div class="ask-composer">
       ${askQueueHtml()}
       <div class="ask-popups" id="ask-popups"></div>
@@ -6180,6 +6414,7 @@ function askComposerHtml() {
         <button type="button" class="ask-icon-btn" data-act="ask-attach" title="添加附件（最多 5 个，单文件 10MB）">📎</button>
         <button type="button" class="ask-icon-btn" data-act="ask-skill-picker" title="插入 @视角">@</button>
         <button type="button" class="ask-perm is-${esc(askPermission(a.permission).id)}" data-act="ask-permission" title="本地权限：${esc(askPermission(a.permission).label)}（点击切换）">${askPermission(a.permission).icon} ${esc(askPermission(a.permission).label)}</button>
+        <button type="button" class="ask-ref-toggle ${a.refImages ? 'is-on' : ''}" data-act="ask-toggle-refs" aria-pressed="${a.refImages}" title="参考出图开关">出图</button>
         <select class="ask-select" id="ask-model" title="模型">
           ${models.map((m) => `<option value="${esc(m.id)}" ${m.id === a.modelId ? 'selected' : ''} title="上下文 ${m.context_tokens ? Math.round(m.context_tokens / 1000) + 'k' : '默认 500k'}">${esc(m.label)}${m.context_tokens ? ' · ' + Math.round(m.context_tokens / 1000) + 'k' : ''}</option>`).join('') || '<option value="">默认模型</option>'}
         </select>
@@ -6329,14 +6564,62 @@ function askTrajectoryHtml() {
   </div>`;
 }
 
+function askOpenWorkspace() {
+  const a=askState();
+  a.capabilitiesOpen=true;
+}
+function askWorkspaceContext() {
+  const a=askState();
+  return {projectId:askProjectId(),sessionId:a.activeId,projectName:state.project?.name||'项目工作区',expanded:a.previewExpanded,
+    state:()=>a,render:askRenderAll,toast,open:askOpenWorkspace,
+    apply:view=>{a.previewFile=view.file;a.previewData=view.data;a.previewError=view.error;a.previewSheet=view.sheet;a.previewSource=view.source;a.mediaPreview=view.media;},
+    previewHtml:()=>askFilePaneHtml(true),trajectoryHtml:askTrajectoryHtml,loadTrajectory:askLoadTrajectory};
+}
+
+// Header popovers close independently, without rebuilding the chat under the pointer.
+document.addEventListener('pointerdown',event=>{
+  const a=state.ask;if(!a)return;
+  if(a.headerMenu&&!event.target.closest('.ask-head-actions')){a.headerMenu=false;document.querySelector('.ask-head-menu')?.remove();document.querySelector('[data-act="ask-head-menu"]')?.setAttribute('aria-expanded','false');}
+});
+document.addEventListener('keydown',event=>{
+  if(event.key!=='Escape'||!state.ask)return;
+  if(state.ask.headerMenu||state.ask.summaryOpen){state.ask.headerMenu=false;state.ask.summaryOpen=false;askRenderAll();}
+});
+
 function askCapabilityHtml() {
-  const a = askState();
-  const tab = a.panelTab === 'trajectory' ? 'trajectory' : a.panelTab === 'input' ? 'input' : 'analysis';
-  const files = tab !== 'trajectory' && window.AgentWorkspace ? AgentWorkspace.html({projectId:askProjectId(),sessionId:a.activeId,kind:tab === 'input'?'input':'output',render:askRenderAll}) : '';
-  return `<aside class="ask-cap"><div class="ask-cap-head"><div class="ask-cap-tabs" role="tablist" aria-label="对话工作区">
-    ${[['analysis','产出文件'],['input','输入材料'],['trajectory','执行过程']].map(([id,label])=>`<button type="button" role="tab" aria-selected="${tab===id}" class="${tab===id?'is-on':''}" data-act="ask-panel" data-tab="${id}">${label}</button>`).join('')}
-    </div><button type="button" class="ask-icon-btn" data-act="ask-close-cap" aria-label="关闭工作区">×</button></div>
-    <div class="ask-cap-content">${tab==='trajectory'?askTrajectoryHtml():files}</div></aside>`;
+  return window.AgentWorkspace ? AgentWorkspace.html(askWorkspaceContext()) : '';
+}
+function askHeaderMenuHtml(chat) {
+  const id=esc(chat.id||'');
+  return '<div class="ask-head-menu" role="menu" aria-label="管理对话">'+
+    '<button role="menuitem" data-act="ask-rename" data-id="'+id+'">重命名</button>'+
+    '<button role="menuitem" data-act="ask-pin" data-id="'+id+'">'+(chat.pinned?'取消置顶':'置顶')+'</button><hr>'+
+    '<button role="menuitem" data-act="ask-new">新建对话</button>'+
+    '<button role="menuitem" data-act="ask-copy-conversation">复制对话文本</button>'+
+    '<button role="menuitem" data-act="ask-export">导出对话</button><hr>'+
+    '<button role="menuitem" data-act="ask-folder-move" data-id="'+id+'">移动到分组</button></div>';
+}
+async function askLoadSummaryFiles() {
+  const a=askState(),project=askProjectId(),sid=a.activeId;
+  if(!sid)return;
+  try {
+    const result=await askApi('/workspace/session-files?'+new URLSearchParams({session_id:sid,kind:'output'})).then(r=>r.json());
+    if(askProjectId()!==project||a.activeId!==sid)return;
+    a.summaryFiles={project,sid,...result};if(a.summaryOpen)askRenderAll();
+  }catch(err){if(a.summaryOpen)toast(err.message,true);}
+}
+function askSummaryHtml(chat) {
+  const a=askState(),stats=askContextStats();
+  const indexed=a.summaryFiles?.project===askProjectId()&&a.summaryFiles?.sid===a.activeId?a.summaryFiles:null;
+  const files=indexed?indexed.items.map(file=>({type:'artifact',file})):askSessionFiles(chat);
+  const latest=[...(chat.messages||[])].reverse().find(m=>m.execution)?.execution;
+  const selected=(a.models||[]).find(m=>m.id===a.modelId);
+  const used=latest?.usage?.input_tokens;
+  return '<aside class="ask-summary" aria-label="对话摘要"><header><b>摘要</b><button class="ask-icon-btn" data-act="ask-summary" aria-label="关闭摘要">×</button></header>'+
+    '<details open><summary>环境</summary><dl><dt>项目</dt><dd>'+esc(state.project?.name||askProjectId())+'</dd><dt>模型</dt><dd>'+esc(selected?.label||latest?.model||'默认模型')+'</dd><dt>权限</dt><dd>'+esc(askPermission(a.permission).label)+'</dd></dl></details>'+
+    '<details open><summary>上下文</summary><div class="ask-summary-usage"><b>'+Math.round(stats.ratio*100)+'% '+(stats.exact?'参考占用':'估算占用')+'</b><span>'+askFmtTokens(stats.used)+' / '+askFmtTokens(stats.total)+'</span></div><meter min="0" max="1" value="'+stats.ratio+'" aria-label="上下文估算占用"></meter><dl><dt>消息</dt><dd>'+(chat.messages||[]).length+' 条</dd><dt>最近输入用量</dt><dd>'+(used?askFmtTokens(used)+' tokens':'暂无渠道用量')+'</dd><dt>工具 / 技能 / 系统提示词</dt><dd>暂无分项计量</dd></dl><small>总占用基于最近用量和新增文本估算，不代表逐项精确计量。</small></details>'+
+    '<details><summary>连接与能力</summary><p>本地文件工具 · '+(a.toolsSupported===false?'当前模型不支持工具调用':'工具调用可用')+'</p><p>当前技能：'+esc(a.skillId?askSkill(a.skillId).name:'未选择')+'</p></details>'+
+    '<details open><summary>产出文件</summary>'+(files.length?files.slice(-10).map(f=>f.type==='artifact'?'<button class="ask-summary-file" data-act="ask-preview" data-id="'+esc(f.file.id)+'">'+esc(f.file.name)+'</button>':'<button class="ask-summary-file" data-act="ask-open-media" data-index="'+f.mi+'" data-media="'+f.fi+'">'+esc(f.name)+'</button>').join(''):'<p>暂无已交付文件</p>')+((indexed?.total||files.length)>10?'<small>展示最近 10 项，全部文件可在工作区查看。</small>':'')+'</details></aside>';
 }
 
 /* 知识库 / 插件管理 */
@@ -6448,7 +6731,7 @@ function askHistoryHtml() {
       </nav>
       <div class="ask-sidebar-conversations">
         <button type="button" class="ask-new-chat" data-act="ask-new">＋ 新建对话</button>
-        <button type="button" class="ask-new-chat ask-new-project" data-act="ask-folder-create">＋ 新建项目</button>
+        <button type="button" class="ask-new-chat ask-new-project" data-act="ask-folder-create">＋ 新建分组</button>
         <div class="ask-history-search"><span>⌕</span><input id="ask-search" placeholder="搜索对话历史" value="${esc(a.search)}" /></div>
         <div class="ask-history-list">
           ${groups.map((g) => ((g.id || g.items.length) ? `<div class="ask-folder-heading"><button type="button" class="ask-folder-toggle" data-act="ask-folder-toggle" data-id="${esc(g.id)}" aria-expanded="${!a.collapsedFolders?.[g.id]}" title="${esc(g.label)}">${a.collapsedFolders?.[g.id] ? '▸' : '▾'} <span>${esc(g.label)}</span><small>${g.items.length}</small></button>${g.id ? `<button type="button" class="ask-folder-action" data-act="ask-folder-new" data-id="${esc(g.id)}" title="在此项目新建对话">＋</button><button type="button" class="ask-folder-action" data-act="ask-folder-rename" data-id="${esc(g.id)}" title="重命名项目">✎</button>` : ''}</div>${(!a.collapsedFolders?.[g.id] || search ? g.items : []).map((c) => `<div class="ask-history-item ${c.id === a.activeId ? 'is-on' : ''} ${askRunOf(c.id) ? 'is-running' : ''}" data-id="${esc(c.id)}">
@@ -6470,7 +6753,7 @@ function askHistoryHtml() {
     </aside>`;
 }
 
-function askFilePaneHtml() {
+function askFilePaneHtml(embedded = false) {
   const a = askState();
   const media = a.mediaPreview;
   const file = a.previewFile;
@@ -6521,9 +6804,9 @@ function askFilePaneHtml() {
   }
   const isDoc = data && ['markdown', 'html'].includes(data.kind) && !media;
   const sheets = data && data.kind === 'spreadsheet' && Array.isArray(data.sheets) ? data.sheets : [];
-  const paneStyle = !expanded && a.previewWidth ? ` style="width:${a.previewWidth}px"` : '';
-  return `<aside class="ask-file-pane ${expanded ? 'is-expanded' : ''}"${paneStyle}>
-    ${expanded ? '' : '<div class="ask-pane-resizer" role="separator" aria-label="调整聊天与预览宽度" aria-orientation="vertical" tabindex="0" title="拖动调整宽度，双击复位"><span></span></div>'}
+  const paneStyle = !embedded && !expanded && a.previewWidth ? ` style="width:${a.previewWidth}px"` : '';
+  return `<aside class="ask-file-pane ${embedded ? 'is-workspace-preview' : expanded ? 'is-expanded' : ''}"${paneStyle}>
+    ${embedded || expanded ? '' : '<div class="ask-pane-resizer" role="separator" aria-label="调整聊天与预览宽度" aria-orientation="vertical" tabindex="0" title="拖动调整宽度，双击复位"><span></span></div>'}
     <header class="ask-file-head">
       <span class="ask-file-icon">${kind === 'video' ? '🎬' : kind === 'image' ? '🖼' : '📄'}</span>
       <div><b title="${esc(name)}">${esc(name)}</b><small>${kindLabel}预览${bytes ? ' · ' + fmtBytes(bytes) : ''}</small></div>
@@ -6535,7 +6818,7 @@ function askFilePaneHtml() {
     ${isDoc ? `<nav class="ask-pane-mode"><button type="button" class="${a.previewSource ? '' : 'is-on'}" data-act="ask-preview-source" data-mode="preview">预览</button><button type="button" class="${a.previewSource ? 'is-on' : ''}" data-act="ask-preview-source" data-mode="source">源码</button>${data.kind === 'html' ? '<span>隔离预览 · 不执行脚本</span>' : ''}</nav>` : ''}
     ${sheets.length ? `<nav class="ask-pane-sheets">${sheets.map((sheet, i) => `<button type="button" class="${i === (data.sheet || 0) ? 'is-on' : ''}" data-act="ask-preview-sheet" data-sheet="${i}">${esc(sheet)}</button>`).join('')}</nav>` : ''}
     <div class="ask-file-body">${body}</div>
-    ${data && data.truncated ? `<footer class="ask-file-foot">预览显示${data.kind === 'spreadsheet' ? '前 100 行、最多 50 列' : '前 20 万字符'}，下载可获取原件。</footer>` : (data && data.kind === 'pdf' ? '<footer class="ask-file-foot">PDF 使用浏览器内置阅读器；无法显示时可下载原件。</footer>' : (media ? '' : '<footer class="ask-file-foot">预览仅在打开时读取，不缓存原文。</footer>'))}
+    ${data && data.truncated ? `<footer class="ask-file-foot">预览显示${data.kind === 'spreadsheet' ? '前 100 行、最多 50 列' : '前 20 万字符'}，下载可获取原件。</footer>` : (data && data.kind === 'pdf' ? '<footer class="ask-file-foot">PDF 使用浏览器内置阅读器；无法显示时可下载原件。</footer>' : (media ? '' : '<footer class="ask-file-foot">只读预览 · 文件保存在项目工作区。</footer>'))}
   </aside>`;
 }
 function renderScript() {
@@ -6575,9 +6858,11 @@ function renderScript() {
           <div><h1>${esc(chat.title || '新的创作对话')}</h1></div>
         </div>
         <div class="ask-head-actions">
-          <button type="button" class="ask-ref-toggle ${a.refImages ? 'is-on' : ''}" data-act="ask-toggle-refs" aria-pressed="${a.refImages ? 'true' : 'false'}" title="${a.refImages ? '参考出图：已开启，点一下关掉（不再调用图像渠道，省钱）' : '参考出图：已关闭，点一下开启（按画面描述直接出图，会走图像渠道计费）'}"><span class="ask-ref-toggle-dot"></span>出图</button>
-          <button type="button" class="ask-icon-btn" data-act="ask-export" title="导出当前对话">⇩</button>
-          <button type="button" class="ask-icon-btn ${a.capabilitiesOpen ? 'is-on' : ''}" data-act="ask-toggle-cap" title="对话工作区">▥</button>
+          <button type="button" class="ask-icon-btn" data-act="ask-head-menu" aria-label="管理" aria-haspopup="menu" aria-expanded="${!!a.headerMenu}" title="管理">⋯</button>
+          <button type="button" class="ask-icon-btn ${a.summaryOpen?'is-on':''}" data-act="ask-summary" aria-label="摘要" aria-expanded="${!!a.summaryOpen}" title="摘要"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="5" cy="6" r="2"/><circle cx="5" cy="17" r="2"/><path d="M11 6h10M11 12h10M11 18h10"/></svg></button>
+          <span class="aw-head-divider"></span><button type="button" class="ask-icon-btn" data-act="ask-new-workspace" aria-label="新建标签页" title="新建标签页"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M12 7v10M7 12h10"/></svg></button>
+
+          ${a.headerMenu?askHeaderMenuHtml(chat):''}
         </div>
       </header>
 
@@ -6594,7 +6879,8 @@ function renderScript() {
       ${askComposerHtml()}
     </section>
 
-    ${(a.previewFile || a.mediaPreview) ? askFilePaneHtml() : (a.capabilitiesOpen ? askCapabilityHtml() : '')}
+    ${a.capabilitiesOpen ? askCapabilityHtml() : ''}
+    ${a.summaryOpen ? askSummaryHtml(chat) : ''}
     ${a.rename.open ? askRenameModalHtml() : ''}
     ${a.folderDialog ? askFolderDialogHtml() : ''}
     ${a.installSkill ? askInstallSkillHtml() : ''}
@@ -7328,6 +7614,39 @@ function askApplyEvent(msg, data) {
     msg.execution.artifacts = msg.execution.artifacts || [];
     if (!msg.execution.artifacts.some((f) => f.id === data.file.id)) msg.execution.artifacts.push(data.file);
   }
+  if (data.type === 'choice' && data.id) {
+    msg.choices = msg.choices || [];
+    if (!msg.choices.some((card) => card.id === data.id)) {
+      const card = {
+        id: String(data.id),
+        questions: (Array.isArray(data.questions) && data.questions.length
+          ? data.questions
+          : [{ id: 'q1', question: data.question || '', options: data.options || [], multi: !!data.multi, allow_text: data.allow_text !== false }])
+          .map((q, qi) => ({
+            id: String(q.id || 'q' + (qi + 1)),
+            question: String(q.question || ''),
+            multi: !!q.multi,
+            allow_text: q.allow_text !== false,
+            options: (q.options || []).map((o, i) => ({
+              id: String(o.id || 'q' + (qi + 1) + 'o' + (i + 1)),
+              label: String(o.label || ''),
+              why: String(o.why || ''),
+              value: String(o.value || o.label || ''),
+              skill_id: String(o.skill_id || ''),
+              recommended: !!o.recommended,
+            })),
+          })),
+        allow_text: data.allow_text !== false,
+        auto_seconds: Number(data.auto_seconds) || 0,
+        time: Number(data.time) || Date.now(),
+      };
+      msg.choices.push(card);
+      // 有待回答的问题就把它抬到输入框上方（最新的问题覆盖上一张）
+      const a = askState();
+      a.choice = { messageId: msg.id || '', card, answers: {}, text: '', closed: false };
+      askChoiceRefresh();   // 首次没有面板节点时会整块重绘，把问句条挂上去
+    }
+  }
   if (data.type === 'replace') msg.text = String(data.text || '');
   if (data.type === 'delta') msg.text = (msg.text || '') + String(data.text || '');
   if (data.type === 'start' && data.execution) {
@@ -7508,6 +7827,12 @@ async function askSend(text, chatId) {
   if (!target) { askNewConversation(); }
   const chat = target || askActive();
   if (!chat) return;
+  // 用户直接在主输入框里说了别的：问句条视为跳过，别两条线并行
+  if (a.choice && !a.choice.closed) {
+    const stale = (chat.messages || []).find((m) => m.id === a.choice.messageId);
+    if (stale) stale.choiceSkipped = a.choice.card.id;
+    a.choice.closed = true;
+  }
   // 这一轮还在生成：先排队，结束后依次发送，不会丢
   if (askRunOf(chat.id)) {
     askEnqueue(raw, chat.id);
@@ -7649,7 +7974,7 @@ function askChooseMention(id) {
   a.draft = value.slice(0, range.start) + token + value.slice(range.end);
   a.mention = null;
   askRenderPopups();
-  const chip = document.querySelector('.ask-composer-context > span:nth-child(2)');
+  const chip = document.querySelector('.ask-skill-context');
   if (chip) chip.textContent = '✧ ' + skill.name;
   const el = $('#ask-input');
   if (el) {
@@ -7741,30 +8066,14 @@ async function askWatchAttachmentStatus(fileId) {
   }
 }
 
-async function askPreviewFile(id, sheet = 0) {
-  const a = askState();
-  const all = [];
-  for (const c of a.conversations || []) for (const m of c.messages || []) {
-    for (const f of (m.execution && m.execution.artifacts) || []) all.push(f);
-    for (const f of m.files || []) all.push(f);
-  }
-  const file = all.find((f) => f.id === id) || window.AgentWorkspace?.file(id) || { id, name: '文件' };
-  a.previewFile = file;
-  a.previewData = null;
-  a.previewError = '';
-  a.previewSheet = sheet;
-  a.previewSource = false;
-  a.mediaPreview = null;
-  a.previewExpanded = false;
-  askRenderAll();
-  try {
-    const res = await fetch('/api/agent/workspace/files/' + encodeURIComponent(id) + '/preview?sheet=' + sheet, { headers: { 'X-Project-Id': askProjectId() } });
-    if (!res.ok) throw new Error('预览接口返回 ' + res.status);
-    a.previewData = await res.json();
-  } catch (err) {
-    a.previewError = err.message || '预览失败';
-  }
-  askRenderAll();
+async function askPreviewFile(id, sheet = 0, force = false) {
+  const a=askState();
+  const files=[];
+  for(const c of a.conversations||[])for(const m of c.messages||[]){files.push(...(m.files||[]),...(m.execution?.artifacts||[]));}
+  const file=files.find(f=>f.id===id)||window.AgentWorkspace?.file(id)||{id,name:'文件'};
+  askOpenWorkspace();
+  AgentWorkspace.html(askWorkspaceContext());
+  return AgentWorkspace.openFile(id,file,sheet,force);
 }
 async function askExportChat() {
   const chat = askActive();
@@ -7847,6 +8156,9 @@ function bindAsk(root) {
     if (!a.draft) input.focus();
   }
 
+  // 问句条里的「自行撰写」：边输边存，不整块重绘，避免丢焦点
+  askChoiceBindInput();
+
   const search = $('#ask-search');
   if (search) search.oninput = () => { a.search = search.value; askRenderAll(); const el = $('#ask-search'); if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); } };
 
@@ -7872,6 +8184,7 @@ function bindAsk(root) {
     const btn = event.target.closest('[data-act]');
     if (!btn) return;
     const act = btn.dataset.act;
+    if(act!=='ask-head-menu')a.headerMenu=false;
     try {
       if (act === 'ask-queue-cancel') {
         const list = askLoadQueue(a.activeId);
@@ -8040,6 +8353,16 @@ function bindAsk(root) {
         if (!text) { toast('这个动作还没有取值，先选一下上面的选项', true); return; }
         return askSend(text);
       }
+      if (act === 'ask-project-picker') return askOpenProjectPicker();
+      if (act === 'ask-head-menu') {a.headerMenu=!a.headerMenu;a.summaryOpen=false;return askRenderAll();}
+      if (act === 'ask-summary') {a.summaryOpen=!a.summaryOpen;askRenderAll();if(a.summaryOpen)askLoadSummaryFiles();return;}
+      if (act === 'ask-new-workspace') {
+        askOpenWorkspace();AgentWorkspace.html(askWorkspaceContext());return AgentWorkspace.newTab();
+      }
+      if (act === 'ask-copy-conversation') {
+        const chat=askActive();await navigator.clipboard.writeText((chat?.messages||[]).map(m=>(m.role==='user'?'用户':'助手')+'：'+m.text).join('\n\n'));
+        toast('已复制对话文本');return askRenderAll();
+      }
       if (act === 'ask-new') return askNewConversation();
       if (act === 'ask-clear-skill') { a.skillId = ''; return askRenderAll(); }
       if (act === 'ask-folder-create' || act === 'ask-folder-rename') {
@@ -8111,7 +8434,7 @@ function bindAsk(root) {
       if (act === 'ask-toggle-history') {
         a.historyOpen = !a.historyOpen;
         try { localStorage.setItem('wmd.askHistoryOpen', a.historyOpen ? '1' : '0'); } catch { /* ignore */ }
-        if (!a.historyOpen && a.capabilitiesOpen) a.capabilitiesOpen = false;
+        // History and workspace remain independently toggleable.
         return askRenderAll();
       }
       if (act === 'ask-files-pick') {
@@ -8148,7 +8471,7 @@ function bindAsk(root) {
         return;
       }
       if (act === 'ask-toggle-cap') { a.capabilitiesOpen = !a.capabilitiesOpen; a.previewFile = null; a.previewData = null; a.mediaPreview = null; a.previewExpanded = false; if (a.capabilitiesOpen && a.panelTab === 'trajectory') askLoadTrajectory(); return askRenderAll(); }
-      if (act === 'ask-close-cap') { a.capabilitiesOpen = false; return askRenderAll(); }
+      if (act === 'ask-close-cap') { AgentWorkspace.sync(a);a.capabilitiesOpen=false;a.previewFile=null;a.previewData=null;a.mediaPreview=null;return askRenderAll(); }
       if (act === 'ask-panel') {
         a.panelTab = btn.dataset.tab;
         if (a.panelTab === 'trajectory') { a.trajectory = null; askRenderAll(); return askLoadTrajectory(); }
@@ -8217,6 +8540,19 @@ function bindAsk(root) {
         toast('已写进视频创作台的提示词框');
         return;
       }
+      if (act === 'ask-choice-pick') return askChoicePick(btn.dataset.question, btn.dataset.option);
+      if (act === 'ask-choice-send') return askChoiceSend();
+      if (act === 'ask-choice-skip') return askChoiceSkip();
+      if (act === 'ask-choice-type') {
+        const input = $('#ask-choice-input');
+        if (input) { input.focus(); input.setSelectionRange(input.value.length, input.value.length); }
+        return;
+      }
+      if (act === 'ask-quick') {
+        const value = btn.dataset.value;
+        if (!value) { const input = $('#ask-input'); if (input) input.focus(); return; }
+        return askSend(value);
+      }
       if (act === 'ask-copy') {
         const msg = (askActive() && askActive().messages || [])[Number(btn.dataset.index)];
         if (msg) { await navigator.clipboard.writeText(guPlainText(msg.text || '')); toast('已复制回复'); }
@@ -8266,12 +8602,13 @@ function bindAsk(root) {
         return askPreviewFile(a.previewFile && a.previewFile.id, Number(btn.dataset.sheet || 0));
       }
       if (act === 'ask-preview-retry') {
-        return askPreviewFile(a.previewFile && a.previewFile.id, a.previewSheet || 0);
+        return askPreviewFile(a.previewFile && a.previewFile.id, a.previewSheet || 0,true);
       }
       if (act === 'ask-open-inline') {
         const url = btn.dataset.url || '';
         if (!url) return;
-        a.mediaPreview = { url, name: btn.dataset.label || '图片', kind: 'image' };
+        askOpenWorkspace();AgentWorkspace.html(askWorkspaceContext());
+        return AgentWorkspace.openMedia({url,name:btn.dataset.label||'图片',kind:'image'});
         a.previewFile = null;
         a.previewExpanded = false;
         return askRenderAll();
@@ -8281,7 +8618,7 @@ function bindAsk(root) {
         const msg = chat && chat.messages[Number(btn.dataset.index)];
         const file = msg && msg.media && msg.media[Number(btn.dataset.media)];
         if (!file) return;
-        a.mediaPreview = file;
+        a.capabilitiesOpen=true;AgentWorkspace.html(askWorkspaceContext());return AgentWorkspace.openMedia(file);
         a.previewFile = null;
         a.previewExpanded = false;
         return askRenderAll();
@@ -8305,6 +8642,7 @@ function bindAsk(root) {
         return;
       }
       if (act === 'ask-close-pane') {
+        if(a.capabilitiesOpen && window.AgentWorkspace)return AgentWorkspace.closeCurrent();
         a.previewFile = null;
         a.previewData = null;
         a.mediaPreview = null;
@@ -9465,9 +9803,9 @@ function openChannelDialog(kind, channel, opts = {}) {
       contextWindow: channel.contextWindow || 0,
     }
     : {
-      name: '',
+      name: kind === 'video' && types[0].id==='autodl-h3' ? 'AutoDL 官方H3' : '',
       type: types[0].id,
-      baseUrl: '',
+      baseUrl: types[0].fields?.find(f=>f.key==='baseUrl')?.default || '',
       model: '',
       apiKey: '',
       maxTokens: kind === 'llm' ? 4096 : 0,
@@ -9588,6 +9926,7 @@ function openChannelDialog(kind, channel, opts = {}) {
       current.type = $('#ch-type').value;
       current.options = {};
       const meta2 = channelTypeMeta(kind, current.type);
+      if(current.type==='autodl-h3'){current.name='AutoDL 官方H3';current.baseUrl='https://autodl.art';}
       for (const f of meta2.fields) {
         if (!['baseUrl', 'apiKey', 'model'].includes(f.key) && f.default !== undefined) current.options[f.key] = f.default;
       }
@@ -9968,6 +10307,52 @@ function bindProjects(root) {
   });
 }
 
+
+async function askOpenProjectPicker() {
+  if (askState().generating) return toast('请等待当前任务完成，再切换项目', true);
+  await loadProjects();
+  openModal('<div class="agent-project-picker"><div class="modal-head"><h2>选择项目</h2><button type="button" data-close="1" aria-label="关闭">×</button></div><input class="input" id="agent-project-search" placeholder="搜索项目" aria-label="搜索项目" /><div id="agent-project-options" role="listbox" aria-label="已有项目"></div><button type="button" class="agent-project-new" id="agent-project-new">＋ 新建项目</button></div>');
+  const trigger=document.querySelector('.ask-project-trigger').getBoundingClientRect();
+  const panel=$('#modal-panel');panel.classList.add('modal-project-picker');
+  panel.style.setProperty('--project-picker-left',Math.max(12,Math.min(trigger.left,window.innerWidth-432))+'px');
+  panel.style.setProperty('--project-picker-bottom',Math.max(12,window.innerHeight-trigger.top+6)+'px');
+  const draw=()=>{
+    const q=$('#agent-project-search').value.trim().toLowerCase();
+    $('#agent-project-options').innerHTML=(state.projects||[]).filter(p=>p.name.toLowerCase().includes(q)).map(p=>'<button type="button" role="option" aria-selected="'+(p.id===state.projectId)+'" data-project-select="'+esc(p.id)+'"><span>▱ '+esc(p.name)+'</span><small>'+esc(p.dir||'')+'</small>'+(p.id===state.projectId?'<b>✓</b>':'')+'</button>').join('')||'<p class="hint">没有匹配的项目</p>';
+    document.querySelectorAll('#agent-project-options [data-project-select]').forEach(btn=>btn.onclick=async()=>{try{await setActiveProject(btn.dataset.projectSelect);closeModal();}catch(e){toast(e.message,true);}});
+  };
+  $('#agent-project-search').oninput=draw;
+  $('#agent-project-new').onclick=()=>askCreateProjectDialog();
+  draw();$('#agent-project-search').focus();
+}
+function askCreateProjectDialog() {
+  let folders=[],browsing=false;
+  openModal('<div class="agent-project-create"><div class="modal-head"><h2>创建项目</h2><button type="button" data-close="1" aria-label="关闭">×</button></div><label for="agent-project-name">项目名称</label><input class="input" id="agent-project-name" maxlength="60" placeholder="项目名称" /><div class="agent-source-title"><b>源文件夹</b><span>▰ 此计算机</span></div><div id="agent-source-list"></div><p class="hint">第一个文件夹作为主要工作区，产出文件保存在这里。工作区权限覆盖所有已添加文件夹。</p><div class="modal-foot"><button type="button" data-close="1" class="wmd-btn">取消</button><button type="button" class="wmd-btn wmd-btn-primary" id="agent-project-create">创建项目</button></div></div>');
+  const draw=()=>{
+    $('#agent-source-list').innerHTML=folders.map((p,i)=>'<div class="agent-source-row"><span title="'+esc(p)+'"><b>▱ '+esc(p.replaceAll(String.fromCharCode(92),'/').split('/').filter(Boolean).pop())+'</b><small>'+esc(p)+'</small></span>'+(i===0?'<small>主要</small>':'<button type="button" data-primary="'+i+'">设为主要</button>')+'<button type="button" data-remove="'+i+'" aria-label="移除文件夹">×</button></div>').join('')+'<button type="button" class="agent-project-new" id="agent-folder-add">＋ 添加文件夹</button>';
+    document.querySelectorAll('#agent-source-list [data-remove]').forEach(b=>b.onclick=()=>{folders.splice(Number(b.dataset.remove),1);draw();});
+    document.querySelectorAll('#agent-source-list [data-primary]').forEach(b=>b.onclick=()=>{folders.unshift(folders.splice(Number(b.dataset.primary),1)[0]);draw();});
+    $('#agent-folder-add').onclick=()=>browse();
+  };
+  const browse=async()=>{
+    if(browsing)return;
+    browsing=true;const add=$('#agent-folder-add');add.disabled=true;add.textContent='等待系统选择文件夹…';
+    try{
+      const data=await api('/api/project-folders/pick',{method:'POST',body:{}});
+      if(data.path&&!folders.some(p=>p.toLowerCase()===data.path.toLowerCase()))folders.push(data.path);
+    }catch(e){toast(e.message,true);}finally{browsing=false;if($('#agent-source-list'))draw();}
+  };
+  $('#agent-project-create').onclick=async()=>{
+    const name=$('#agent-project-name').value.trim();
+    if(!name)return toast('请填写项目名称',true);
+    if(!folders.length)return toast('请添加至少一个源文件夹',true);
+    if(browsing)return toast('请先完成文件夹选择',true);
+    const button=$('#agent-project-create');button.disabled=true;
+    try{const saved=await api('/api/projects',{method:'POST',body:{name,sourceFolders:folders}});await loadProjects();await setActiveProject(saved.id);closeModal();toast('项目已创建');}catch(e){button.disabled=false;toast(e.message,true);}
+  };
+  draw();$('#agent-project-name').focus();
+}
+
 function openProjectDialog(project) {
   const list = state.styles || [];
   let selected = project ? project.styleId || '' : '';
@@ -10105,7 +10490,7 @@ async function init() {
       || workflowById(stored)
       || workflowById(data.defaultWorkflowId)
       || state.workflows[0];
-    if (wf && wf.provider === 'autodl' && videoChannels.length) {
+    if (wf && wf.provider === 'autodl' && !wf.channelId && videoChannels.length) {
       wf = state.workflows.find((w) => w.channelId === videoChannels[0].id) || wf;
     }
     state.studio.workflowId = wf.id;

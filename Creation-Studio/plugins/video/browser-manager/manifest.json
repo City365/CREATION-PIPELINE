@@ -1,0 +1,45 @@
+{
+  "id": "browser-manager",
+  "name": "浏览器管理器（豆包 / Gemini）",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "entry": "index.js",
+  "provider": "manager",
+  "channelTypes": [
+    {
+      "id": "manager-video",
+      "label": "外接管理器（豆包 / Gemini）",
+      "hint": "调用 管理器7.8.7/rebuild 的本地服务（默认 127.0.0.1:17778），用真实 Chrome 账号跑豆包 / Gemini 网页生成；凭据在 rebuild/data/connection.json",
+      "fields": [
+        {
+          "key": "baseUrl",
+          "label": "管理器地址",
+          "placeholder": "http://127.0.0.1:17778",
+          "required": true,
+          "default": "http://127.0.0.1:17778"
+        },
+        {
+          "key": "apiKey",
+          "label": "连接凭据 apiToken",
+          "type": "password",
+          "placeholder": "connection.json 里的 apiToken"
+        },
+        {
+          "key": "accountId",
+          "label": "指定账号（可选）",
+          "placeholder": "留空 = 该平台第一个可用账号"
+        },
+        {
+          "key": "model",
+          "label": "豆包模型（可选）",
+          "placeholder": "留空用管理器默认"
+        },
+        {
+          "key": "seconds",
+          "label": "默认时长（豆包，5–15 秒）",
+          "placeholder": "10"
+        }
+      ]
+    }
+  ]
+}

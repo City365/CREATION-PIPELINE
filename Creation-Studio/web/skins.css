@@ -227,3 +227,19 @@ html[data-wallpaper-paused="true"] .wallpaper-layer i { animation-play-state: pa
 .ask-folder-toggle small { flex-shrink: 0; }
 .ask-folder-action { flex: none; width: 24px; height: 26px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--ask-muted); cursor: pointer; }
 .ask-folder-action:hover { background: var(--wmd-bg-3); color: var(--ask-text); }
+
+/* Keep project selection above the composer in new conversations too. */
+.ask-chat.is-empty .ask-composer-context{order:-1;padding:0 0 8px;margin-bottom:0;box-sizing:border-box}
+
+/* Composer chrome uses UI typography; prose keeps the selected reading font. */
+.ask-app .ask-composer-context{align-items:center;gap:8px;font-family:var(--wmd-font,"Segoe UI","Microsoft YaHei",sans-serif)}
+.ask-app .ask-composer-context > :is(button,span),
+.ask-app .ask-composer-bar :is(button,select,.ask-draft-count){font-family:var(--wmd-font,"Segoe UI","Microsoft YaHei",sans-serif);font-size:12px;font-weight:400;line-height:1.2}
+.ask-app .ask-composer-context > :is(button,span){box-sizing:border-box;display:inline-flex;align-items:center;gap:6px;height:30px;min-height:30px;padding:0 10px;border:1px solid var(--ask-line);border-radius:8px;margin:0;vertical-align:middle}
+.ask-app .ask-composer-context .ask-project-trigger{max-width:min(300px,50vw);color:var(--ask-text);font-size:12px;font-weight:500;box-shadow:none}
+.ask-project-trigger svg{width:16px;height:16px;flex:none;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.ask-project-trigger .ask-project-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}.ask-project-trigger .ask-project-chevron{width:12px;height:12px;margin-left:2px}
+.ask-project-trigger:hover{background:var(--wmd-bg-2);border-color:var(--wmd-border-strong)}
+.ask-project-trigger:focus-visible{outline:2px solid var(--wmd-accent);outline-offset:2px}
+
+.ask-app .ask-chat.is-empty .ask-composer-context > :is(button,span){font-size:12px}

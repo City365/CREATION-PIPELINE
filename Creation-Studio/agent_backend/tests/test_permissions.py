@@ -158,3 +158,22 @@ def test_permission_tool_reports_roots(roots):
     assert info['ok'] and info['mode'] == 'workspace' and info['can_write'] is True
     assert info['roots']
     assert info['blocked_commands']
+
+
+def test_project_multiple_roots_are_scoped_and_resolved(tmp_path, monkeypatch):
+    from app import create_tools
+    a, b, outside = [tmp_path / name for name in ('primary', 'extra', 'outside')]
+    for p in (a, b, outside): p.mkdir()
+    monkeypatch.setattr(perms, '_PROJECT_DIR_CACHE', {})
+    monkeypatch.setattr(perms, '_PROJECT_SOURCE_CACHE', {})
+    monkeypatch.setattr(perms, 'settings_roots', lambda: [])
+    monkeypatch.setattr(create_tools, '_http', lambda *args, **kwargs: [
+        {'id': 'multi', 'dir': str(a), 'sourceFolders': [str(a), str(b)]},
+        {'id': 'other', 'dir': str(outside), 'sourceFolders': [str(outside)]}])
+    roots = perms.allowed_roots('multi')
+    assert a.resolve() in roots and b.resolve() in roots
+    assert perms.resolve_path(str(b / 'output.txt'), roots, 'workspace') == b / 'output.txt'
+    with pytest.raises(PermissionError): perms.resolve_path(str(outside / 'x.txt'), roots, 'workspace')
+    other = perms.allowed_roots('other')
+    assert b.resolve() not in other and a.resolve() not in other
+    assert perms.resolve_path(str(outside / 'x.txt'), roots, 'full') == outside / 'x.txt'

@@ -1,0 +1,19 @@
+'use strict';
+const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path');
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'wmd-project-roots-'));
+process.env.WMD_DATA_DIR=path.join(dir,'data');process.env.WMD_PROJECT_ROOT=path.join(dir,'legacy');
+const projects=require('../src/projects'),workspace=require('../src/workspace');
+test('existing folders bind primary and retain ordered extra roots through edits',()=>{
+ const a=path.join(dir,'primary'),b=path.join(dir,'reference');fs.mkdirSync(a);fs.mkdirSync(b);fs.writeFileSync(path.join(a,'original.txt'),'original');
+ const p=projects.create({name:'多目录',sourceFolders:[a,b,a]});
+ assert.deepEqual(p.sourceFolders,[fs.realpathSync(a),fs.realpathSync(b)]);
+ assert.equal(workspace.dirFor(p),fs.realpathSync(a));assert.ok(fs.existsSync(path.join(a,'智能体工作区')));
+ const edited=projects.update(p.id,{name:'重命名'});assert.deepEqual(edited.sourceFolders,p.sourceFolders);
+ assert.equal(projects.publicProject(edited).dir,fs.realpathSync(a));assert.equal(fs.readFileSync(path.join(a,'original.txt'),'utf8'),'original');
+});
+test('invalid folder input is rejected before project registration',()=>{
+ const before=projects.list().length;
+ for(const sourceFolders of [['relative'],[path.join(dir,'missing')],[''], 'bad',Array(21).fill(dir)])assert.throws(()=>projects.create({name:'invalid',sourceFolders}));
+ assert.equal(projects.list().length,before);
+});
+test('legacy project retains its original generated directory',()=>{const p=projects.create({name:'旧项目'});assert.equal(workspace.dirFor(p),path.join(workspace.root(),p.folder));});

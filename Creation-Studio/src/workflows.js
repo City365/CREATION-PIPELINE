@@ -3,9 +3,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const channels = require('./channels');
 
-const LIST = JSON.parse(fs.readFileSync(path.join(__dirname, 'workflows.json'), 'utf8'));
+const videoPlugins=require('./video-plugins');
 
-const PROVIDER_LABEL = { autodl: '官网API', generic: '自定义', manager: '管理器' };
+const PROVIDER_LABEL = { autodl: 'AutoDL 官方H3', generic: '自定义', manager: '管理器' };
 const PROVIDER_HINT = {
   autodl: 'AutoDL 官网 API · 只需 API Key，无需开机',
   generic: '自定义视频渠道 · 直接调你填写的接口',
@@ -21,109 +21,13 @@ const ASPECTS = [
 const DEFAULT_ID = 'minimax_h3_image_audio_to_video_v2_15s';
 
 function all() {
-  return LIST.concat(genericWorkflows()).concat(managerWorkflows());
+  return videoPlugins.workflows(channels.list('video'));
 }
 
-/** 管理器渠道：一个渠道派生两条「视频模型」（豆包 / Gemini） */
-function managerWorkflows() {
-  const out = [];
-  for (const ch of channels.list('video')) {
-    if (!ch.enabled || ch.type !== 'manager-video') continue;
-    const opts = ch.options || {};
-    const seconds = Math.min(15, Math.max(5, Number(opts.seconds) || 10));
-    out.push({
-      id: 'mgr:' + ch.id + ':doubao',
-      channelId: ch.id,
-      channelType: ch.type,
-      provider: 'manager',
-      platform: 'doubao',
-      label: ch.name + ' · 豆包',
-      note: '管理器浏览器生成 · 豆包 Seedance · 5–15 秒',
-      images: 9,
-      optionalImages: true,
-      audios: 0,
-      videos: 0,
-      durationKey: 'duration',
-      durationDefault: seconds,
-      durationOptions: Array.from({ length: 11 }, (_, i) => i + 5),
-      seedKey: '',
-      sizeMode: 'ratio',
-      ratios: ['16:9', '9:16', '1:1', '4:3', '3:4'],
-      defaultRatio: '16:9',
-      megapixelsOptions: [],
-      megapixelsDefault: 0,
-      megapixelsLabel: '画幅',
-    });
-    out.push({
-      id: 'mgr:' + ch.id + ':gemini',
-      channelId: ch.id,
-      channelType: ch.type,
-      provider: 'manager',
-      platform: 'gemini',
-      label: ch.name + ' · Gemini',
-      note: '管理器浏览器生成 · Gemini 视频 · 固定 10 秒',
-      images: 9,
-      optionalImages: true,
-      audios: 0,
-      videos: 0,
-      durationKey: 'duration',
-      durationDefault: 10,
-      durationOptions: [10],
-      seedKey: '',
-      sizeMode: 'ratio',
-      ratios: ['16:9', '9:16'],
-      defaultRatio: '16:9',
-      megapixelsOptions: [],
-      megapixelsDefault: 0,
-      megapixelsLabel: '画幅',
-    });
-  }
-  return out;
-}
-
-function genericWorkflows() {
-  return channels.list('video')
-    .filter((ch) => ch.enabled && ch.type !== 'manager-video')
-    .map((ch) => {
-      const opts = ch.options || {};
-      const durationDefault = Math.max(1, Math.min(15, Number(opts.seconds) || 10));
-      return {
-        id: 'ch:' + ch.id,
-        channelId: ch.id,
-        provider: 'generic',
-        label: ch.name,
-        note: ch.type === 'generic-task' ? '自定义任务式接口' : 'OpenAI 视频兼容接口',
-        images: Math.max(1, Math.min(9, Number(opts.maxImages) || 1)),
-        audios: 0,
-        videos: 0,
-        durationKey: 'duration',
-        durationDefault,
-        durationOptions: Array.from({ length: 15 }, (_, i) => i + 1),
-        seedKey: 'seed',
-        sizeMode: 'wh',
-        widthKey: '',
-        heightKey: '',
-        megapixelsOptions: [],
-        megapixelsDefault: 0,
-        megapixelsLabel: '尺寸',
-        aspectKey: '',
-        channelType: ch.type,
-      };
-    });
-}
-
-function get(id) {
-  if (String(id).startsWith('mgr:')) {
-    return managerWorkflows().find((w) => w.id === id) || null;
-  }
-  if (String(id).startsWith('ch:')) {
-    return genericWorkflows().find((w) => w.id === id) || null;
-  }
-  return LIST.find((w) => w.id === id) || null;
-}
+function get(id) { return videoPlugins.resolve(id,channels.list('video')); }
 
 function defaultWorkflow() {
-  return get(DEFAULT_ID) || LIST[0];
+  return get(DEFAULT_ID) || all()[0];
 }
 
 function label(wf) {
@@ -133,6 +37,8 @@ function label(wf) {
 function publicList() {
   return all().map((wf) => ({
     id: wf.id,
+    pluginId: wf.pluginId,
+    pluginVersion: wf.pluginVersion,
     provider: wf.provider,
     providerLabel: PROVIDER_LABEL[wf.provider] || wf.provider,
     label: wf.label,
@@ -143,6 +49,8 @@ function publicList() {
     platform: wf.platform || '',
     ratios: wf.ratios || [],
     defaultRatio: wf.defaultRatio || '',
+    promptRequired: wf.promptRequired !== false,
+    requiredVideos: wf.requiredVideos || 0,
     images: wf.images,
     audios: wf.audios,
     videos: wf.videos || 0,
@@ -177,12 +85,14 @@ function validate(wf, input) {
   if (wf.images > 0 && images.length === 0 && !wf.optionalImages) errors.push('至少添加一张参考图');
   if (images.length > wf.images) errors.push(`该工作流最多 ${wf.images} 张参考图`);
   if (audios.length > wf.audios) errors.push(wf.audios === 0 ? '该工作流不接收参考音频' : `该工作流最多 ${wf.audios} 段参考音频`);
+  if (videos.length < (wf.requiredVideos || 0)) errors.push('请添加动作参考视频');
   if (videos.length > (wf.videos || 0)) errors.push('该工作流不接收参考视频');
   const prompt = String(input.prompt || '').trim();
-  if (!prompt) errors.push('提示词不能为空');
+  if (!prompt && wf.promptRequired !== false) errors.push('提示词不能为空');
   else if (prompt.length > 10000) errors.push('提示词不能超过 10000 个字符');
   const duration = Number(input.duration);
-  if (!Number.isInteger(duration) || duration < 1 || duration > 15) errors.push('视频时长仅支持 1–15 秒的整数秒');
+  if (wf.durationKey && (!Number.isInteger(duration) || duration < 1 || duration > 15)) errors.push('视频时长仅支持 1–15 秒的整数秒');
+  if (wf.durationKey && wf.durationOptions?.length && !wf.durationOptions.includes(duration)) errors.push('时长超出该工作流支持范围');
   if (wf.sizeMode === 'resolution') {
     const res = String(input.resolution || wf.defaultResolution || '');
     if (wf.resolutions.length && !wf.resolutions.includes(res)) errors.push(`分辨率只能是 ${wf.resolutions.join('、')}`);

@@ -9,8 +9,7 @@ const workbenchStore = require('./workbench-store');
 const workflows = require('./workflows');
 const providers = require('./providers');
 const channels = require('./channels');
-const genericVideo = require('./generic-video');
-const managerVideo = require('./manager-video');
+const videoPlugins=require('./video-plugins');
 const {
   ensureDir, readJson, writeJson, uid, dayFolder, stamp, sanitizeFilename,
   kindOf, formatBytes, sleep, publicError, fetchBuffer,
@@ -151,26 +150,7 @@ function slots() {
   const cfg = config.load();
   const out = [];
   for (const key of cfg.autodlKeys.filter((k) => k.enabled)) out.push({ key: 'key:' + key.id, provider: 'autodl', id: key.id, name: key.name });
-  for (const ch of (cfg.channels.video || []).filter((c) => c.enabled !== false)) {
-    if (ch.type === 'manager-video') {
-      // 管理器自己按账号排队：并发几个任务就开几个账号窗口，这里给每个平台留出同样多的槽位。
-      const perPlatform = Math.max(1, Math.min(10, Number(cfg.concurrency) || 3));
-      for (const platform of ['doubao', 'gemini']) {
-        const label = platform === 'doubao' ? '豆包' : 'Gemini';
-        for (let index = 1; index <= perPlatform; index += 1) {
-          out.push({
-            key: `ch:${ch.id}:${platform}:${index}`,
-            provider: 'manager',
-            id: ch.id,
-            platform,
-            name: ch.name + ' · ' + label + (perPlatform > 1 ? ` #${index}` : ''),
-          });
-        }
-      }
-    } else {
-      out.push({ key: 'ch:' + ch.id, provider: 'generic', id: ch.id, name: ch.name });
-    }
-  }
+  for(const ch of (cfg.channels.video||[]).filter(c=>c.enabled!==false)){const plugin=videoPlugins.forType(ch.type);if(plugin)out.push(...plugin.adapter.slots(ch,cfg));}
   return out;
 }
 
@@ -274,12 +254,15 @@ function addJobs(input) {
       prefixPrompt: input.prefixPrompt,
       styleId: input.styleId,
       workflowId: wf.id,
+      pluginId: wf.pluginId,
+      pluginVersion: wf.pluginVersion,
       provider: wf.provider,
       channelId: wf.channelId || null,
       platform: wf.platform || '',
       prompt,
       images: (input.images || []).filter(Boolean),
       audios: (input.audios || []).filter(Boolean),
+      videos: (input.videos || []).filter(Boolean),
       duration: Number(input.duration) || wf.durationDefault,
       resolution: input.resolution || wf.defaultResolution || '',
       aspectRatio: input.aspectRatio || workflows.ASPECTS[0].key,
@@ -357,13 +340,9 @@ function cancel(id) {
     if (a) a.canceled = true;
     job.stage = '正在取消…';
     log(job, 'warn', '已请求取消，等待当前请求返回');
-    if (job.provider === 'manager' && job.remotePromptId && job.channelId) {
-      const channel = channels.get('video', job.channelId);
-      if (channel) {
-        managerVideo.cancel(channel, job.remotePromptId)
-          .then((ok) => log(job, 'warn', ok ? '已请求管理器取消平台任务' : '管理器取消请求被拒绝'))
-          .catch((err) => log(job, 'warn', '管理器取消失败：' + err.message));
-      }
+    if(job.remotePromptId&&job.channelId){
+      const channel=channels.get('video',job.channelId);const plugin=channel&&videoPlugins.forType(channel.type);
+      if(plugin?.adapter.cancel)Promise.resolve().then(()=>plugin.adapter.cancel(channel,job.remotePromptId)).then(ok=>log(job,'warn',ok?'已请求渠道取消远程任务':'渠道未确认取消')).catch(err=>log(job,'warn','远程取消失败：'+err.message));
     }
     touch(job);
     return job;
@@ -371,48 +350,11 @@ function cancel(id) {
   throw new Error('任务已结束，无法取消');
 }
 
-async function resume(id) {
-  const job = get(id);
-  if (!job || job.provider !== 'manager' || !job.remotePromptId) throw new Error('任务没有可继续的管理器编号');
-  // 排队中但被锁住的任务也要能继续：锁定只是挡住自动排队，不应该挡住手动继续。
-  if (!['failed', 'canceled', 'interrupted', 'queued'].includes(job.status)) throw new Error('任务正在生成中或已完成');
-  const channel = channels.get('video', job.channelId);
-  if (!channel) throw new Error('管理器渠道已删除');
-
-  // 先拿管理器任务 id 去查它到底有没有出片：已经出片就直接取回，不进队列也不重新生成。
-  const remote = await managerVideo.poll(channel, job.remotePromptId);
-  if (remote.status === 'success') {
-    job.status = 'running';
-    job.stage = '取回成片…';
-    job.progress = 90;
-    job.held = false;
-    job.error = null;
-    job.failureAnalysis = null;
-    job.resumeRemote = true;
-    job.finishedAt = null;
-    touch(job);
-    log(job, 'info', '管理器任务已生成，直接取回成片（不重新生成）');
-    try {
-      await saveRemoteVideo(job, channel, job.remotePromptId, job.platform || 'doubao', '原任务账号');
-      job.status = 'success';
-      job.stage = '完成';
-      job.progress = 100;
-      job.finishedAt = Date.now();
-      log(job, 'success', '任务完成：' + job.outputs.map((o) => o.name).join(', '));
-      flushState();
-    } catch (err) {
-      failJob(job, err);
-      throw err;
-    }
-    return job;
-  }
-
-  // 还没出片：远程仍在生成就直接排队等结果；远程已失败才让管理器续查原会话。
-  if (remote.status === 'failed') await managerVideo.resume(channel, job.remotePromptId);
-  job.resumeRemote = true; job.status = 'queued'; job.stage = '继续查询原任务';
-  job.error = null; job.finishedAt = null; job.held = false;
-  log(job, 'info', '继续原管理器任务 ' + job.remotePromptId + '，不重新生成');
-  touch(job); setImmediate(pump); return job;
+async function resume(id){
+ const job=get(id);if(!job)throw Error('任务不存在');
+ const wf=workflows.get(job.workflowId);const plugin=job.pluginId?videoPlugins.requireVersion(job.pluginId,job.pluginVersion):wf&&videoPlugins.forWorkflow(wf);
+ if(!plugin?.adapter.resumeJob)throw Error('该渠道插件不支持继续原任务');
+ return plugin.adapter.resumeJob(job,videoContext(job,wf));
 }
 
 function retry(id) {
@@ -537,9 +479,9 @@ async function run(job, slot) {
     if (!wf) throw new Error('工作流不存在');
     const check = workflows.validate(wf, job);
     if (check.errors.length) throw new Error(check.errors.join('；'));
-    if (wf.provider === 'autodl') await runAutodl(job, wf, a);
-    else if (wf.provider === 'manager') await runManagerVideo(job, wf, a, slot);
-    else await runGenericVideo(job, wf, a, slot);
+    const plugin=job.pluginId?videoPlugins.requireVersion(job.pluginId,job.pluginVersion):videoPlugins.forWorkflow(wf);
+    if(!plugin)throw Error('视频渠道插件未安装');
+    await plugin.adapter.execute(videoContext(job,wf,a,slot));
     if (job.status !== 'canceled') {
       job.status = 'success';
       job.stage = '完成';
@@ -579,6 +521,8 @@ function writeJobMeta(job, dir, extra = {}) {
     projectId: job.projectId,
     itemId: job.itemId,
     workflowId: job.workflowId,
+    pluginId: job.pluginId,
+    pluginVersion: job.pluginVersion,
     provider: job.provider,
     apiUrl: extra.apiUrl || '',
     worker: extra.worker || '',
@@ -813,203 +757,7 @@ function dataUrl(filePath, name) {
   return `data:${mime};base64,${buf.toString('base64')}`;
 }
 
-async function runAutodl(job, wf, a) {
-  const key = config.keyById(job.keyId) || config.load().autodlKeys.find((k) => k.enabled);
-  if (!key) throw new Error('没有启用的官网 API Key，请在设置里添加');
-  job.apiUrl = providers.AUTODL_BASE;
-  job.stage = '编码参考素材…';
-  touch(job, { progress: 10 });
-  const payload = { prompt: job.prompt, resolution: job.resolution || wf.defaultResolution };
-  payload[wf.durationKey] = job.duration;
-  if (wf.seedKey) payload[wf.seedKey] = job.seed;
-  const images = job.images.slice(0, wf.images);
-  for (let i = 0; i < images.length; i++) {
-    checkCanceled(job, a);
-    payload[`ref_image_${i}`] = dataUrl(images[i].path, images[i].name);
-    log(job, 'info', `图像 ${i + 1} → ref_image_${i}（base64）`);
-  }
-  const audios = job.audios.slice(0, wf.audios);
-  for (let i = 0; i < audios.length; i++) {
-    checkCanceled(job, a);
-    payload[`ref_audio_${i}`] = dataUrl(audios[i].path, audios[i].name);
-    log(job, 'info', `音频 ${i + 1} → ref_audio_${i}（base64）`);
-  }
-  const masked = { ...payload };
-  for (const [k, v] of Object.entries(masked)) {
-    if (typeof v === 'string' && v.startsWith('data:')) masked[k] = v.slice(0, v.indexOf(',') + 1) + `<base64 ${formatBytes(v.length * 0.75)}>`;
-  }
-  job.inputValues = masked;
-
-  job.stage = '提交到官网…';
-  touch(job, { progress: 20 });
-  const taskId = await providers.submitAutodl(key.token, wf.id, payload);
-  job.remotePromptId = taskId;
-  log(job, 'info', '官网任务已提交：task_id=' + taskId);
-  touch(job, { progress: 25, stage: '官网排队中…' });
-
-  const started = Date.now();
-  let result = null;
-  while (Date.now() - started < JOB_TIMEOUT_MS) {
-    checkCanceled(job, a);
-    await sleep(4000);
-    checkCanceled(job, a);
-    result = await providers.pollAutodl(key.token, taskId);
-    if (result.status === 'failed') throw new Error('官网任务失败：' + (result.message || result.rawStatus));
-    if (result.status === 'success' && result.url) break;
-    touch(job, {
-      progress: Math.min(88, 25 + Math.round((Date.now() - started) / 1000 / 6)),
-      stage: result.status === 'queued' ? '官网排队中…' : '生成中…',
-    });
-  }
-  if (!result || !result.url) throw new Error('官网任务超时或未返回结果地址');
-
-  job.stage = '下载结果…';
-  touch(job, { progress: 90 });
-  const dir = jobDir(job);
-  job.outputDir = dir;
-  const ext = (result.url.match(/\.(mp4|webm|mov|m4v)(?:\?|$)/i) || [])[1] || 'mp4';
-  await saveOutputs(job, dir, [{ type: 'video', filename: 'video.' + ext, url: result.url }], a);
-  writeJobMeta(job, dir, { apiUrl: providers.AUTODL_BASE, worker: key.name, inputValues: masked });
-  job.stage = '完成';
-}
-
-async function runGenericVideo(job, wf, a, slot) {
-  const configuredChannel=channels.get('video',slot.id);
-  const channel=configuredChannel&&{...configuredChannel,model:job.model||configuredChannel.model};
-  if (!channel) throw new Error('视频渠道已删除，请重新选择');
-  job.apiUrl = channel.baseUrl;
-  job.stage = '提交到自定义渠道…';
-  touch(job, { progress: 10 });
-  log(job, 'info', `使用渠道「${channel.name}」（${channel.type}）提交`);
-  const submitted = await genericVideo.submit(channel, job);
-  job.remotePromptId = submitted.taskId;
-  log(job, 'info', '任务已提交：id=' + submitted.taskId);
-  touch(job, { progress: 20, stage: '生成中…' });
-
-  const started = Date.now();
-  let result = null;
-  while (Date.now() - started < JOB_TIMEOUT_MS) {
-    checkCanceled(job, a);
-    await sleep(4000);
-    checkCanceled(job, a);
-    result = await genericVideo.poll(channel, submitted.taskId);
-    if (result.status === 'failed') throw new Error('渠道任务失败：' + (result.message || result.rawStatus));
-    if (result.status === 'success') break;
-    const byTime = 20 + Math.round((Date.now() - started) / 1000 / 8);
-    touch(job, {
-      progress: Math.min(88, Number.isFinite(result.progress) && result.progress > 0 ? Math.max(20, Math.min(88, result.progress)) : byTime),
-      stage: '生成中…',
-    });
-  }
-  if (!result || result.status !== 'success') throw new Error('生成超时或渠道未返回结果');
-
-  job.stage = '下载结果…';
-  touch(job, { progress: 90 });
-  const dir = jobDir(job);
-  job.outputDir = dir;
-  const url = result.url || genericVideo.downloadUrl(channel, submitted.taskId);
-  const absolute = /^https?:\/\//i.test(url) ? url : channel.baseUrl.replace(/\/+$/, '') + (url.startsWith('/') ? '' : '/') + url;
-  const headers = {};
-  if (channel.apiKey) headers.Authorization = 'Bearer ' + String(channel.apiKey).replace(/^\s*Bearer\s+/i, '').trim();
-  const res = await fetchBuffer(absolute, { headers, timeoutMs: 300000 });
-  let ext = '.mp4';
-  try {
-    ext = path.extname(new URL(absolute).pathname) || '.mp4';
-  } catch { /* keep mp4 */ }
-  if (!/^\.(mp4|webm|mov|m4v)$/i.test(ext)) ext = /webm/i.test(res.contentType) ? '.webm' : '.mp4';
-  const name = outputName(job, 'video', ext.toLowerCase());
-  const file = path.join(dir, name);
-  fs.writeFileSync(file, res.buffer);
-  job.outputs.push({ type: 'video', name, path: file, bytes: res.buffer.length, url: absolute });
-  log(job, 'info', `已下载 ${name}（${formatBytes(res.buffer.length)}）`);
-  writeJobMeta(job, dir, {
-    apiUrl: channel.baseUrl,
-    worker: channel.name,
-    inputValues: {
-      channelId: channel.id,
-      channel: channel.name,
-      type: channel.type,
-      model: channel.model,
-      size: genericVideo.sizeFor(job.aspectRatio),
-      duration: job.duration,
-      seed: job.seed,
-    },
-  });
-  job.stage = '完成';
-}
-
-/** 从管理器任务 id 取回成片并落盘：提交成功和「继续查询」两条路径共用。 */
-async function saveRemoteVideo(job, channel, taskId, platform, accountName) {
-  const dir = jobDir(job);
-  job.outputDir = dir;
-  const { buffer, contentType } = await managerVideo.download(channel, taskId);
-  const ext = /webm/i.test(contentType) ? '.webm' : '.mp4';
-  const name = outputName(job, 'video', ext);
-  const file = path.join(dir, name);
-  fs.writeFileSync(file, buffer);
-  job.outputs.push({ type: 'video', name, path: file, bytes: buffer.length, url: managerVideo.baseUrl(channel) + '/api/tasks/' + taskId + '/file' });
-  log(job, 'info', `已下载 ${name}（${formatBytes(buffer.length)}）`);
-  writeJobMeta(job, dir, {
-    apiUrl: managerVideo.baseUrl(channel),
-    worker: channel.name + ' · ' + (managerVideo.PLATFORM_LABEL[platform] || platform),
-    inputValues: {
-      channelId: channel.id,
-      channel: channel.name,
-      platform,
-      model: channel.model || '',
-      duration: job.duration,
-      ratio: managerVideo.shortAspect(job.aspectRatio),
-      managerTaskId: taskId,
-      managerAccount: accountName || '',
-    },
-  });
-  return { name, file };
-}
-
-async function runManagerVideo(job, wf, a, slot) {
-  const channel = channels.get('video', slot.id);
-  if (!channel) throw new Error('管理器渠道已删除，请重新选择');
-  const platform = wf.platform || (slot && slot.platform) || 'doubao';
-  job.apiUrl = managerVideo.baseUrl(channel);
-  job.stage = '提交到管理器…';
-  touch(job, { progress: 10 });
-  log(job, 'info', `管理器渠道「${channel.name}」· ${managerVideo.PLATFORM_LABEL[platform] || platform}`);
-  const submitted = job.resumeRemote && job.remotePromptId
-    ? { taskId: job.remotePromptId, account: { name: '原任务账号' } }
-    : await managerVideo.submit(channel, job, platform);
-  job.remotePromptId = submitted.taskId;
-  log(job, 'info', `已交给管理器账号「${submitted.account.name}」，任务 ${submitted.taskId}`);
-  touch(job, { progress: 18, stage: '生成中…' });
-
-  const started = Date.now();
-  let result = null;
-  while (Date.now() - started < JOB_TIMEOUT_MS) {
-    checkCanceled(job, a);
-    await sleep(5000);
-    checkCanceled(job, a);
-    result = await managerVideo.poll(channel, submitted.taskId);
-    if(job.runId)workbenchStore.store().execution(job.runId,result);
-    if (result.status === 'failed') {
-      job.failureAnalysis = result.failureAnalysis || null;
-      const reason = result.failureReason || result.message || result.rawStatus;
-      const advice = result.failureAdvice ? '（建议：' + result.failureAdvice + '）' : '';
-      throw new Error('管理器任务失败：' + reason + advice);
-    }
-    if (result.status === 'success') break;
-    const byTime = 18 + Math.round((Date.now() - started) / 1000 / 4);
-    touch(job, {
-      progress: Math.min(88, Number(result.progress) > 0 ? Math.max(18, Math.min(88, result.progress)) : byTime),
-      stage: result.message ? '生成中 · ' + String(result.message).slice(0, 40) : '生成中…',
-    });
-  }
-  if (!result || result.status !== 'success') throw new Error('管理器生成超时或未返回成片');
-
-  job.stage = '下载成片…';
-  touch(job, { progress: 92 });
-  await saveRemoteVideo(job, channel, submitted.taskId, platform, submitted.account.name);
-  job.stage = '完成';
-}
-
+function videoContext(job,wf,a,slot){return {job,workflow:wf,signal:a,slot,config,channels,touch,log,checkCanceled,sleep,timeoutMs:JOB_TIMEOUT_MS,dataUrl,formatBytes,jobDir,saveOutputs,writeJobMeta,outputName,workbenchStore,fetchBuffer,failJob,flushState,pump};}
 const clientIds = new Map();
 function getClientId(base) {
   const key = String(base || '');

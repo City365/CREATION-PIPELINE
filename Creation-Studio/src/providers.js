@@ -6,66 +6,7 @@ const { httpJson, fetchBuffer, encodeMultipart, mimeFor, deepFindUrl } = require
 
 /* ------------------------------------ 官网 API（AutoDL） ------------------------------------ */
 
-const AUTODL_BASE = process.env.WMD_AUTODL_BASE || 'https://autodl.art';
-
-function autodlHeaders(token) {
-  return {
-    Authorization: 'Bearer ' + String(token || '').replace(/^\s*Bearer\s+/i, '').trim(),
-    'Content-Type': 'application/json',
-    Accept: 'application/json',
-  };
-}
-
-async function submitAutodl(token, workflowId, payload) {
-  const res = await httpJson(`${AUTODL_BASE}/api/v1/comfyui/comfyui_workflow/${encodeURIComponent(workflowId)}`, {
-    method: 'POST',
-    headers: autodlHeaders(token),
-    body: JSON.stringify(payload),
-    timeoutMs: 120000,
-  });
-  const data = res.data || {};
-  if (String(data.code || '').toLowerCase() !== 'success' || !(data.data && data.data.task_id)) {
-    const msg = (data.data && (data.data.message || data.data.msg)) || data.msg || data.message || String(res.text || '').slice(0, 200);
-    if (res.status === 401) throw new Error('AutoDL 返回 401（密钥无效或未授权大模型接口），请到 https://autodl.art/large-model/tokens 检查令牌');
-    throw new Error('任务提交失败：' + msg);
-  }
-  return String(data.data.task_id);
-}
-
-async function pollAutodl(token, taskId) {
-  const res = await httpJson(`${AUTODL_BASE}/api/v1/comfyui/comfyui_workflow/result/${encodeURIComponent(taskId)}`, {
-    headers: autodlHeaders(token),
-    timeoutMs: 30000,
-  });
-  const data = res.data || {};
-  if (String(data.code || '').toLowerCase() !== 'success') {
-    throw new Error('查询失败：' + ((data.data && (data.data.message || data.data.msg)) || data.msg || `HTTP ${res.status}`));
-  }
-  const body = data.data;
-  if (!body || typeof body !== 'object') throw new Error('查询响应缺少 data');
-  const raw = String(body.status || '').trim().toUpperCase();
-  let status = 'unknown';
-  if (['QUEUED', 'PENDING', 'WAITING'].includes(raw)) status = 'queued';
-  else if (['RUNNING', 'PROCESSING'].includes(raw)) status = 'running';
-  else if (['SUCCESS', 'COMPLETED', 'SUCCEEDED'].includes(raw)) status = 'success';
-  else if (['FAILED', 'ERROR', 'CANCELLED', 'CANCELED'].includes(raw)) status = 'failed';
-  return { status, rawStatus: raw, url: status === 'success' ? deepFindUrl(body) : '', message: body.message || body.msg || '', raw: body };
-}
-
-async function verifyAutodlKey(token) {
-  if (!String(token || '').trim()) return { ok: false, message: '请先填写 API Key' };
-  try {
-    await httpJson(`${AUTODL_BASE}/api/v1/comfyui/comfyui_workflow/result/h3-key-check`, {
-      headers: autodlHeaders(token),
-      timeoutMs: 30000,
-    });
-    return { ok: true, message: 'API Key 可用' };
-  } catch (err) {
-    if (err.status === 401 || err.status === 403) return { ok: false, message: '密钥无效或未授权' };
-    if (/无法连接|超时/.test(err.message)) return { ok: false, message: err.message };
-    return { ok: true, message: 'API Key 已被官网接受' };
-  }
-}
+const {AUTODL_BASE,submitAutodl,pollAutodl,verifyAutodlKey}=require('../plugins/video/autodl-h3/protocol');
 
 /* ------------------------------------- 语言模型（提示词优化） ------------------------------------- */
 

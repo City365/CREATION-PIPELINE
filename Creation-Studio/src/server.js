@@ -30,6 +30,7 @@ const genericVideo = require('./generic-video');
 const tts = require('./tts');
 const voices = require('./voices');
 const managerVideo = require('./manager-video');
+const videoPlugins=require('./video-plugins');
 const studioStore = require('./studio-store');
 const workbenchStore = require('./workbench-store');
 const workbenchRoutes = require('./workbench-routes');
@@ -48,6 +49,7 @@ const AGENT_URL = process.env.WMD_AGENT_URL || 'http://127.0.0.1:17820';
 // 前端没带 X-Project-Id 时的兜底项目名：中性占位，不再借用别的产品项目名。
 const AGENT_PROJECT = process.env.WMD_AGENT_PROJECT || 'wmd-local';
 const STATIC = {
+  '/agent-workspace.css': ['agent-workspace.css', 'text/css; charset=utf-8'],
   '/agent-workspace.js': ['agent-workspace.js', 'text/javascript; charset=utf-8'],
   '/': ['index.html', 'text/html; charset=utf-8'],
   '/index.html': ['index.html', 'text/html; charset=utf-8'],
@@ -528,6 +530,10 @@ async function route(req, res) {
     return ok(res, styles.detail(style));
   }
 
+  if (method === 'POST' && pathname === '/api/project-folders/pick') {
+    return ok(res, await require('./folder-picker').pickFolder());
+  }
+
   if (method === 'GET' && pathname === '/api/projects') {
     return ok(res, projects.list().map((p) => projects.publicProject(p)));
   }
@@ -757,6 +763,8 @@ async function controlService(name, action) {
     return ok(res, channels.publicTypes());
   }
 
+  if (method === 'GET' && pathname === '/api/video-plugins') return ok(res,{plugins:videoPlugins.list(),errors:videoPlugins.errors()});
+
   if (method === 'GET' && pathname === '/api/channels') {
     return ok(res, {
       llm: channels.list('llm', { includeSecrets: true }),
@@ -875,10 +883,10 @@ async function controlService(name, action) {
           result = { ok: true, message: '可用 · ' + String(out.content).trim().slice(0, 60) };
         } else if (kind === 'image') {
           result = await imagegen.test(channel);
-        } else if (channel.type === 'manager-video') {
-          result = await managerVideo.test(channel);
         } else {
-          result = await genericVideo.test(channel);
+          const plugin=videoPlugins.forType(channel.type);
+          if(!plugin)throw Error('渠道插件未安装');
+          result=await plugin.adapter.test(channel);
         }
       } catch (err) {
         result = { ok: false, message: publicError(err) };

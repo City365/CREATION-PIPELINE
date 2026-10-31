@@ -35,7 +35,16 @@ function normalize(input, base = {}) {
   const style = styleId ? styles.get(styleId) : null;
   const name = String(input.name || base.name || '').trim();
   if (!name) throw new Error('请填写项目名称');
+  const sourceFolders = input.sourceFolders ?? base.sourceFolders ?? [];
+  if (!Array.isArray(sourceFolders) || sourceFolders.length > 20) throw new Error('源文件夹最多 20 个');
+  const roots = [...new Set(sourceFolders.map(item => {
+    if (typeof item !== 'string' || !path.isAbsolute(item)) throw new Error('请选择绝对路径的文件夹');
+    const resolved = fs.realpathSync(item);
+    if (!fs.statSync(resolved).isDirectory()) throw new Error('源路径必须是文件夹');
+    return resolved;
+  }))];
   return {
+    sourceFolders: roots,
     id: base.id || 'proj-' + uid('').slice(0, 10),
     folder: base.folder || String(input.folder || ''),
     name: name.slice(0, 60),

@@ -204,7 +204,7 @@ def register_existing(project, session_id, path, name='', suffix='', origin='gen
             workspace.reindex(item, data)
             attach(item['id'],project,session_id,target,origin,'脚本' if suffix in SCRIPT_SUFFIXES else '文件',root)
         else:
-            item = workspace.save_upload(project,name or target.name,data,session_id=session_id,source=str(target),existing_path=target,origin=origin)
+            item = workspace.save_upload(project,name or target.name,data,session_id=session_id,source=str(target),existing_path=target,origin=origin,recognize=bool(session_id))
         return {**workspace.file_record(project,item['id']), 'origin':origin, 'path':str(target), 'digest':digest}
 
 
@@ -286,3 +286,65 @@ def page(project,session_id,kind='output',page=1):
     token=BOUND_ROOTS.set({**BOUND_ROOTS.get(),project:root})
     try:return _page(project,session_id,kind,page)
     finally:BOUND_ROOTS.reset(token)
+
+
+def move_records(project,source,target,apply=False):
+    root=project_root(project)
+    source=inside(root,source);target=inside(root,target)
+    old=source.relative_to(root).as_posix();new=target.relative_to(root).as_posix()
+    with closing(connect()) as db, db:
+        allrows=db.execute('SELECT file_id,relative_path FROM workspace_locations WHERE project=?',(project,)).fetchall()
+        moving=[(fid,path,new+path[len(old):]) for fid,path in allrows if path==old or path.startswith(old+'/')]
+        moved_ids={fid for fid,_,_ in moving}
+        if any(fid not in moved_ids and path in {n for _,_,n in moving} for fid,path in allrows):
+            raise HTTPException(409,'目标已有登记文件，请使用新文件名避免覆盖其他产物')
+        if apply:
+            for fid,path,nextpath in moving:
+                db.execute('UPDATE workspace_locations SET relative_path=? WHERE file_id=?',(nextpath,fid))
+                db.execute('UPDATE workspace_files SET name=? WHERE id=?',(Path(nextpath).name,fid))
+    if apply:mirror(project,root)
+    return len(moving)
+
+
+def directory(project,relative_path='',offset=0,limit=50):
+    """List a single directory, never recursively walk the project or follow escaping links."""
+    from app import workspace
+    root=project_root(project)
+    if Path(relative_path).is_absolute():raise HTTPException(400,'目录必须是项目相对路径')
+    folder=inside(root,root/relative_path)
+    if not folder.is_dir():raise HTTPException(404,'目录不存在')
+    if any(part.startswith('.') for part in folder.relative_to(root).parts):raise HTTPException(403,'内部索引目录不可浏览')
+    rows=[]
+    with closing(connect()) as db:
+        registered={path:fid for fid,path in db.execute('SELECT file_id,relative_path FROM workspace_locations WHERE project=?',(project,))}
+    for child in folder.iterdir():
+        if child.name.startswith('.'):continue
+        try:
+            resolved=inside(root,child)
+            is_dir=resolved.is_dir()
+            if not is_dir and not resolved.is_file():continue
+            relative=child.relative_to(root).as_posix()
+            rows.append({'name':child.name,'relative_path':relative,'kind':'directory' if is_dir else 'file','id':registered.get(relative),'size':0 if is_dir else child.stat().st_size,'previewable':not is_dir and child.suffix.lower() in workspace.EXTENSIONS})
+        except (OSError,HTTPException):continue
+    rows.sort(key=lambda x:(x['kind']!='directory',x['name'].casefold()))
+    offset=max(0,int(offset));limit=max(1,min(100,int(limit)))
+    return {'rootName':root.name,'relative_path':relative_path,'items':rows[offset:offset+limit],'total':len(rows),'offset':offset,'nextOffset':offset+limit if offset+limit<len(rows) else None}
+
+
+def open_relative(project,relative_path):
+    from app import workspace
+    root=project_root(project)
+    if Path(relative_path).is_absolute():raise HTTPException(400,'文件必须是项目相对路径')
+    path=inside(root,root/relative_path)
+    if any(part.startswith('.') for part in path.relative_to(root).parts):raise HTTPException(403,'内部索引文件不可预览')
+    if not path.is_file():raise HTTPException(404,'文件不存在')
+    with closing(connect()) as db:
+        row=db.execute('SELECT file_id FROM workspace_locations WHERE project=? AND relative_path=?',(project,path.relative_to(root).as_posix())).fetchone()
+    if row:
+        item=workspace.file_record(project,row[0])
+        item.pop('text',None)
+        return {**item,'path':str(path)}
+    # Browsing does not claim that the current conversation produced the file.
+    item=register_existing(project,None,path,origin='work')
+    item.pop('text',None)
+    return item

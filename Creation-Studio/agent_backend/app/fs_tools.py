@@ -10,6 +10,7 @@ import json, os, shutil, subprocess, threading, time
 from pathlib import Path
 
 from langchain_core.tools import tool
+from fastapi import HTTPException
 
 from app import permissions as perms, project_files
 
@@ -74,8 +75,8 @@ def build_local_tools(project=None, session_id=None, mode=None, roots=None, publ
     key = perms.normalize(mode)
     allowed = perms.allowed_roots(project, roots)
     base = allowed[0] if allowed else Path.cwd()
-    if project and session_id:
-        frozen_root = project_files.project_root(project)
+    frozen_root = project_files.project_root(project) if project else None
+    if project:
         base = project_files.session_dir(project, session_id, frozen_root)
         # Project scope must not include the shared legacy backend directory.
         allowed = [frozen_root] + [p for p in allowed if p != perms.AGENT_WORKSPACE.resolve()]
@@ -233,10 +234,12 @@ def build_local_tools(project=None, session_id=None, mode=None, roots=None, publ
         if str(source) == str(target):
             return _fail('源和目标是同一个位置')
         try:
+            if project:project_files.move_records(project,source,target)
             target.parent.mkdir(parents=True, exist_ok=True)
             backup = perms.park(target,root=(frozen_root/project_files.AGENT_FOLDER/'.回收站') if project else None) if target.exists() else ''
             shutil.move(str(source), str(target))
-        except OSError as exc:
+            if project:project_files.move_records(project,source,target,apply=True)
+        except (OSError,HTTPException) as exc:
             return _fail('移动失败：' + str(exc))
         return {'ok': True, 'from': str(source), **perms.public(target), 'backup': backup}
 

@@ -1,0 +1,30 @@
+{
+  "id": "autodl-h3",
+  "name": "AutoDL 官方H3",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "entry": "index.js",
+  "provider": "autodl",
+  "channelTypes": [
+    {
+      "id": "autodl-h3",
+      "label": "AutoDL 官方H3",
+      "hint": "官方 API，支持指定的 4 个 H3 视频工作流和动作迁移。",
+      "fields": [
+        {
+          "key": "baseUrl",
+          "label": "接口地址",
+          "default": "https://autodl.art",
+          "placeholder": "https://autodl.art",
+          "required": true
+        },
+        {
+          "key": "apiKey",
+          "label": "API Key",
+          "type": "password",
+          "placeholder": "填写 AutoDL 官方令牌"
+        }
+      ]
+    }
+  ]
+}
