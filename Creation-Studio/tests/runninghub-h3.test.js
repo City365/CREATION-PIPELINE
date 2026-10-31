@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),os=require('node:os'),http=require('node:http');
 const {spawn}=require('node:child_process');
 const adapter=require('../plugins/video/runninghub-h3'),protocol=require('../plugins/video/runninghub-h3/protocol'),apps=require('../plugins/video/runninghub-h3/workflows.json');
@@ -123,6 +123,44 @@ test('国内站：上传 → 提交 → 轮询 → 下载，节点与鉴权符�
   assert.equal(mock.requests.filter(r=>r.url.startsWith('/openapi/v2/run/ai-app/')).length,1);
   assert.equal(mock.requests.filter(r=>r.url==='/openapi/v2/media/upload/binary').length,2);
   assert.ok(!JSON.stringify(job).includes('cn-key'));
+ }finally{await mock.close();}
+});
+
+test('平台拒单时透出真实错误码与原文，不再伪装成「缺少 taskId」',{timeout:20000},async()=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'rh-reject-'));
+ const images=[{path:tinyPng(root,'a.png'),name:'a.png'}];
+ let mock;
+ mock=await mockServer((req,body,res)=>{
+  if(req.url==='/openapi/v2/media/upload/binary')return {code:0,data:{fileName:'uploaded/x.png'}};
+  if(req.url.startsWith('/openapi/v2/run/ai-app/'))return {taskId:'',status:'',errorCode:'605',errorMessage:'Your balance is insufficient. Please top up your account. | 您的账户余额不足，请充值。'};
+  res.end('');
+ });
+ try{
+  const channel=siteChannel('runninghub-h3-ai',{baseUrl:mock.base,apiKey:'ai-key',id:'ch-ai'});
+  const {ctx,job}=fakeCtx(channel,'rh:ch-ai:ai_1080p_hypervae',images,root);
+  await assert.rejects(()=>adapter.execute(ctx),/错误码：605/);
+  await assert.rejects(()=>adapter.execute(ctx),/余额不足/);
+  assert.equal(job.remotePromptId,'');
+  assert.equal(mock.requests.filter(r=>r.url.startsWith('/openapi/v2/run/ai-app/')).length,2);
+ }finally{await mock.close();}
+});
+
+test('扁平的 openapi/v2 失败体不会被 check 放行，节点异常能直接定位',{timeout:20000},async()=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'rh-node-'));
+ const images=[{path:tinyPng(root,'a.png'),name:'a.png'}];
+ let mock;
+ mock=await mockServer((req,body,res)=>{
+  if(req.url==='/openapi/v2/media/upload/binary')return {code:0,data:{fileName:'uploaded/x.png'}};
+  if(req.url.startsWith('/openapi/v2/run/ai-app/'))return {taskId:'',status:'',errorCode:'1101',errorMessage:'Node info error | 节点信息异常',results:null};
+  res.end('');
+ });
+ try{
+  const channel=siteChannel('runninghub-h3-ai',{baseUrl:mock.base,apiKey:'ai-key',id:'ch-ai'});
+  const {ctx}=fakeCtx(channel,'rh:ch-ai:ai_1080p_hypervae',images,root);
+  await assert.rejects(()=>adapter.execute(ctx),/错误码：1101（Node info error \| 节点信息异常）/);
+  // 进程内再确认：{code:0} 的旧外壳不会被误判成失败
+  assert.doesNotThrow(()=>protocol.submit);
+  assert.equal(typeof protocol.test,'function');
  }finally{await mock.close();}
 });
 
