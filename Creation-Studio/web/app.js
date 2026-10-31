@@ -4821,7 +4821,9 @@ async function askApi(path, init = {}) {
       const data = await res.json();
       message = typeof data.detail === 'string' ? data.detail : (data.detail && data.detail.message) || message;
     } catch { /* ignore */ }
-    throw new Error(message);
+    const error = new Error(message);
+    error.status = res.status;
+    throw error;
   }
   return res;
 }
@@ -5023,6 +5025,7 @@ function askNewConversation() {
   const c = { id: askId(), title: '新的创作对话', pinned: false, updated: Date.now(), messages: [] };
   a.conversations = [c, ...(a.conversations || [])];
   a.activeId = c.id;
+  askSyncCurrentRowItems();
   a.draft = '';
   a.attachments = [];
   askSyncRunState();
@@ -7077,6 +7080,45 @@ async function askLoadProjectHistory(force = false) {
   }
 }
 
+// 侧栏按项目分组渲染，当前项目的列表同时被 a.conversations 和 projectHistory 那一行引用；
+// 任何增删都要两边一起改，否则删掉的对话还挂在侧栏里，点它就会报“不存在”。
+function askSyncCurrentRowItems() {
+  const a = askState();
+  if (!Array.isArray(a.projectHistory) || !Array.isArray(a.conversations)) return;
+  const row = a.projectHistory.find((r) => r.id === askProjectId());
+  if (row) row.items = a.conversations;
+}
+
+function askFindConversation(id) {
+  const a = askState();
+  const hit = (a.conversations || []).find((c) => c.id === id);
+  if (hit) return hit;
+  for (const row of a.projectHistory || []) {
+    const found = (row.items || []).find((c) => c.id === id);
+    if (found) return found;
+  }
+  return null;
+}
+
+function askConversationProject(id) {
+  const a = askState();
+  if ((a.conversations || []).some((c) => c.id === id)) return askProjectId();
+  for (const row of a.projectHistory || []) if ((row.items || []).some((c) => c.id === id)) return row.id;
+  return askProjectId();
+}
+
+function askForgetConversation(id) {
+  const a = askState();
+  if (Array.isArray(a.conversations)) a.conversations = a.conversations.filter((c) => c.id !== id);
+  for (const row of a.projectHistory || []) {
+    if (Array.isArray(row.items)) row.items = row.items.filter((c) => c.id !== id);
+  }
+  if (a.moreMenu === id) a.moreMenu = null;
+  if (a.rename && a.rename.id === id) a.rename = { open: false, id: '', text: '' };
+  a.projectHistoryAt = 0;
+  askSyncCurrentRowItems();
+}
+
 async function askOpenProjectConversation(projectId, convId) {
   const a = askState();
   if (projectId && projectId !== askProjectId()) {
@@ -7085,7 +7127,13 @@ async function askOpenProjectConversation(projectId, convId) {
     await askRestore();
     askLoadProjectHistory(true).catch(() => {});
   }
-  if (!(a.conversations || []).some((c) => c.id === convId)) return toast('这个对话已不在该项目里，可能已被删除', true);
+  if (!(a.conversations || []).some((c) => c.id === convId)) {
+    // 侧栏里还留着已删掉的条目：摘掉它并跟服务端对齐，用户不用刷新页面
+    askForgetConversation(convId);
+    askRenderAll();
+    askLoadProjectHistory(true).catch(() => {});
+    return toast('这个对话已不在该项目里，可能已被删除', true);
+  }
   return askSelect(convId);
 }
 
@@ -7619,7 +7667,7 @@ async function askSaveInstallSkill() {
 
 function askMoreMenuHtml() {
   const a = askState();
-  const c = (a.conversations || []).find((x) => x.id === a.moreMenu);
+  const c = askFindConversation(a.moreMenu);
   if (!c) return '';
   return `<div class="ask-more-menu" role="menu" aria-label="管理对话：${esc(c.title || '新的创作对话')}" style="visibility:hidden">
     <button type="button" data-act="ask-pin" data-id="${esc(c.id)}">${c.pinned ? '取消置顶' : '置顶对话'}</button>
@@ -8841,12 +8889,13 @@ function bindAsk(root) {
       if (act === 'ask-more') { a.moreMenu = a.moreMenu === btn.dataset.id ? null : btn.dataset.id; return askRenderAll(); }
       if (act === 'ask-more-close') { if (!event.target.closest('.ask-more-menu')) { a.moreMenu = null; askRenderAll(); } return; }
       if (act === 'ask-pin') {
-        const c = (a.conversations || []).find((x) => x.id === btn.dataset.id);
+        const c = askFindConversation(btn.dataset.id);
         if (c) c.pinned = !c.pinned;
         a.moreMenu = null; askPersist(); return askRenderAll();
       }
       if (act === 'ask-rename') {
-        const c = (a.conversations || []).find((x) => x.id === btn.dataset.id);
+        const c = askFindConversation(btn.dataset.id);
+        if (!c) { askForgetConversation(btn.dataset.id); return askRenderAll(); }
         a.rename = { open: true, id: c.id, text: c.title };
         a.moreMenu = null; return askRenderAll();
       }
@@ -8854,12 +8903,22 @@ function bindAsk(root) {
       if (act === 'ask-rename-save') return askSaveRename();
       if (act === 'ask-delete') {
         const id = btn.dataset.id;
-        const c = (a.conversations || []).find((x) => x.id === id);
-        if (!c) return;
+        const c = askFindConversation(id);
+        if (!c) { askForgetConversation(id); return askRenderAll(); }
+        const ownerId = askConversationProject(id);
         if (id === a.activeId) askStop();
-        await askApi('/sessions/' + encodeURIComponent(id), { method: 'DELETE' }).catch(() => toast('删除会话失败', true));
+        let failure = null;
+        try {
+          await askApi('/sessions/' + encodeURIComponent(id), {
+            method: 'DELETE',
+            headers: ownerId && ownerId !== askProjectId() ? { 'X-Project-Id': ownerId } : {},
+          });
+        } catch (err) {
+          const gone = err && (err.status === 404 || /不存在|not found/i.test(String(err.message || '')));
+          if (!gone) failure = err;
+        }
         a.removed = c;
-        a.conversations = (a.conversations || []).filter((x) => x.id !== id);
+        askForgetConversation(id);
         // 删对话时连它的待发送队列一起清掉
         try { localStorage.removeItem(askQueueKey(id)); } catch { /* ignore */ }
         if (a.queues) delete a.queues[id];
@@ -8867,11 +8926,26 @@ function bindAsk(root) {
           a.activeId = (a.conversations[0] && a.conversations[0].id) || '';
           if (!a.activeId) askNewConversation();
         }
-        return askRenderAll();
+        if (failure) toast('删除会话失败：' + (failure.message || '未知错误'), true);
+        askRenderAll();
+        askLoadProjectHistory(true).catch(() => {});
+        return;
       }
       if (act === 'ask-undo') {
-        if (a.removed) { a.conversations.unshift(a.removed); a.removed = null; askPersist(); }
-        return askRenderAll();
+        if (!a.removed) return askRenderAll();
+        const back = a.removed;
+        a.removed = null;
+        if (state.route === 'script') askRenderAll();
+        // 撤销要真的把会话写回去，否则刷新页面又没了
+        await askApi('/sessions/' + encodeURIComponent(back.id), { method: 'PUT', body: JSON.stringify(back) })
+          .catch((err) => toast('撤销失败：' + (err.message || '未知错误'), true));
+        a.conversations = [back, ...(a.conversations || []).filter((x) => x.id !== back.id)];
+        a.activeId = back.id;
+        askSyncCurrentRowItems();
+        askPersist();
+        askRenderAll();
+        askLoadProjectHistory(true).catch(() => {});
+        return;
       }
       if (act === 'ask-workspace') {
         a.workspacePage = btn.dataset.page;
@@ -9293,7 +9367,7 @@ function bindAsk(root) {
 
 function askSaveRename() {
   const a = askState();
-  const c = (a.conversations || []).find((x) => x.id === a.rename.id);
+  const c = askFindConversation(a.rename.id);
   if (c && a.rename.text.trim()) c.title = a.rename.text.trim();
   a.rename = { open: false, id: '', text: '' };
   askPersist();

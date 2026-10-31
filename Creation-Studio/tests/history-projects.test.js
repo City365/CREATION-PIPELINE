@@ -35,10 +35,10 @@ const askApi = (url, init) => {
   return Promise.resolve({ json: async () => items });
 };
 ${source.slice(start, end)}
-module.exports = { askHistoryHtml, askLoadProjectHistory, askOpenProjectConversation, askNewChatInProject, setState: (v) => { CURRENT = v; } };
+module.exports = { askHistoryHtml, askLoadProjectHistory, askOpenProjectConversation, askNewChatInProject, askForgetConversation, askFindConversation, askSyncCurrentRowItems, setState: (v) => { CURRENT = v; } };
 `)(sandbox, sandbox.exports);
 
-const { askHistoryHtml, askLoadProjectHistory, askOpenProjectConversation, askNewChatInProject, setState } = sandbox.exports;
+const { askHistoryHtml, askLoadProjectHistory, askOpenProjectConversation, askNewChatInProject, askForgetConversation, askFindConversation, askSyncCurrentRowItems, setState } = sandbox.exports;
 
 const conversation = (id, title, updated = 1) => ({ id, title, updated, messages: [{ role: 'user', text: title }] });
 
@@ -136,3 +136,60 @@ test('app.js 里旧的分组入口已经清干净', () => {
   assert.equal(source.includes('askFolderDialogHtml'), false);
   assert.equal(source.includes('askSaveFolder'), false);
 });
+
+test('删掉对话后侧栏要立刻刷新：项目分组里那一份也一起摘掉', () => {
+  // 关键 bug：删除只重建了 a.conversations，分组行还引用旧数组 → 删掉的对话继续挂在侧栏
+  const conversations = [conversation('c1', '甲对话'), conversation('c2', '乙对话')];
+  const a = makeState({
+    conversations,
+    projectHistory: [
+      { id: 'p1', name: '当前项目', items: conversations },
+      { id: 'p2', name: '另一个项目', items: [conversation('c9', '别的对话')] },
+    ],
+  });
+  askForgetConversation('c1');
+  assert.deepEqual(a.conversations.map((c) => c.id), ['c2']);
+  for (const row of a.projectHistory) assert.equal(row.items.some((c) => c.id === 'c1'), false, row.id + ' 分组里还留着已删除的对话');
+  assert.equal(a.projectHistoryAt, 0, '要强制下一次跟服务端对齐');
+  const html = askHistoryHtml();
+  assert.equal(html.includes('甲对话'), false, '删掉的对话不能还渲染在侧栏');
+  assert.match(html, /乙对话/);
+});
+
+test('删除时如果对话只存在于别的项目分组，也能找到并清掉', () => {
+  const a = makeState({
+    conversations: [],
+    projectHistory: [{ id: 'p2', name: '别的项目', items: [conversation('c9', '别的对话')] }],
+  });
+  assert.equal(askFindConversation('c9').id, 'c9');
+  askForgetConversation('c9');
+  assert.equal(askFindConversation('c9'), null);
+  assert.equal(a.projectHistory[0].items.length, 0);
+});
+
+test('点已删除的对话：顺手清掉陈旧条目，不只弹提示', async () => {
+  const a = makeState({
+    conversations: [],
+    projectHistory: [{ id: 'p1', name: '当前项目', items: [conversation('gone', '已删除的')] }],
+  });
+  await askOpenProjectConversation('p1', 'gone');
+  assert.equal(a.selected, undefined);
+  assert.ok(a.toasts.join('').includes('已不在该项目'));
+  assert.equal(a.projectHistory[0].items.length, 0, '陈旧条目要当场摘掉');
+});
+
+test('新建对话会把当前项目分组指向新的列表，不会留下旧引用', () => {
+  const conversations = [conversation('c1', '甲对话')];
+  const a = makeState({ conversations, projectHistory: [{ id: 'p1', name: '当前项目', items: conversations }] });
+  a.conversations = [conversation('c-new', '新对话'), ...conversations];
+  askSyncCurrentRowItems();
+  assert.equal(a.projectHistory[0].items, a.conversations);
+});
+
+test('删除分支必须调用 askForgetConversation（而不是只 filter a.conversations）', () => {
+  const branch = source.slice(source.indexOf("if (act === 'ask-delete')"), source.indexOf("if (act === 'ask-undo')"));
+  assert.ok(branch.includes('askForgetConversation(id)'), '删除分支要同步摘掉分组里的条目');
+  assert.ok(branch.includes('askLoadProjectHistory(true)'), '删除后要跟服务端对齐一次');
+  assert.equal(branch.includes('a.conversations = (a.conversations || []).filter((x) => x.id !== id)'), false);
+});
+
