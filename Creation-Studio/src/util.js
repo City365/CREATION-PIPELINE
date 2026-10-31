@@ -132,7 +132,7 @@ async function fetchBuffer(url, opts = {}) {
 }
 
 function encodeMultipart(fields, boundary) {
-  const b = boundary || '----h3studio' + crypto.randomBytes(8).toString('hex');
+  const b = boundary || '----wmddesktop' + crypto.randomBytes(8).toString('hex');
   const chunks = [];
   for (const f of fields) {
     chunks.push(Buffer.from(`--${b}\r\n`));

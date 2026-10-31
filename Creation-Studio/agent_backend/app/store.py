@@ -1,7 +1,7 @@
 """Project-scoped conversation storage; no historical source database is imported."""
-import json, sqlite3, time
+import json, sqlite3, time, os
 from pathlib import Path
-DB = Path(__file__).resolve().parents[1] / 'data' / 'conversations.db'
+DB = Path(os.getenv('WMD_AGENT_DB') or Path(__file__).resolve().parents[1] / 'data' / 'conversations.db')
 def connect():
     DB.parent.mkdir(parents=True, exist_ok=True)
     db = sqlite3.connect(DB, timeout=10)
@@ -17,6 +17,13 @@ def get_session(project, sid):
 def save(project, c):
     with connect() as db:
         db.execute('INSERT INTO conversations VALUES (?,?,?) ON CONFLICT(project,id) DO UPDATE SET payload=excluded.payload',(project,c['id'],json.dumps(c,ensure_ascii=False)))
+    try:
+        from app.project_files import export_session
+        export_session(project,c)
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning('项目会话导出待恢复：%s',exc)
+
 def delete(project,sid):
     with connect() as db:
         db.execute('DELETE FROM conversations WHERE project=? AND id=?',(project,sid))

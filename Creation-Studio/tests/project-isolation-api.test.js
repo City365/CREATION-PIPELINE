@@ -19,7 +19,7 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
 
 async function boot(dataDir, port) {
   const child = spawn(process.execPath, [path.resolve(__dirname, '../src/server.js')], {
-    env: { ...process.env, H3_DATA_DIR: dataDir, APPDATA: path.join(dataDir, 'appdata'), H3_PORT: String(port), H3_AGENT_AUTOSTART: '0' },
+    env: { ...process.env, WMD_DATA_DIR: dataDir, APPDATA: path.join(dataDir, 'appdata'), WMD_PORT: String(port), WMD_AGENT_AUTOSTART: '0' },
     stdio: 'ignore',
     windowsHide: true,
   });
@@ -50,7 +50,7 @@ async function stop(child) {
 }
 
 test('项目目录：创建即生成子目录，素材按项目隔离，业务类型可改', { timeout: 60000 }, async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'h3-project-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wmd-project-'));
   const { child, base } = await boot(dir, 18992);
   try {
     const api = client(base);
@@ -98,7 +98,7 @@ test('项目目录：创建即生成子目录，素材按项目隔离，业务�
 });
 
 test('迁移：显式迁移旧素材，先备份再收进项目目录并写入标记', { timeout: 60000 }, async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'h3-migrate-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wmd-migrate-'));
   fs.mkdirSync(path.join(dir, 'assets'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'assets', 'legacy.png'), PNG);
   fs.writeFileSync(path.join(dir, 'assets.json'), JSON.stringify({ subjects: { 'legacy.png': '旧主体' } }));

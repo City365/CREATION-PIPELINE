@@ -12,8 +12,8 @@ const SECTION_LABEL = {
   non_diegetic_music: '非剧情配乐',
 };
 
-const SYSTEM_PROMPT = fs.readFileSync(path.join(__dirname, '..', 'prompts', 'h3-system.txt'), 'utf8');
-const EXTRA_RULES = fs.readFileSync(path.join(__dirname, '..', 'prompts', 'h3-extra.txt'), 'utf8');
+const SYSTEM_PROMPT = fs.readFileSync(path.join(__dirname, '..', 'prompts', 'wmd-system.txt'), 'utf8');
+const EXTRA_RULES = fs.readFileSync(path.join(__dirname, '..', 'prompts', 'wmd-extra.txt'), 'utf8');
 
 const SKELETON = `subject_definitions:
 <Subject 1> is the <角色/场景> from <Picture 1>, serving as the <主角/配角/场景>, with <发型、五官、服装、配饰等跟随特征>.

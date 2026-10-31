@@ -31,26 +31,36 @@ def test_unadapted_tools_remain_unavailable(ctx):
     with pytest.raises(runtime.RunStopped):registry.verify(ctx,'skill:foreign-project')
 
 @pytest.mark.asyncio
-async def test_business_auth_fail_closed(monkeypatch):
+async def test_controller_auth_fails_closed(monkeypatch):
+    # 旧的外部业务后端模式已经下线，配错就报配置无效（fail closed）。
     monkeypatch.setenv('HARNESS_AUTH_MODE','business')
     with pytest.raises(HTTPException) as error:await identity.authorize('p',None)
-    assert error.value.status_code==401
+    assert error.value.status_code==503
+
+    monkeypatch.setenv('HARNESS_AUTH_MODE','controller')
+    monkeypatch.setenv('WMD_INTERNAL_TOKEN','token-x')
     class Client:
         def __init__(self,**kw):pass
         async def __aenter__(self):return self
         async def __aexit__(self,*args):pass
         async def get(self,path):
-            data={'code':0,'data':{'id':'u1'}} if path=='/auth/me' else {'code':0,'data':{'id':'p'}}
-            return httpx.Response(200,json=data,request=httpx.Request('GET','http://business'+path))
+            data={'ok':True,'data':[{'id':'p','name':'项目'}]}
+            return httpx.Response(200,json=data,request=httpx.Request('GET','http://controller'+path))
     monkeypatch.setattr(identity.httpx,'AsyncClient',Client)
-    assert (await identity.authorize('p','Bearer test'))['user_id']=='u1'
+    assert (await identity.authorize('p'))['user_id']=='controller:p'
+
     class Denied(Client):
         async def get(self,path):
-            if path.startswith('/projects/'):return httpx.Response(403,request=httpx.Request('GET','http://business'+path))
-            return await super().get(path)
+            data={'ok':True,'data':[{'id':'other','name':'别的项目'}]}
+            return httpx.Response(200,json=data,request=httpx.Request('GET','http://controller'+path))
     monkeypatch.setattr(identity.httpx,'AsyncClient',Denied)
-    with pytest.raises(HTTPException) as error:await identity.authorize('p','Bearer test')
+    with pytest.raises(HTTPException) as error:await identity.authorize('p')
     assert error.value.status_code==403
+
+    monkeypatch.delenv('WMD_INTERNAL_TOKEN',raising=False)
+    monkeypatch.setattr(identity,'_internal_token',lambda:'')
+    with pytest.raises(HTTPException) as error:await identity.authorize('p')
+    assert error.value.status_code==503
 
 def test_user_and_project_concurrency_are_server_limits(ctx):
     principal={'user_id':'u1','security_mode':'business'}

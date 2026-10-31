@@ -1,6 +1,6 @@
 ﻿@echo off
 chcp 65001 >nul
-title H3 Studio
+title WENYUN.M-DESKTOP
 cd /d "%~dp0"
 where node >nul 2>nul
 if errorlevel 1 (

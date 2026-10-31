@@ -5,8 +5,8 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'h3-asset-storyboard-'));
-process.env.H3_DATA_DIR = dir;
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wmd-asset-storyboard-'));
+process.env.WMD_DATA_DIR = dir;
 const library = require('../src/library');
 const projects = require('../src/projects');
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');

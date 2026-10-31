@@ -21,11 +21,11 @@ async function waitFor(fn, timeoutMs = 25000) {
 }
 
 test('图像渠道：新增渠道 → 生成 → 落盘', { timeout: 60000 }, async () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'h3-image-'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wmd-image-'));
   const mock = await startMockCloud();
   const child = spawn(process.execPath, [path.join(ROOT, 'src', 'server.js')], {
     cwd: ROOT,
-    env: { ...process.env, APPDATA: path.join(tmp, 'appdata'), H3_PORT: String(PORT), H3_DATA_DIR: path.join(tmp, 'data') },
+    env: { ...process.env, APPDATA: path.join(tmp, 'appdata'), WMD_PORT: String(PORT), WMD_DATA_DIR: path.join(tmp, 'data') },
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   });

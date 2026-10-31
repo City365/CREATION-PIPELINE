@@ -154,7 +154,7 @@ function slots() {
   for (const ch of (cfg.channels.video || []).filter((c) => c.enabled !== false)) {
     if (ch.type === 'manager-video') {
       // 管理器自己按账号排队：并发几个任务就开几个账号窗口，这里给每个平台留出同样多的槽位。
-      const perPlatform = Math.max(1, Math.min(8, Number(cfg.concurrency) || 3));
+      const perPlatform = Math.max(1, Math.min(10, Number(cfg.concurrency) || 3));
       for (const platform of ['doubao', 'gemini']) {
         const label = platform === 'doubao' ? '豆包' : 'Gemini';
         for (let index = 1; index <= perPlatform; index += 1) {
@@ -374,12 +374,41 @@ function cancel(id) {
 async function resume(id) {
   const job = get(id);
   if (!job || job.provider !== 'manager' || !job.remotePromptId) throw new Error('任务没有可继续的管理器编号');
-  if (!['failed', 'canceled', 'interrupted'].includes(job.status)) throw new Error('任务尚未结束或已完成');
+  // 排队中但被锁住的任务也要能继续：锁定只是挡住自动排队，不应该挡住手动继续。
+  if (!['failed', 'canceled', 'interrupted', 'queued'].includes(job.status)) throw new Error('任务正在生成中或已完成');
   const channel = channels.get('video', job.channelId);
   if (!channel) throw new Error('管理器渠道已删除');
-  // Restore the existing remote task; never call the generation submission endpoint.
-  await managerVideo.resume(channel, job.remotePromptId);
-  if (!['failed', 'canceled', 'interrupted'].includes(job.status)) return job;
+
+  // 先拿管理器任务 id 去查它到底有没有出片：已经出片就直接取回，不进队列也不重新生成。
+  const remote = await managerVideo.poll(channel, job.remotePromptId);
+  if (remote.status === 'success') {
+    job.status = 'running';
+    job.stage = '取回成片…';
+    job.progress = 90;
+    job.held = false;
+    job.error = null;
+    job.failureAnalysis = null;
+    job.resumeRemote = true;
+    job.finishedAt = null;
+    touch(job);
+    log(job, 'info', '管理器任务已生成，直接取回成片（不重新生成）');
+    try {
+      await saveRemoteVideo(job, channel, job.remotePromptId, job.platform || 'doubao', '原任务账号');
+      job.status = 'success';
+      job.stage = '完成';
+      job.progress = 100;
+      job.finishedAt = Date.now();
+      log(job, 'success', '任务完成：' + job.outputs.map((o) => o.name).join(', '));
+      flushState();
+    } catch (err) {
+      failJob(job, err);
+      throw err;
+    }
+    return job;
+  }
+
+  // 还没出片：远程仍在生成就直接排队等结果；远程已失败才让管理器续查原会话。
+  if (remote.status === 'failed') await managerVideo.resume(channel, job.remotePromptId);
   job.resumeRemote = true; job.status = 'queued'; job.stage = '继续查询原任务';
   job.error = null; job.finishedAt = null; job.held = false;
   log(job, 'info', '继续原管理器任务 ' + job.remotePromptId + '，不重新生成');
@@ -396,6 +425,10 @@ function retry(id) {
   job.stage = '排队中';
   job.progress = 0;
   job.error = null;
+  job.failureAnalysis = null;
+  job.failureCategory = '';
+  job.failureReason = '';
+  job.failureAdvice = '';
   job.outputs = [];
   job.startedAt = null;
   job.finishedAt = null;
@@ -639,6 +672,121 @@ function renameOutputs(plan) {
   return { moved };
 }
 
+/**
+ * 手动维护成片：重命名 / 删除 / 替换。
+ * 三条路径都保持 jobs.json、落盘 params.json 与磁盘文件一致；
+ * 删除和替换不会真正销毁旧文件，而是移到 <项目>/media/_trash/<日期>/ 里，随时能找回。
+ */
+function findOutput(jobId, outPath) {
+  const job = get(jobId);
+  if (!job) throw Object.assign(new Error('任务不存在'), { status: 404 });
+  const key = path.resolve(String(outPath || '')).toLowerCase();
+  const out = (job.outputs || []).find((item) => item.path && path.resolve(item.path).toLowerCase() === key);
+  if (!out) throw Object.assign(new Error('这个任务里没有这条成片'), { status: 404 });
+  return { job, out };
+}
+
+function trashDirFor(job) {
+  return ensureDir(path.join(jobProjectRoot(job), '_trash', dayFolder()));
+}
+
+function parkFile(job, file, suffix = '') {
+  const dir = trashDirFor(job);
+  const ext = path.extname(file);
+  const base = path.basename(file, ext);
+  let target = path.join(dir, base + suffix + ext);
+  let i = 2;
+  while (fs.existsSync(target)) { target = path.join(dir, `${base}${suffix} (${i})${ext}`); i++; }
+  fs.renameSync(file, target);
+  return target;
+}
+
+function syncParamsOutputs(job) {
+  const dir = job.outputDir || (job.outputs && job.outputs[0] ? path.dirname(job.outputs[0].path) : '');
+  if (!dir) return;
+  const file = path.join(dir, 'params.json');
+  const params = readJson(file, null);
+  if (!params) return;
+  params.outputs = (job.outputs || []).map((item) => ({ type: item.type, file: item.name, bytes: item.bytes, url: item.url }));
+  writeJson(file, params);
+}
+
+/** 重命名成片：文件名、jobs.json、params.json 一起改。 */
+function renameOutput(jobId, outPath, newName) {
+  const { job, out } = findOutput(jobId, outPath);
+  const ext = path.extname(out.path) || '.mp4';
+  let clean = sanitizeFilename(String(newName || '').trim(), '');
+  if (!clean) throw Object.assign(new Error('文件名不能为空'), { status: 400 });
+  if (!clean.toLowerCase().endsWith(ext.toLowerCase())) clean += ext;
+  const next = path.join(path.dirname(out.path), clean);
+  if (path.resolve(next).toLowerCase() === path.resolve(out.path).toLowerCase()) return { job, out, moved: null };
+  const result = renameOutputs([{ oldPath: out.path, newPath: next, shotTitle: out.name }]);
+  const fresh = get(job.id);
+  return { job: fresh, out: (fresh.outputs || []).find((item) => path.resolve(item.path).toLowerCase() === path.resolve(next).toLowerCase()) || out, moved: result.moved[0] || null };
+}
+
+/** 删除成片：文件挪进回收目录，任务里的这条输出记录一并去掉。 */
+function deleteOutput(jobId, outPath) {
+  const { job, out } = findOutput(jobId, outPath);
+  let parked = '';
+  if (fs.existsSync(out.path)) parked = parkFile(job, out.path, '');
+  job.outputs = (job.outputs || []).filter((item) => item !== out);
+  log(job, 'info', `成片 ${out.name} 已删除${parked ? '（可在 ' + path.basename(path.dirname(parked)) + '/_trash 找回）' : ''}`);
+  touch(job);
+  syncParamsOutputs(job);
+  return { removed: { name: out.name, path: out.path }, parked, job };
+}
+
+/** 替换成片：旧文件进回收目录，新文件（已经落盘的临时文件）顶到原来的位置。 */
+function replaceOutput(jobId, outPath, tempFile, options = {}) {
+  const { job, out } = findOutput(jobId, outPath);
+  if (!tempFile || !fs.existsSync(tempFile)) throw Object.assign(new Error('上传的文件不存在'), { status: 400 });
+  const ext = path.extname(tempFile) || path.extname(out.path) || '.mp4';
+  const wanted = sanitizeFilename(String(options.name || '').trim(), '');
+  let clean = wanted || path.basename(out.path, path.extname(out.path)) + ext;
+  if (!clean.toLowerCase().endsWith(ext.toLowerCase())) clean += ext;
+  const target = path.join(path.dirname(out.path), clean);
+  let parked = '';
+  if (fs.existsSync(out.path)) parked = parkFile(job, out.path, '-替换前');
+  if (path.resolve(target).toLowerCase() !== path.resolve(tempFile).toLowerCase()) fs.renameSync(tempFile, target);
+  const bytes = fs.statSync(target).size;
+  out.name = path.basename(target);
+  out.path = target;
+  out.bytes = bytes;
+  out.replacedAt = Date.now();
+  job.outputDir = path.dirname(target);
+  log(job, 'info', `成片已替换为 ${out.name}（${formatBytes(bytes)}）`);
+  touch(job);
+  syncParamsOutputs(job);
+  return { out, parked, job };
+}
+
+/** 给原本没有成片的任务补一条：把上传的临时文件搬进任务目录并登记。 */
+function addOutput(jobId, tempFile, options = {}) {
+  const job = get(jobId);
+  if (!job) throw Object.assign(new Error('任务不存在'), { status: 404 });
+  if (!tempFile || !fs.existsSync(tempFile)) throw Object.assign(new Error('上传的文件不存在'), { status: 400 });
+  const dir = ensureDir(job.outputDir || path.join(jobProjectRoot(job), dayFolder(), job.id + (job.outputVersion ? '-' + job.outputVersion : '')));
+  const ext = path.extname(tempFile) || '.mp4';
+  let clean = sanitizeFilename(String(options.name || '').trim(), '');
+  if (!clean) clean = '成片' + ext;
+  if (!clean.toLowerCase().endsWith(ext.toLowerCase())) clean += ext;
+  let target = path.join(dir, clean);
+  let i = 2;
+  while (fs.existsSync(target)) { target = path.join(dir, path.basename(clean, ext) + ' (' + i + ')' + ext); i++; }
+  fs.copyFileSync(tempFile, target);
+  fs.rmSync(tempFile, { force: true });
+  const bytes = fs.statSync(target).size;
+  job.outputDir = dir;
+  job.outputs = Array.isArray(job.outputs) ? job.outputs : [];
+  const out = { type: 'video', name: path.basename(target), path: target, bytes, url: '' };
+  job.outputs.push(out);
+  log(job, 'info', `手动上传成片 ${out.name}（${formatBytes(bytes)}）`);
+  touch(job);
+  syncParamsOutputs(job);
+  return { out, job };
+}
+
 async function saveOutputs(job, dir, items, a) {
   let index = 0;
   for (const item of items) {
@@ -790,6 +938,34 @@ async function runGenericVideo(job, wf, a, slot) {
   job.stage = '完成';
 }
 
+/** 从管理器任务 id 取回成片并落盘：提交成功和「继续查询」两条路径共用。 */
+async function saveRemoteVideo(job, channel, taskId, platform, accountName) {
+  const dir = jobDir(job);
+  job.outputDir = dir;
+  const { buffer, contentType } = await managerVideo.download(channel, taskId);
+  const ext = /webm/i.test(contentType) ? '.webm' : '.mp4';
+  const name = outputName(job, 'video', ext);
+  const file = path.join(dir, name);
+  fs.writeFileSync(file, buffer);
+  job.outputs.push({ type: 'video', name, path: file, bytes: buffer.length, url: managerVideo.baseUrl(channel) + '/api/tasks/' + taskId + '/file' });
+  log(job, 'info', `已下载 ${name}（${formatBytes(buffer.length)}）`);
+  writeJobMeta(job, dir, {
+    apiUrl: managerVideo.baseUrl(channel),
+    worker: channel.name + ' · ' + (managerVideo.PLATFORM_LABEL[platform] || platform),
+    inputValues: {
+      channelId: channel.id,
+      channel: channel.name,
+      platform,
+      model: channel.model || '',
+      duration: job.duration,
+      ratio: managerVideo.shortAspect(job.aspectRatio),
+      managerTaskId: taskId,
+      managerAccount: accountName || '',
+    },
+  });
+  return { name, file };
+}
+
 async function runManagerVideo(job, wf, a, slot) {
   const channel = channels.get('video', slot.id);
   if (!channel) throw new Error('管理器渠道已删除，请重新选择');
@@ -813,7 +989,12 @@ async function runManagerVideo(job, wf, a, slot) {
     checkCanceled(job, a);
     result = await managerVideo.poll(channel, submitted.taskId);
     if(job.runId)workbenchStore.store().execution(job.runId,result);
-    if (result.status === 'failed') throw new Error('管理器任务失败：' + (result.message || result.rawStatus));
+    if (result.status === 'failed') {
+      job.failureAnalysis = result.failureAnalysis || null;
+      const reason = result.failureReason || result.message || result.rawStatus;
+      const advice = result.failureAdvice ? '（建议：' + result.failureAdvice + '）' : '';
+      throw new Error('管理器任务失败：' + reason + advice);
+    }
     if (result.status === 'success') break;
     const byTime = 18 + Math.round((Date.now() - started) / 1000 / 4);
     touch(job, {
@@ -825,36 +1006,14 @@ async function runManagerVideo(job, wf, a, slot) {
 
   job.stage = '下载成片…';
   touch(job, { progress: 92 });
-  const dir = jobDir(job);
-  job.outputDir = dir;
-  const { buffer, contentType } = await managerVideo.download(channel, submitted.taskId);
-  const ext = /webm/i.test(contentType) ? '.webm' : '.mp4';
-  const name = outputName(job, 'video', ext);
-  const file = path.join(dir, name);
-  fs.writeFileSync(file, buffer);
-  job.outputs.push({ type: 'video', name, path: file, bytes: buffer.length, url: managerVideo.baseUrl(channel) + '/api/tasks/' + submitted.taskId + '/file' });
-  log(job, 'info', `已下载 ${name}（${formatBytes(buffer.length)}）`);
-  writeJobMeta(job, dir, {
-    apiUrl: managerVideo.baseUrl(channel),
-    worker: channel.name + ' · ' + (managerVideo.PLATFORM_LABEL[platform] || platform),
-    inputValues: {
-      channelId: channel.id,
-      channel: channel.name,
-      platform,
-      model: channel.model || '',
-      duration: job.duration,
-      ratio: managerVideo.shortAspect(job.aspectRatio),
-      managerTaskId: submitted.taskId,
-      managerAccount: submitted.account.name,
-    },
-  });
+  await saveRemoteVideo(job, channel, submitted.taskId, platform, submitted.account.name);
   job.stage = '完成';
 }
 
 const clientIds = new Map();
 function getClientId(base) {
   const key = String(base || '');
-  if (!clientIds.has(key)) clientIds.set(key, 'h3-desktop-' + uid('').slice(0, 8));
+  if (!clientIds.has(key)) clientIds.set(key, 'wmd-desktop-' + uid('').slice(0, 8));
   return clientIds.get(key);
 }
 
@@ -871,6 +1030,11 @@ module.exports = {
   retry,
   revisePrompt,
   renameOutputs,
+  findOutput,
+  renameOutput,
+  deleteOutput,
+  replaceOutput,
+  addOutput,
   setShotMeta,
   resume,
   remove,

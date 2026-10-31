@@ -21,10 +21,10 @@ async function waitFor(fn, timeoutMs = 20000) {
 }
 
 test('内置音色：列出发音人并合成 WAV', { timeout: 120000 }, async () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'h3-tts-'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wmd-tts-'));
   const child = spawn(process.execPath, [path.join(ROOT, 'src', 'server.js')], {
     cwd: ROOT,
-    env: { ...process.env, APPDATA: path.join(tmp, 'appdata'), H3_PORT: String(PORT), H3_DATA_DIR: path.join(tmp, 'data') },
+    env: { ...process.env, APPDATA: path.join(tmp, 'appdata'), WMD_PORT: String(PORT), WMD_DATA_DIR: path.join(tmp, 'data') },
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   });

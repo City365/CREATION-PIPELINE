@@ -1,8 +1,8 @@
 'use strict';
 /**
- * H3 Studio 一键启动 / 守护（Windows 优先，其它平台也能跑）。
+ * WENYUN.M-DESKTOP 一键启动 / 守护（Windows 优先，其它平台也能跑）。
  *
- *   node scripts/launch.js            # 起管理器 + 智能体 + H3（前台日志）
+ *   node scripts/launch.js            # 起管理器 + 智能体 + 创作台（前台日志）
  *   node scripts/launch.js --app      # 同上，再用 Chrome 应用窗口打开
  *   node scripts/launch.js --no-manager
  *
@@ -21,12 +21,16 @@ const ARGS = new Set(process.argv.slice(2));
 const OPEN_APP = ARGS.has('--app') || ARGS.has('--open');
 const NO_MANAGER = ARGS.has('--no-manager');
 
-const H3_PORT = Number(process.env.H3_PORT || 17821);
-const AGENT_PORT = Number(process.env.H3_AGENT_PORT || 17820);
-const MANAGER_PORT = Number(process.env.H3_MANAGER_PORT || 17778);
-const AGENT_DIR = process.env.H3_AGENT_DIR || path.join(ROOT, 'agent_backend');
-const MANAGER_DIR = process.env.H3_MANAGER_DIR || path.join(ROOT, '..', 'Video-Generation-Manager');
-const PYTHON = process.env.H3_PYTHON || 'D:/notebook/AIGC/ml-engineer/backend/.venv/Scripts/python.exe';
+const WMD_PORT = Number(process.env.WMD_PORT || 17821);
+const AGENT_PORT = Number(process.env.WMD_AGENT_PORT || 17820);
+const MANAGER_PORT = Number(process.env.WMD_MANAGER_PORT || 17778);
+const AGENT_DIR = process.env.WMD_AGENT_DIR || path.join(ROOT, 'agent_backend');
+const MANAGER_DIR = process.env.WMD_MANAGER_DIR || path.join(ROOT, '..', 'Video-Generation-Manager');
+// 智能体后端优先用自己项目内的 venv；没有再退回历史共用的 ml-engineer 环境（只作兜底）。
+const LOCAL_PYTHON = path.join(AGENT_DIR, '.venv', 'Scripts', 'python.exe');
+const LEGACY_PYTHON = 'D:/notebook/AIGC/ml-engineer/backend/.venv/Scripts/python.exe';
+const PYTHON = process.env.WMD_PYTHON || (fs.existsSync(LOCAL_PYTHON) ? LOCAL_PYTHON : LEGACY_PYTHON);
+const AGENT_PROBE_PROJECT = process.env.WMD_AGENT_PROJECT || 'wmd-local';
 
 const children = new Map();
 const restarts = new Map();
@@ -53,8 +57,8 @@ function get(url, headers = {}, timeoutMs = 1500) {
 }
 
 async function health(service) {
-  if (service === 'h3') return (await get(`http://127.0.0.1:${H3_PORT}/api/health`)) === 200;
-  if (service === 'agent') return (await get(`http://127.0.0.1:${AGENT_PORT}/agent/health`, { 'X-Project-Id': 'h3-studio' })) === 200;
+  if (service === 'desktop') return (await get(`http://127.0.0.1:${WMD_PORT}/api/health`)) === 200;
+  if (service === 'agent') return (await get(`http://127.0.0.1:${AGENT_PORT}/agent/health`, { 'X-Project-Id': AGENT_PROBE_PROJECT })) === 200;
   return (await get(`http://127.0.0.1:${MANAGER_PORT}/health`)) === 200;
 }
 
@@ -102,7 +106,7 @@ function scheduleRestart(name) {
     if (shuttingDown || children.has(name) || await health(name)) return;
     if (name === 'agent') startAgent();
     else if (name === 'manager') startManager();
-    else if (name === 'h3') startH3();
+    else if (name === 'desktop') startDesktop();
   }, delay);
 }
 
@@ -117,7 +121,7 @@ function startAgent() {
       ...process.env,
       AGENT_SETTINGS_PATH: process.env.AGENT_SETTINGS_PATH || path.join(AGENT_DIR, 'data', 'agent_settings.json'),
       HARNESS_AUTH_MODE: process.env.HARNESS_AUTH_MODE || 'development',
-      H3_BASE_URL: process.env.H3_BASE_URL || `http://127.0.0.1:${H3_PORT}`,
+      WMD_BASE_URL: process.env.WMD_BASE_URL || `http://127.0.0.1:${WMD_PORT}`,
     },
   });
 }
@@ -133,21 +137,21 @@ function startManager() {
   });
 }
 
-function startH3() {
-  spawnChild('h3', process.execPath, ['src/server.js'], {
+function startDesktop() {
+  spawnChild('desktop', process.execPath, ['src/server.js'], {
     cwd: ROOT,
     env: {
       ...process.env,
-      H3_PORT: String(H3_PORT),
-      H3_AGENT_URL: process.env.H3_AGENT_URL || `http://127.0.0.1:${AGENT_PORT}`,
-      H3_MANAGER_URL: process.env.H3_MANAGER_URL || `http://127.0.0.1:${MANAGER_PORT}`,
+      WMD_PORT: String(WMD_PORT),
+      WMD_AGENT_URL: process.env.WMD_AGENT_URL || `http://127.0.0.1:${AGENT_PORT}`,
+      WMD_MANAGER_URL: process.env.WMD_MANAGER_URL || `http://127.0.0.1:${MANAGER_PORT}`,
     },
   });
 }
 
 function findChrome() {
   const candidates = [
-    process.env.H3_CHROME_PATH,
+    process.env.WMD_CHROME_PATH,
     'C:/Program Files/Google/Chrome/Application/chrome.exe',
     'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',
     '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
@@ -158,7 +162,7 @@ function findChrome() {
 
 function openApp() {
   const chrome = findChrome();
-  const url = `http://127.0.0.1:${H3_PORT}`;
+  const url = `http://127.0.0.1:${WMD_PORT}`;
   if (!chrome) {
     log('app', `没找到 Chrome，请手动打开 ${url}`);
     return;
@@ -194,17 +198,17 @@ process.on('SIGTERM', () => shutdown(0));
 process.on('SIGHUP', () => shutdown(0));
 
 (async () => {
-  log('launcher', `H3 :${H3_PORT} · 智能体 :${AGENT_PORT} · 管理器 :${MANAGER_PORT}`);
+  log('launcher', `WENYUN.M-DESKTOP :${WMD_PORT} · 智能体 :${AGENT_PORT} · 管理器 :${MANAGER_PORT}`);
   if (!(await health('manager')) && !NO_MANAGER) startManager();
   else log('manager', NO_MANAGER ? '已按参数跳过' : '已在运行，复用');
 
   if (!(await health('agent'))) startAgent();
   else log('agent', '已在运行，复用');
 
-  if (!(await health('h3'))) startH3();
-  else log('h3', '已在运行，复用');
+  if (!(await health('desktop'))) startDesktop();
+  else log('desktop', '已在运行，复用');
 
-  for (const name of ['manager', 'agent', 'h3']) {
+  for (const name of ['manager', 'agent', 'desktop']) {
     if (NO_MANAGER && name === 'manager') continue;
     const ok = await waitHealthy(name, 30000);
     log(name, ok ? '健康检查通过' : '健康检查未通过（看上面的日志）');
@@ -216,7 +220,7 @@ process.on('SIGHUP', () => shutdown(0));
     if (shuttingDown || checkingServices) return;
     checkingServices = true;
     try {
-      for (const name of ['manager', 'agent', 'h3']) {
+      for (const name of ['manager', 'agent', 'desktop']) {
         if (NO_MANAGER && name === 'manager') continue;
         if (restartBlocked.has(name) || restartPending.has(name)) continue;
         if (await health(name)) { healthFailures.delete(name); continue; }

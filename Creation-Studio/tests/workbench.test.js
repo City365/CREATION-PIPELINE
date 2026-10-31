@@ -1,7 +1,7 @@
 'use strict';
 const test=require('node:test');const assert=require('node:assert/strict');const fs=require('node:fs');const os=require('node:os');const path=require('node:path');
 const {createStore}=require('../src/workbench-store');
-function setup(t){const dir=fs.mkdtempSync(path.join(os.tmpdir(),'h3-workbench-'));const file=path.join(dir,'studio.db');const s=createStore(file);t.after(()=>{s.close();fs.rmSync(dir,{recursive:true,force:true});});return {s,file};}
+function setup(t){const dir=fs.mkdtempSync(path.join(os.tmpdir(),'wmd-workbench-'));const file=path.join(dir,'studio.db');const s=createStore(file);t.after(()=>{s.close();fs.rmSync(dir,{recursive:true,force:true});});return {s,file};}
 test('分镜按项目和类型隔离，修改冲突、完整排序和软删除恢复',t=>{
  const {s}=setup(t);let a=s.create('p','video',{draft:{prompt:'A',images:[{path:'a.png'}]}}),b=s.create('p','video',{draft:{prompt:'B'}});s.create('p','image');s.create('q','video');
  assert.equal(s.list('p','video').items.length,2);assert.throws(()=>s.get(a.id,'q','video'),/不属于/);

@@ -3,7 +3,7 @@
 素材库按项目隔离，目录固定在项目目录下：
 
 ```
-H3-Projects/<项目名-编号>/assets/
+WENYUN.M-DESKTOP-Projects/<项目名-编号>/assets/
   分镜/
     <任务>/
       task.json

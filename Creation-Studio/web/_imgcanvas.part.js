@@ -190,7 +190,7 @@ function imageResizeDialog() {
   const nw = img.naturalWidth || img.width;
   const nh = img.naturalHeight || img.height;
   openModal(`
-    <div class="modal-head"><h2>图像大小</h2><span class="grow"></span><button type="button" class="h3-btn h3-btn-sm h3-btn-ghost" data-close="1">关闭</button></div>
+    <div class="modal-head"><h2>图像大小</h2><span class="grow"></span><button type="button" class="wmd-btn wmd-btn-sm wmd-btn-ghost" data-close="1">关闭</button></div>
     <div class="modal-body">
       <div class="row">
         <div class="field grow"><label>宽（像素）</label><input class="input" id="img-w" type="number" min="1" value="${nw}" /></div>
@@ -199,8 +199,8 @@ function imageResizeDialog() {
       <label class="hint"><input type="checkbox" id="img-lock" checked /> 锁定比例（${nw}×${nh}）</label>
     </div>
     <div class="modal-foot">
-      <button type="button" class="h3-btn h3-btn-sm h3-btn-ghost" data-close="1">取消</button>
-      <button type="button" class="h3-btn h3-btn-sm h3-btn-primary" id="img-size-go">应用</button>
+      <button type="button" class="wmd-btn wmd-btn-sm wmd-btn-ghost" data-close="1">取消</button>
+      <button type="button" class="wmd-btn wmd-btn-sm wmd-btn-primary" id="img-size-go">应用</button>
     </div>`);
   const w = $('#img-w');
   const h = $('#img-h');

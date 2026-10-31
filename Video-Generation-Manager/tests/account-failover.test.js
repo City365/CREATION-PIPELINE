@@ -67,14 +67,21 @@ test('平台判定额度不足时换下一个账号继续，不把任务判失�
   await queue.shutdown();
 });
 
-test('没指定账号时优先挑剩余配额最多的账号', async () => {
+test('没指定账号时在可用账号池里随机挑选', async () => {
   const { dir, file } = workspace();
-  const store = storeOf([account('a', '自己号1', 2), account('b', '闲鱼1', 0, 5)]);
+  const store = storeOf([account('a', '自己号1', 0), account('b', '闲鱼1', 0)]);
   const used = [];
   const queue = new TaskQueue({ directory: dir, store, execute: async (task, acc) => { used.push(acc.id); return { path: file }; } });
-  await queue.submit({ requestId: 'job-4', prompt: '测试', platform: 'doubao' });
-  await waitFor(() => used.length);
-  assert.deepEqual(used, ['b']);
+  const original = Math.random;
+  try {
+    Math.random = () => 0;
+    await queue.submit({ requestId: 'job-4', prompt: '测试', platform: 'doubao' });
+    await waitFor(() => used.length === 1);
+    Math.random = () => 0.999;
+    await queue.submit({ requestId: 'job-5', prompt: '测试', platform: 'doubao' });
+    await waitFor(() => used.length === 2);
+  } finally { Math.random = original; }
+  assert.deepEqual(used, ['a', 'b']);
   await queue.shutdown();
 });
 

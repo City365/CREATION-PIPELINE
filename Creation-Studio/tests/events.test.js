@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -6,7 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 // 事件存储写到临时目录，避免污染真实 data/events.json
-process.env.H3_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'h3-events-'));
+process.env.WMD_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'wmd-events-'));
 const events = require('../src/events');
 const jobs = require('../src/jobs');
 
@@ -89,7 +89,7 @@ test('创建后可查询，存在临时数据目录', () => {
   assert.ok(event.id.startsWith('evt_'));
   const listed = events.list();
   assert.ok(listed.events.some((e) => e.id === event.id));
-  assert.ok(fs.existsSync(path.join(process.env.H3_DATA_DIR, 'task-events.sqlite')));
+  assert.ok(fs.existsSync(path.join(process.env.WMD_DATA_DIR, 'task-events.sqlite')));
   assert.equal(events.get(event.id).title, '测试事件');
 });
 
@@ -116,6 +116,31 @@ test('报告：成功率、耗时与失败归因', () => {
   assert.equal(report.durationMs.p50, 3000);
   assert.equal(report.failures[0].error, '额度不足');
   assert.equal(report.failures[0].count, 1);
+});
+
+test('报告：按失败原因归因并统计次数与建议', () => {
+  const event = events.create({ title: 'reasons', source: 'batch', items: [{ prompt: 'a' }, { prompt: 'b' }, { prompt: 'c' }] });
+  attachFake(event, [
+    { id: 'i1', refType: 'job', refId: 'ra', status: 'queued', title: 'a' },
+    { id: 'i2', refType: 'job', refId: 'rb', status: 'queued', title: 'b' },
+    { id: 'i3', refType: 'job', refId: 'rc', status: 'queued', title: 'c' },
+  ]);
+  const analysis = { category: 'quota', reason: '账号今日额度已用完', advice: '换一个账号再试' };
+  const jobMap = new Map([
+    ['ra', { id: 'ra', status: 'success', provider: 'manager', channelId: 'ch1', startedAt: 1000, finishedAt: 2000 }],
+    ['rb', { id: 'rb', status: 'failed', provider: 'manager', channelId: 'ch1', startedAt: 1000, finishedAt: 2000, error: '额度不足', failureAnalysis: analysis }],
+    ['rc', { id: 'rc', status: 'failed', provider: 'manager', channelId: 'ch1', startedAt: 1000, finishedAt: 2000, error: '额度不足', failureAnalysis: analysis }],
+  ]);
+  const report = events.report(event.id, { jobMap });
+  assert.equal(report.reasons.length, 1);
+  assert.equal(report.reasons[0].category, 'quota');
+  assert.equal(report.reasons[0].label, '额度不足');
+  assert.equal(report.reasons[0].reason, '账号今日额度已用完');
+  assert.equal(report.reasons[0].advice, '换一个账号再试');
+  assert.equal(report.reasons[0].count, 2);
+  const csv = events.reportCsv(event.id, { jobMap });
+  assert.match(csv.body, /failureCategory,failureReason,failureAdvice/);
+  assert.match(csv.body, /账号今日额度已用完/);
 });
 
 test('报告 CSV 带表头和条目行', () => {
@@ -175,4 +200,23 @@ test('改提示词拒绝空内容', () => {
   } finally {
     jobs.list = originalList;
   }
+});
+
+test('调度页排序：刚创建、还没排时间的任务必须出现在第一页最前面', () => {
+  const store = require('../src/event-store');
+  const base = 1700000000000;
+  const rows = [];
+  for (let i = 0; i < 12; i += 1) {
+    rows.push({ id: 'evt_done_' + i, kind: 'video', title: 'done-' + i, source: 'batch', status: 'completed', createdAt: base + i, startedAt: base + i, finishedAt: base + i + 1000, spec: { projectId: '' }, items: [], stats: { total: 1, done: 1 } });
+  }
+  rows.push({ id: 'evt_pending_new', kind: 'video', title: '刚创建待调度', source: 'batch', status: 'unscheduled', pendingSchedule: true, createdAt: base + 999, startedAt: null, finishedAt: null, schedule: { order: 0, startAt: null }, spec: { projectId: '' }, items: [], stats: { total: 1, done: 0 } });
+  store.write(rows);
+
+  const byRuntime = store.query({ kind: 'video', sort: 'runtime_desc', page: 1 });
+  assert.equal(byRuntime.events.some((e) => e.id === 'evt_pending_new'), false, '运行时间排序会把新任务挤出第一页');
+
+  const byPending = store.query({ kind: 'video', sort: 'pending_first', page: 1 });
+  assert.equal(byPending.events[0].id, 'evt_pending_new', '待调度排序要把新任务顶到第一页最前面');
+  assert.ok(['unscheduled', 'draft'].includes(byPending.events[0].status));
+  assert.equal(byPending.stats.total >= 13, true);
 });

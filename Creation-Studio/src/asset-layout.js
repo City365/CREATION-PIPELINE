@@ -235,7 +235,7 @@ function listMaterial(root, type) {
     const abs = path.join(dir, entry.name);
     const st = fs.statSync(abs);
     const rel = relOf(root, abs);
-    items.push({ name: entry.name, rel, url: urlOf(rel), kind, type: meta.id, typeLabel: meta.label, category: meta.label, bytes: st.size, mtime: st.mtimeMs });
+    items.push({ name: entry.name, rel, path: abs, url: urlOf(rel), kind, type: meta.id, typeLabel: meta.label, category: meta.label, bytes: st.size, mtime: st.mtimeMs });
   }
   return items.sort((a, b) => b.mtime - a.mtime || a.name.localeCompare(b.name, 'zh-CN'));
 }
@@ -255,7 +255,7 @@ function listOther(root) {
       if (kind !== 'image' && kind !== 'audio') continue;
       const st = fs.statSync(abs);
       const rel = relOf(root, abs);
-      items.push({ name: entry.name, rel, url: urlOf(rel), kind, type: 'other', typeLabel: '其他', category: '其他', bytes: st.size, mtime: st.mtimeMs });
+      items.push({ name: entry.name, rel, path: abs, url: urlOf(rel), kind, type: 'other', typeLabel: '其他', category: '其他', bytes: st.size, mtime: st.mtimeMs });
     }
   };
   walk(dir, 0);
@@ -270,13 +270,12 @@ function scan(projectId) {
   for (const material of MATERIALS) materials[material.id] = listMaterial(root, material.id);
   const other = listOther(root);
   const flat = [];
-  for (const material of MATERIALS) for (const item of materials[material.id]) flat.push({ ...item, group: '', folder: material.label });
-  for (const shot of shots) {
+  for (const material of MATERIALS) for (const item of materials[material.id]) flat.push({ ...item, group: '', folder: material.label });  for (const shot of shots) {
     for (const slot of shot.slots.filter((row) => row.rel)) {
-      flat.push({ name: slot.name, rel: slot.rel, url: slot.url, kind: 'image', type: 'storyboard', typeLabel: '分镜参考', group: shot.name, folder: `${shot.taskTitle} / ${shot.name}`, slot: slot.label, bytes: 0, mtime: shot.mtime });
+      flat.push({ name: slot.name, rel: slot.rel, path: path.join(root, slot.rel), url: slot.url, kind: 'image', type: 'storyboard', typeLabel: '分镜参考', group: shot.name, folder: `${shot.taskTitle} / ${shot.name}`, slot: slot.label, bytes: 0, mtime: shot.mtime });
     }
   }
-  for (const item of other) flat.push({ ...item, group: '', folder: '其他' });
+  for (const item of other) flat.push({ ...item, group: '', folder: '其他', path: item.path || path.join(root, item.rel) });
   const types = [
     ...MATERIALS.map((material) => ({ id: material.id, label: material.label, hint: '', count: materials[material.id].length })),
     { id: 'storyboard', label: '分镜参考', hint: '任务 / 镜头', count: shots.length },

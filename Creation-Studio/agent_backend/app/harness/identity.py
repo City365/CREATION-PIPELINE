@@ -1,26 +1,57 @@
-"""Trust the business backend for identity and project authorization, never the project header alone."""
-import contextvars,os
-from urllib.parse import quote
+"""项目身份校验：只信本机控制器，不再依赖外部业务后端。
+
+原来这里连 `BUSINESS_API_URL`（ml-engineer 的业务后端 :3014）做 `/auth/me` 与 `/projects/{id}`，
+本产品没有那套服务，已改成向控制器 `/api/projects` 复核项目归属（本机、内部 token 即可）。
+模式由 HARNESS_AUTH_MODE 控制：
+- development（默认）：直接放行，标识为本地开发；
+- controller：向控制器复核项目是否真实存在，存在才算通过。
+"""
+import contextvars, json, os
+from pathlib import Path
+
 import httpx
 from fastapi import HTTPException
-current=contextvars.ContextVar('agent_identity',default=None)
-async def authorize(project,authorization=None):
-    mode=os.getenv('HARNESS_AUTH_MODE','development')
-    if mode=='development':return {'user_id':'development-local','security_mode':'development'}
-    if mode!='business':raise HTTPException(503,'智能体鉴权模式配置无效')
-    if not isinstance(authorization,str) or not authorization.startswith('Bearer '):raise HTTPException(401,'请先登录')
+
+current = contextvars.ContextVar('agent_identity', default=None)
+
+
+def _controller_base():
+    return str(os.getenv('WMD_BASE_URL') or 'http://127.0.0.1:17821').rstrip('/')
+
+
+def _internal_token():
+    token = os.getenv('WMD_INTERNAL_TOKEN', '')
+    if token:
+        return token
+    data_dir = Path(os.getenv('WMD_DATA_DIR') or Path(__file__).resolve().parents[3] / 'data')
     try:
-        async with httpx.AsyncClient(base_url=os.getenv('BUSINESS_API_URL','http://127.0.0.1:3014/api'),timeout=10,headers={'Authorization':authorization,'X-Project-Id':project}) as client:
-            me=await client.get('/auth/me')
-            if me.status_code in (401,403):raise HTTPException(me.status_code,'身份认证未通过')
-            me.raise_for_status();payload=me.json()
-            user=payload.get('data') if payload.get('code')==0 else None
-            if not user or not user.get('id'):raise HTTPException(401,'身份认证未通过')
-            if user['id']=='dev-admin':raise HTTPException(503,'业务后端处于免鉴权模式，不能作为生产身份认证')
-            access=await client.get('/projects/'+quote(project,safe=''))
-            if access.status_code in (401,403,404):raise HTTPException(access.status_code,'没有当前项目的访问权限')
-            access.raise_for_status();data=access.json()
-            if data.get('code')!=0 or not data.get('data'):raise HTTPException(403,'没有当前项目的访问权限')
-            return {'user_id':str(user['id']),'security_mode':'business'}
-    except HTTPException:raise
-    except (httpx.HTTPError,ValueError):raise HTTPException(503,'身份校验服务暂不可用')
+        return json.loads((data_dir / 'internal-token.json').read_text(encoding='utf-8'))['token']
+    except (OSError, ValueError, KeyError):
+        return ''
+
+
+async def authorize(project, authorization=None):
+    mode = os.getenv('HARNESS_AUTH_MODE', 'development').strip().lower()
+    if mode in ('', 'development', 'off', 'none'):
+        return {'user_id': 'development-local', 'security_mode': 'development'}
+    if mode != 'controller':
+        raise HTTPException(503, '智能体鉴权模式配置无效（可选 development / controller）')
+    token = _internal_token()
+    if not token:
+        raise HTTPException(503, '内部服务凭据不可用，请先启动控制器服务')
+    try:
+        async with httpx.AsyncClient(base_url=_controller_base(), timeout=10,
+                                     headers={'X-WMD-Internal': token}) as client:
+            response = await client.get('/api/projects')
+            if response.status_code in (401, 403):
+                raise HTTPException(response.status_code, '控制器拒绝内部凭据')
+            response.raise_for_status()
+            payload = response.json()
+    except HTTPException:
+        raise
+    except (httpx.HTTPError, ValueError):
+        raise HTTPException(503, '控制器暂不可用，无法校验项目归属')
+    items = payload.get('data') if isinstance(payload, dict) else payload
+    if not isinstance(items, list) or not any(item.get('id') == project for item in items if isinstance(item, dict)):
+        raise HTTPException(403, '没有当前项目的访问权限')
+    return {'user_id': 'controller:' + project, 'security_mode': 'controller'}

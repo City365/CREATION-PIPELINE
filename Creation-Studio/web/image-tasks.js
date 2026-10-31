@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 const IJ=(()=>{
  let initialized=false,polling=false,modalTask=null;
  const label={queued:'排队中',running:'生成中',paused:'已暂停',success:'完成',failed:'失败',interrupted:'服务中断'};
@@ -23,13 +23,13 @@ const IJ=(()=>{
  }
  function panelHtml(){
   const current=own(),task=current.find(t=>['queued','running','paused'].includes(t.status))||current[0];
-  return '<section id="image-task-panel" class="ij-panel"><div><b>图像任务</b><span id="ij-poll-state">'+(task?esc(label[task.status]||task.status)+' · '+esc(task.phase):'任务在后台执行，切换菜单不中断')+'</span></div><div class="ij-actions">'+(task?'<button class="btn sm" data-ij="detail" data-id="'+task.id+'">查看日志</button>'+controls(task):'')+'<button class="btn sm" data-ij="all">全部图像任务 / 日志</button></div></section>';
+  return '<section id="image-task-panel" class="ij-panel"><div><b>图像任务</b><span id="ij-poll-state">'+(task?esc(label[task.status]||task.status)+' · '+esc(task.phase):'')+'</span></div><div class="ij-actions">'+(task?'<button class="btn sm" data-ij="detail" data-id="'+task.id+'">查看日志</button>'+controls(task):'')+'<button class="btn sm" data-ij="all">全部图像任务 / 日志</button></div></section>';
  }
  function current(){return own().find(t=>['queued','running','paused'].includes(t.status))||null;}
  function canvas(){
   const task=current();if(!task)return '';
   const paused=task.status==='paused',title=paused?'图像任务已暂停':task.status==='queued'?'图像任务排队中':'正在生成图片…';
-  return '<div id="image-task-canvas" class="img-generating ij-canvas-state" role="status" aria-live="polite"><div class="ij-canvas-card">'+(paused?'<span class="ij-pause-icon">Ⅱ</span>':'<span class="img-spin" aria-hidden="true"></span>')+'<h2>'+title+'</h2><p>'+esc(task.phase)+'</p><small>'+esc(task.snapshot.channelName||'')+' · '+esc(task.snapshot.model||'')+(task.snapshot.count?' · '+task.snapshot.count+' 张':'')+'</small><div class="ij-canvas-actions"><button class="btn" data-ij="detail" data-id="'+task.id+'">查看生成日志</button>'+controls(task)+'</div><small>生成完成后，图片会显示在这里。切换页面不会中断任务。</small></div></div>';
+  return '<div id="image-task-canvas" class="img-generating ij-canvas-state" role="status" aria-live="polite"><div class="ij-canvas-card">'+(paused?'<span class="ij-pause-icon">Ⅱ</span>':'<span class="img-spin" aria-hidden="true"></span>')+'<h2>'+title+'</h2><p>'+esc(task.phase)+'</p><small>'+esc(task.snapshot.model||task.snapshot.channelName||'')+(task.snapshot.count?' · '+task.snapshot.count+' 张':'')+'</small><div class="ij-canvas-actions"><button class="btn" data-ij="detail" data-id="'+task.id+'">查看生成日志</button>'+controls(task)+'</div><small>生成完成后，图片会显示在这里。切换页面不会中断任务。</small></div></div>';
  }
  function controls(t){return ['queued','running','paused'].includes(t.status)?'<button class="btn sm" data-ij="'+(t.held?'resume':'pause')+'" data-id="'+t.id+'">'+(t.held?'继续':'暂停')+'</button>':t.status==='failed'||t.status==='interrupted'?'<button class="btn sm" data-ij="retry" data-id="'+t.id+'">重新生成</button>':'';}
  function logTable(rows){
@@ -48,14 +48,15 @@ const IJ=(()=>{
  function drawDetail(t){if(!t)return;const status=document.querySelector('#ij-detail-status'),lines=document.querySelector('#ij-log-lines'),out=document.querySelector('#ij-outputs');if(!lines)return;status.textContent=(label[t.status]||t.status)+' · '+t.phase+(t.error?' · '+t.error:'');lines.innerHTML=t.logs.map(l=>'<div class="ij-log '+esc(l.level)+'"><time>'+new Date(l.time).toLocaleTimeString()+'</time><span>'+esc(l.message)+'</span></div>').join('');out.innerHTML=(t.result?.items||[]).map((item,n)=>'<button type="button" class="ij-result" data-ij="result" data-id="'+t.id+'" data-index="'+n+'"><img src="/api/file?path='+enc(item.path)+'" alt="'+esc(item.name)+'"><span>'+esc(item.name)+'</span></button>').join('');}
  function init(){if(initialized)return;initialized=true;refresh();setInterval(refresh,1800);
   document.addEventListener('click',async e=>{const btn=e.target.closest('[data-ij]');if(!btn)return;e.preventDefault();const action=btn.dataset.ij,id=btn.dataset.id;try{
-    if(action==='all'){state.logTab='image';localStorage.setItem('h3.logs.tab','image');if(location.hash==='#logs')render();else location.hash='#logs';return;}
+    if(action==='all'){state.logTab='image';localStorage.setItem('wmd.logs.tab','image');if(location.hash==='#logs')render();else location.hash='#logs';return;}
     if(action==='detail'){await detail(id);return;}
     if(action==='refresh'){await refresh();if(modalTask)await detail(modalTask);return;}
     if(action==='result'){const task=tasks().find(t=>t.id===id);const item=task?.result?.items[Number(btn.dataset.index)];if(item)openMediaDetail({...item,kind:'image'});return;}
-    if(action==='retry'&&!confirm('重新提交到图像渠道会产生新的生成任务，确认重新生成？'))return;
+    if(action==='retry'&&!confirm('重新提交到图像模型会产生新的生成任务，确认重新生成？'))return;
     const task=await api('/api/images/tasks/'+id+'/'+action,{method:'POST',body:{}});await refresh();
     toast(action==='pause'?task.phase:action==='resume'?'已继续后台任务':'已新建后台图像任务');if(document.querySelector('#ij-log-lines'))await detail(action==='retry'?task.id:id);
    }catch(err){toast(err.message,true);}});
  }
  return {init,refresh,panel:panelHtml,table,logTable,active,current,canvas};
 })();
+

@@ -117,11 +117,15 @@ async function poll(channel, taskId) {
   const status = ['completed'].includes(raw) ? 'success'
     : ['failed', 'cancelled', 'interrupted'].includes(raw) ? 'failed'
       : 'running';
+  const analysis = data.failureAnalysis || null;
   return {
     status,
     rawStatus: raw,
     progress: Number(data.progress) || 0,
-    message: String(data.message || data.error || ''),
+    message: String((analysis && analysis.reason) || data.message || data.error || ''),
+    failureAnalysis: analysis,
+    failureReason: analysis ? analysis.reason : '',
+    failureAdvice: analysis ? analysis.advice : '',
     result: data.result || null,
     accountId: data.accountId || '',
     conversationURL: data.conversationURL || '',

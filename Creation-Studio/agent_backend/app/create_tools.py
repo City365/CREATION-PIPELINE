@@ -1,7 +1,7 @@
-"""创作工具：直接调用本机 H3 Studio 的图像生成、视频生成、读视频信息与抽帧。
+"""创作工具：直接调用本机创作台的图像生成、视频生成、读视频信息与抽帧。
 
 这些工具让智能体真的能"做片"：出参考图、提交视频任务、等成片、抽帧检查。
-H3 服务地址默认 http://127.0.0.1:17821，可用 H3_BASE_URL 覆盖。
+创作台服务地址默认 http://127.0.0.1:17821，可用 WMD_BASE_URL 覆盖。
 """
 import json
 import os
@@ -13,23 +13,23 @@ from pathlib import Path
 
 from langchain_core.tools import tool
 
-H3_BASE = os.environ.get('H3_BASE_URL', 'http://127.0.0.1:17821').rstrip('/')
+WMD_BASE = os.environ.get('WMD_BASE_URL', 'http://127.0.0.1:17821').rstrip('/')
 
 
 def _http(method, path, body=None, timeout=60):
-    token = os.environ.get('H3_INTERNAL_TOKEN', '')
+    token = os.environ.get('WMD_INTERNAL_TOKEN', '')
     if not token:
-        data_dir = Path(os.environ.get('H3_DATA_DIR') or Path(__file__).resolve().parents[2] / 'data')
+        data_dir = Path(os.environ.get('WMD_DATA_DIR') or Path(__file__).resolve().parents[2] / 'data')
         try:
             token = json.loads((data_dir / 'internal-token.json').read_text(encoding='utf-8'))['token']
         except (OSError, ValueError, KeyError):
-            raise RuntimeError('内部服务凭据不可用，请先启动 H3 Studio，或检查 H3_DATA_DIR')
+            raise RuntimeError('内部服务凭据不可用，请先启动创作台服务，或检查 WMD_DATA_DIR')
     data = json.dumps(body, ensure_ascii=False).encode('utf-8') if body is not None else None
     req = urllib.request.Request(
-        H3_BASE + path,
+        WMD_BASE + path,
         data=data,
         method=method,
-        headers={'Content-Type': 'application/json', 'X-H3-Internal': token},
+        headers={'Content-Type': 'application/json', 'X-WMD-Internal': token},
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as res:
@@ -40,11 +40,11 @@ def _http(method, path, body=None, timeout=60):
             detail = json.loads(detail).get('error') or detail
         except Exception:
             pass
-        raise RuntimeError('H3 接口 ' + path + ' 失败：' + str(detail))
+        raise RuntimeError('创作台接口 ' + path + ' 失败：' + str(detail))
     except Exception as err:
-        raise RuntimeError('连不上 H3 Studio（' + H3_BASE + '）：' + str(err))
+        raise RuntimeError('连不上创作台服务（' + WMD_BASE + '）：' + str(err))
     if not payload.get('ok'):
-        raise RuntimeError(payload.get('error') or 'H3 接口返回失败')
+        raise RuntimeError(payload.get('error') or '创作台接口返回失败')
     return payload.get('data')
 
 
@@ -53,7 +53,7 @@ def _video_state():
 
 
 def build_creation_tools(publish=None, project=None, session_id=None):
-    """构建一组绑定到当前 H3 服务的创作工具。publish 用来把媒体文件推到对话里。"""
+    """构建一组绑定到当前创作台服务的创作工具。publish 用来把媒体文件推到对话里。"""
 
     def emit_media(files):
         if publish and files:
@@ -67,7 +67,16 @@ def build_creation_tools(publish=None, project=None, session_id=None):
         url = str(item.get('url') or '')
         if not url and path:
             url = '/api/file?path=' + quote(path)
+        registration = {}
+        if project and session_id and path and Path(path).is_file():
+            try:
+                from app.project_files import register_existing
+                registered = register_existing(project,session_id,path,origin='generated')
+                registration = {'file_id':registered['id']}
+            except Exception as exc:
+                registration = {'registration_error':str(exc)}
         return {
+            **registration,
             'name': str(item.get('name') or os.path.basename(path)),
             'path': path,
             'url': url,
@@ -100,7 +109,7 @@ def build_creation_tools(publish=None, project=None, session_id=None):
                 'video_models': videos,
                 'image_channels': images,
                 'default_video': state.get('defaultWorkflowId'),
-                'note': 'H3 官网 API 与管理器渠道都会列出；选 workflow_id 后直接提交视频任务。',
+                'note': '官网 API 与管理器渠道都会列出；选 workflow_id 后直接提交视频任务。',
             }
         except Exception as err:
             return {'ok': False, 'error': str(err)}

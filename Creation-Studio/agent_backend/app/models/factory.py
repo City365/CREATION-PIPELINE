@@ -7,19 +7,19 @@ from langchain_openai import ChatOpenAI
 from app.configs.settings import get_active_model_name, get_provider_config, load_settings
 CONFIGURED_MODELS = {"deepseek": {}, "minimax": {}, "openai": {}}
 # 模型客户端超时：流式回答按“两次数据之间”的时间算，调大这里主要是给首字前的排队留余量。
-# 原来 45 秒在高峰期等不到首个分片，会显示“模型响应超时”；默认 120 秒，可用 H3_MODEL_TIMEOUT 覆盖。
-MODEL_TIMEOUT = float(os.environ.get('H3_MODEL_TIMEOUT', '120'))
-H3_BASE = os.environ.get('H3_BASE_URL', 'http://127.0.0.1:17821').rstrip('/')
-_H3_CACHE = {'at': 0, 'items': []}
+# 原来 45 秒在高峰期等不到首个分片，会显示“模型响应超时”；默认 120 秒，可用 WMD_MODEL_TIMEOUT 覆盖。
+MODEL_TIMEOUT = float(os.environ.get('WMD_MODEL_TIMEOUT', '120'))
+WMD_BASE = os.environ.get('WMD_BASE_URL', 'http://127.0.0.1:17821').rstrip('/')
+_WMD_CACHE = {'at': 0, 'items': []}
 
-def _h3_channels():
-    """从 H3 读取已启用的语言模型渠道，作为可选模型（带 20 秒缓存）。"""
+def _wmd_channels():
+    """从创作台读取已启用的语言模型渠道，作为可选模型（带 20 秒缓存）。"""
     now = time.time()
-    if _H3_CACHE['items'] and now - _H3_CACHE['at'] < 20:
-        return _H3_CACHE['items']
+    if _WMD_CACHE['items'] and now - _WMD_CACHE['at'] < 20:
+        return _WMD_CACHE['items']
     items = []
     try:
-        req = urllib.request.Request(H3_BASE + '/api/state', headers={'X-H3-Internal': '1'})
+        req = urllib.request.Request(WMD_BASE + '/api/state', headers={'X-WMD-Internal': '1'})
         with urllib.request.urlopen(req, timeout=3) as res:
             data = json.loads(res.read().decode('utf-8'))
         for ch in ((data.get('data') or {}).get('channels') or {}).get('llm', []):
@@ -31,7 +31,8 @@ def _h3_channels():
                 'provider': 'channel:' + ch['id'],
                 'channel_id': ch['id'],
                 'model': ch['model'],
-                'label': (ch.get('name') or ch['id']) + ' · ' + ch['model'],
+                'label': ch['model'],
+                'channel_name': ch.get('name') or ch['id'],
                 'base_url': ch['baseUrl'],
                 'api_key': ch['apiKey'],
                 'max_tokens': ch.get('maxTokens') or 24000,
@@ -41,8 +42,8 @@ def _h3_channels():
             })
     except Exception:
         items = []
-    _H3_CACHE['items'] = items
-    _H3_CACHE['at'] = now
+    _WMD_CACHE['items'] = items
+    _WMD_CACHE['at'] = now
     return items
 
 def model_options():
@@ -55,9 +56,10 @@ def model_options():
         deepseek='api.deepseek.com' in str(cfg.get('base_url','')) and cfg['model'] in ('deepseek-v4-pro','deepseek-flash')
         if deepseek and not cfg.get('system_channel'):models=['deepseek-v4-pro','deepseek-flash']
         for model in models:
-            choices.append({'id':name+':'+model,'provider':name,'model':model,'label':(cfg['label']+' · '+model) if cfg.get('label') else model,'context_tokens':cfg.get('context_tokens') or 0,'reasoning_efforts':['none','low','high','max'] if deepseek else []})
+            choices.append({'id':name+':'+model,'provider':name,'model':model,'label':model,
+                            'channel_name': cfg.get('label') or name,'context_tokens':cfg.get('context_tokens') or 0,'reasoning_efforts':['none','low','high','max'] if deepseek else []})
     seen = {(c.get('base_url'), c.get('model')) for c in []}
-    for item in _h3_channels():
+    for item in _wmd_channels():
         if any(m['id'] == item['id'] for m in choices):
             continue
         choices.append({
@@ -70,9 +72,9 @@ def model_options():
 
 def resolve_model(selection=None, effort=None):
     if selection and selection.startswith('channel:'):
-        hit = next((x for x in _h3_channels() if x['id'] == selection), None)
+        hit = next((x for x in _wmd_channels() if x['id'] == selection), None)
         if not hit:
-            raise ValueError('所选渠道模型未启用或不可用')
+            raise ValueError('所选模型未启用或不可用')
         cfg = {k: hit.get(k) for k in ('model', 'base_url', 'api_key', 'max_tokens', 'temperature', 'protocol', 'context_tokens')}
         return hit['provider'], cfg
     if selection:
@@ -169,4 +171,119 @@ def with_retry(model, attempts=5):
     wrapped = model.model_copy()
     wrapped.__class__ = RetrySameModel
     return wrapped
+
+
+# ---------------------------- 渠道工具能力探测 ----------------------------
+# 有些渠道（例如把 ChatGPT 网页版包成 API 的代理）收得下 tools 参数，但根本不会返回
+# tool_calls。这里真发一次最小工具请求来判断，结果缓存 7 天，避免每次都探测。
+_CAP_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    'data', 'model-capabilities.json',
+)
+_CAP_TTL = 7 * 24 * 3600
+_PROBING = set()
+
+
+def _capabilities():
+    try:
+        with open(_CAP_FILE, 'r', encoding='utf-8') as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_capabilities(data):
+    try:
+        os.makedirs(os.path.dirname(_CAP_FILE), exist_ok=True)
+        with open(_CAP_FILE, 'w', encoding='utf-8') as fh:
+            json.dump(data, fh, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+def _probe_tools(cfg, timeout=6.0):
+    protocol = cfg.get('protocol') or 'chat'
+    if protocol not in ('chat', 'responses'):
+        return True
+    base = str(cfg.get('base_url') or '').rstrip('/')
+    key = cfg.get('api_key') or ''
+    model = cfg.get('model') or ''
+    if not base or not key or not model:
+        return True
+    params = {'type': 'object', 'properties': {'x': {'type': 'string'}}, 'required': ['x']}
+    if protocol == 'responses':
+        url = base + '/responses'
+        body = {
+            'model': model,
+            'input': [{'role': 'user', 'content': '调用 ping 工具，x 传 ok'}],
+            'tools': [{'type': 'function', 'name': 'ping', 'description': '连通性测试工具', 'parameters': params}],
+        }
+    else:
+        url = base + '/chat/completions'
+        body = {
+            'model': model,
+            'messages': [{'role': 'user', 'content': '调用 ping 工具，x 传 ok'}],
+            'tools': [{'type': 'function', 'function': {'name': 'ping', 'description': '连通性测试工具', 'parameters': params}}],
+            'tool_choice': 'auto',
+        }
+    request = urllib.request.Request(
+        url, data=json.dumps(body, ensure_ascii=False).encode('utf-8'), method='POST',
+        headers={'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as res:
+            payload = json.loads(res.read().decode('utf-8'))
+    except Exception:
+        return None  # 探测失败/超时：不下结论
+    if protocol == 'responses':
+        return any(str(item.get('type')) == 'function_call' for item in (payload.get('output') or []))
+    choice = (payload.get('choices') or [{}])[0] or {}
+    return bool((choice.get('message') or {}).get('tool_calls'))
+
+
+def supports_tools(provider, cfg, allow_probe=True, timeout=6.0):
+    """该模型渠道是否能真正调用工具（function calling），带 7 天缓存。
+
+    allow_probe=False 时只读缓存（缓存没有就按“支持”处理），用于不阻塞的列表接口。
+    """
+    key = str(provider) + ':' + str(cfg.get('model'))
+    cache = _capabilities()
+    item = cache.get(key) or {}
+    if 'tools' in item and time.time() - float(item.get('at') or 0) < _CAP_TTL:
+        return bool(item['tools'])
+    if not allow_probe:
+        return True
+    if key in _PROBING:
+        return True
+    _PROBING.add(key)
+    try:
+        ok = _probe_tools(cfg, timeout=timeout)
+        if ok is None:
+            return True  # 探测失败/超时：先按支持处理，下次再测
+        cache[key] = {'tools': bool(ok), 'at': time.time()}
+        _save_capabilities(cache)
+        return bool(ok)
+    finally:
+        _PROBING.discard(key)
+
+
+def probe_tools_background(provider, cfg):
+    """在后台预热能力缓存，避免用户第一次发消息时多等一次探测。"""
+    key = str(provider) + ':' + str(cfg.get('model'))
+    item = _capabilities().get(key) or {}
+    if 'tools' in item and time.time() - float(item.get('at') or 0) < _CAP_TTL:
+        return
+    if key in _PROBING:
+        return
+    import threading
+
+    def work():
+        try:
+            supports_tools(provider, cfg, allow_probe=True, timeout=30.0)
+        except Exception:
+            pass
+
+    threading.Thread(target=work, daemon=True).start()
+
 

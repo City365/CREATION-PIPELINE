@@ -41,7 +41,7 @@ function wav(seconds = 1, rate = 8000) {
 }
 
 test('音色库：扫描、分组、选中后复制进音频槽', { timeout: 60000 }, async () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'h3-voices-'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wmd-voices-'));
   const library = path.join(tmp, '800+音色', '影视角色');
   fs.mkdirSync(library, { recursive: true });
   fs.writeFileSync(path.join(library, '云小馨.wav'), wav(1.2));
@@ -50,7 +50,7 @@ test('音色库：扫描、分组、选中后复制进音频槽', { timeout: 600
 
   const child = spawn(process.execPath, [path.join(ROOT, 'src', 'server.js')], {
     cwd: ROOT,
-    env: { ...process.env, APPDATA: path.join(tmp, 'appdata'), H3_PORT: String(PORT), H3_DATA_DIR: path.join(tmp, 'data') },
+    env: { ...process.env, APPDATA: path.join(tmp, 'appdata'), WMD_PORT: String(PORT), WMD_DATA_DIR: path.join(tmp, 'data') },
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   });

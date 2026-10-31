@@ -59,7 +59,12 @@ function query(filter={}) {
  }
  const where=conditions.length?' WHERE '+conditions.join(' AND '):'';
  const total=db.prepare('SELECT COUNT(*) AS n FROM task_events'+where).get(...args).n,page=Math.max(1,Math.min(Math.ceil(total/10)||1,Number(filter.page)||1));
+ const runAt="COALESCE(json_extract(payload,'$.startedAt'),json_extract(payload,'$.schedule.startAt'))";
  const sorts={
+   // 还没排运行时间的任务排最前：调度页靠这个展示「未分配」，否则它们被运行时间排序挤到末页
+   pending_first:"(json_extract(payload,'$.status') IN ('unscheduled','draft')) DESC,created_at DESC,rowid DESC",
+   runtime_desc:"("+runAt+" IS NULL),"+runAt+" DESC,created_at DESC",
+   runtime_asc:"("+runAt+" IS NULL),"+runAt+" ASC,created_at ASC",
    created_desc:'created_at DESC,rowid DESC',
    created_asc:'created_at ASC,rowid ASC',
    updated_desc:"json_extract(payload,'$.updatedAt') DESC,created_at DESC",
@@ -73,7 +78,7 @@ function query(filter={}) {
 function get(id){const row=open().prepare('SELECT payload FROM task_events WHERE id=?').get(id);return row?JSON.parse(row.payload):null;}
 function active(){return open().prepare("SELECT payload FROM task_events WHERE json_extract(payload,'$.status') IN ('queued','running','paused','interrupted') OR json_extract(payload,'$.draft')=0 AND json_extract(payload,'$.finishedAt') IS NULL").all().map(r=>JSON.parse(r.payload));}
 function attemptLog(id,after=0){const row=open().prepare('SELECT payload FROM task_attempts WHERE id=?').get(id);if(!row)throw Object.assign(new Error('执行记录不存在'),{status:404});const record=JSON.parse(row.payload),logs=record.logs||[];return {id,lines:logs.slice(after,after+50),after,next:Math.min(logs.length,after+50),hasMore:after+50<logs.length};}
-function attemptPage(eventId,index=1){const db=open(),total=db.prepare('SELECT COUNT(*) AS n FROM task_attempts WHERE event_id=?').get(eventId).n,page=Math.max(1,Math.min(Math.ceil(total/10)||1,Number(index)||1));const attempts=db.prepare("SELECT id,item_id AS itemId,created_at AS createdAt,json_extract(payload,'$.status') AS status,json_extract(payload,'$.startedAt') AS startedAt,json_extract(payload,'$.finishedAt') AS finishedAt,json_extract(payload,'$.error') AS error FROM task_attempts WHERE event_id=? ORDER BY created_at DESC,rowid DESC LIMIT 10 OFFSET ?").all(eventId,(page-1)*10);return {attempts,total,page,pageSize:10};}
-function remove(id){const db=open();const row=db.prepare('SELECT id FROM task_events WHERE id=?').get(id);if(!row)return false;db.prepare('DELETE FROM task_attempts WHERE event_id=?').run(id);db.prepare('DELETE FROM task_events WHERE id=?').run(id);return true;}
+function attemptPage(eventId,index=1){const db=open(),total=db.prepare('SELECT COUNT(*) AS n FROM task_attempts WHERE event_id=?').get(eventId).n,page=Math.max(1,Math.min(Math.ceil(total/10)||1,Number(index)||1));const attempts=db.prepare("SELECT id,item_id AS itemId,created_at AS createdAt,json_extract(payload,'$.status') AS status,json_extract(payload,'$.startedAt') AS startedAt,json_extract(payload,'$.finishedAt') AS finishedAt,json_extract(payload,'$.error') AS error FROM task_attempts WHERE event_id=? ORDER BY COALESCE(json_extract(payload,'$.startedAt'),created_at) DESC,rowid DESC LIMIT 10 OFFSET ?").all(eventId,(page-1)*10);return {attempts,total,page,pageSize:10};}
+function remove(id){const db=open();const row=db.prepare('SELECT id FROM task_events WHERE id=?').get(id);if(!row)return false;db.prepare('DELETE FROM task_attempts WHERE event_id=?').run(id);db.prepare('DELETE FROM task_events WHERE id=?').run(id);known.delete(id);return true;}
 
 module.exports = { open, read, write, kind, query, get, active, attempt, attempts, attemptLog, attemptPage, remove };

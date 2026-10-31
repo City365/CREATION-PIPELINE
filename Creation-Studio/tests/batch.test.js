@@ -5,8 +5,8 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'h3-batch-'));
-process.env.H3_DATA_DIR = path.join(tmp, 'data');
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wmd-batch-'));
+process.env.WMD_DATA_DIR = path.join(tmp, 'data');
 
 const batch = require('../src/batch');
 const config = require('../src/config');
@@ -18,7 +18,7 @@ fs.writeFileSync(path.join(tmp, 'assets', '示例1', '1.mp3'), 'mp3');
 config.save({ assetFolder: path.join(tmp, 'assets'), saveFolder: path.join(tmp, 'media') });
 
 const sample = {
-  format: 'zealman-h3-batch',
+  format: 'wmd-batch',
   version: 1,
   name: '测试批次',
   baseDir: '',

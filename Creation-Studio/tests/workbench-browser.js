@@ -4,8 +4,8 @@ const fs=require('node:fs');const path=require('node:path');const os=require('no
 const ROOT=path.resolve(__dirname,'..');const {createRequire}=require('node:module');const managerRequire=createRequire(path.join(ROOT,'../Video-Generation-Manager/package.json'));const {chromium}=managerRequire('playwright-core');const {findChrome}=managerRequire('./src/browser-pool');const {startMockCloud}=require('./mock-cloud');
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));async function until(fn,ms=15000){const start=Date.now();while(Date.now()-start<ms){try{if(await fn())return;}catch{}await sleep(100);}throw Error('browser acceptance timeout');}
 (async()=>{
- const dir=fs.mkdtempSync(path.join(os.tmpdir(),'h3-wb-browser-'));const base='http://127.0.0.1:18943';const mock=await startMockCloud();let child,browser;const errors=[];
- const start=async()=>{child=spawn(process.execPath,[path.join(ROOT,'src/server.js')],{cwd:ROOT,windowsHide:true,env:{...process.env,H3_PORT:'18943',H3_DATA_DIR:path.join(dir,'data'),APPDATA:path.join(dir,'appdata')},stdio:'ignore'});await until(async()=>(await fetch(base+'/api/health')).ok);};
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'wmd-wb-browser-'));const base='http://127.0.0.1:18943';const mock=await startMockCloud();let child,browser;const errors=[];
+ const start=async()=>{child=spawn(process.execPath,[path.join(ROOT,'src/server.js')],{cwd:ROOT,windowsHide:true,env:{...process.env,WMD_PORT:'18943',WMD_DATA_DIR:path.join(dir,'data'),APPDATA:path.join(dir,'appdata')},stdio:'ignore'});await until(async()=>(await fetch(base+'/api/health')).ok);};
  const stop=async()=>{if(child){const stopped=new Promise(r=>child.once('exit',r));child.kill();await stopped;child=null;}};
  const call=async(p,body)=>{const r=await fetch(base+p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const d=await r.json();assert.equal(d.ok,true,JSON.stringify(d));return d.data;};
  try {

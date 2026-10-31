@@ -12,7 +12,7 @@ SETTINGS_PATH = Path(os.getenv("AGENT_SETTINGS_PATH", str(_DEFAULT_PATH)))
 
 def studio_models():
     """Read the same persisted channels as the desktop, on every request."""
-    root = Path(os.getenv('H3_DATA_DIR') or Path(__file__).resolve().parents[3] / 'data')
+    root = Path(os.getenv('WMD_DATA_DIR') or Path(__file__).resolve().parents[3] / 'data')
     file = root / 'config.json'
     if not file.exists():
         return None

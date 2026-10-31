@@ -5,8 +5,8 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'h3-channels-'));
-process.env.H3_DATA_DIR = path.join(tmpDir, 'data');
+const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wmd-channels-'));
+process.env.WMD_DATA_DIR = path.join(tmpDir, 'data');
 process.env.APPDATA = path.join(tmpDir, 'appdata');
 
 const channels = require('../src/channels');

@@ -38,23 +38,40 @@ function ago(ts) {
   return Math.round(s / 86400) + ' 天前';
 }
 
-function toast(message, isError = false) {
+function toast(message, isError = false, action = null) {
   const host = $('#toasts');
   const text = String(message == null ? '' : message).trim();
   if (!host || !text) return;
   // 同一句话重复出现时只保留一条，避免连续保存叠出一串相同提示。
   for (const node of [...host.children]) {
-    if (node.textContent === text) node.remove();
+    if (node.dataset.key === text || node.textContent === text) node.remove();
   }
-  while (host.children.length >= 3) host.firstElementChild.remove();
+  while (host.children.length >= (action ? 2 : 3)) host.firstElementChild.remove();
   const box = document.createElement('div');
-  box.className = 'toast' + (isError ? ' err' : '');
-  box.textContent = text;
-  host.appendChild(box);
-  setTimeout(() => {
+  box.className = 'toast' + (isError ? ' err' : '') + (action ? ' has-action' : '');
+  box.dataset.key = text;
+  const label = document.createElement('span');
+  label.textContent = text;
+  box.appendChild(label);
+  const dismiss = () => {
+    if (!box.isConnected) return;
     box.classList.add('is-out');
     setTimeout(() => box.remove(), 180);
-  }, isError ? 6000 : 3200);
+  };
+  if (action && action.label) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'toast-action';
+    button.textContent = action.label;
+    button.onclick = async () => {
+      button.disabled = true;
+      try { await action.onClick(); dismiss(); } catch (err) { button.disabled = false; toast(err.message, true); }
+    };
+    box.appendChild(button);
+  }
+  host.appendChild(box);
+  const life = action ? Math.max(4000, Number(action.timeout) || 8000) : (isError ? 6000 : 3200);
+  setTimeout(dismiss, life);
 }
 
 // 脚本出错时不要静默变砖：顶部红条 + 一键刷新，方便一眼看出问题
@@ -68,8 +85,8 @@ function showFatal(message) {
   }
   const text = String(message || '未知错误').slice(0, 300);
   bar.innerHTML = `<span class="fatal-msg">页面脚本出错：${esc(text)}</span>
-    <button type="button" class="h3-btn h3-btn-sm" onclick="location.reload()">刷新页面</button>
-    <button type="button" class="h3-btn h3-btn-sm h3-btn-ghost" onclick="this.parentNode.remove()">收起</button>`;
+    <button type="button" class="wmd-btn wmd-btn-sm" onclick="location.reload()">刷新页面</button>
+    <button type="button" class="wmd-btn wmd-btn-sm wmd-btn-ghost" onclick="this.parentNode.remove()">收起</button>`;
 }
 
 window.addEventListener('beforeunload', () => { try { studioBeacon(); } catch { /* ignore */ } });
@@ -106,6 +123,10 @@ const state = {
   scriptTimer: null,
   scriptPending: '',
   assets: null,
+  // 媒体库默认只加载「按任务」的菜单，选中某个任务才去拉它的成片
+  mediaTask: '',
+  mediaTasks: null,
+  mediaTaskItems: null,
   media: null,
   batch: null,
   busy: false,
@@ -114,6 +135,7 @@ const state = {
     channelId: '',
     tab: 'generate',
     prompt: '',
+    styleLayer: 'free',
     size: 'auto',
     count: 1,
     refs: [],
@@ -143,7 +165,7 @@ const state = {
 
 let studioSaveTimer = null;
 function studioProjectId() { return state.projectId || 'default'; }
-function studioKey(project) { return 'h3.studio.' + (project || studioProjectId()); }
+function studioKey(project) { return 'wmd.studio.' + (project || studioProjectId()); }
 function studioSnapshot() {
   const s = state.studio;
   return {
@@ -214,11 +236,11 @@ async function studioLoadForProject(project) {
     studioApply(saved);
   } else {
     let legacy = null;
-    try { legacy = JSON.parse(localStorage.getItem('h3.studio') || 'null'); } catch { legacy = null; }
+    try { legacy = JSON.parse(localStorage.getItem('wmd.studio') || 'null'); } catch { legacy = null; }
     if (legacy && (legacy.prompt || (legacy.images || []).length)) {
       studioApply(legacy);
       studioFlush(projectId);
-      try { localStorage.removeItem('h3.studio'); } catch { /* ignore */ }
+      try { localStorage.removeItem('wmd.studio'); } catch { /* ignore */ }
       return legacy;
     }
     s.prompt = '';
@@ -272,7 +294,7 @@ function closeModal() {
   const panel = $('#modal-panel');
   panel.innerHTML = '';
   panel.classList.remove('modal-settings');
-  document.body.style.overflow = '';
+  document.body.style.overflow = document.getElementById('evt-drawer') ? 'hidden' : '';
 }
 
 $('#modal').addEventListener('click', (event) => {
@@ -419,8 +441,8 @@ function applySystemTypography(ui = {}) {
   style.setProperty('--system-size', size + 'px');
   style.setProperty('--system-leading', String(clamp(ui.systemLineHeight ?? 1.55, 1.25, 2.2, 1.55)));
   style.setProperty('--system-weight', String([400, 500, 600].includes(Number(ui.systemFontWeight)) ? Number(ui.systemFontWeight) : 400));
-  style.setProperty('--h3-font', (AGENT_FONTS[ui.systemFont] || AGENT_FONTS.system).css);
-  for (const [name, base] of [['--h3-fs-1', 11], ['--h3-fs-2', 12], ['--h3-fs-3', 13], ['--h3-fs-4', 14], ['--h3-fs-5', 16], ['--h3-fs-6', 20]]) {
+  style.setProperty('--wmd-font', (AGENT_FONTS[ui.systemFont] || AGENT_FONTS.system).css);
+  for (const [name, base] of [['--wmd-fs-1', 11], ['--wmd-fs-2', 12], ['--wmd-fs-3', 13], ['--wmd-fs-4', 14], ['--wmd-fs-5', 16], ['--wmd-fs-6', 20]]) {
     style.setProperty(name, (base * scale).toFixed(2).replace(/\.?0+$/, '') + 'px');
   }
 }
@@ -455,7 +477,7 @@ function applyTheme() {
   }
   let play = $('#wallpaper-play');
   if (!play) {
-    play = document.createElement('button'); play.type = 'button'; play.id = 'wallpaper-play'; play.className = 'h3-iconbtn';
+    play = document.createElement('button'); play.type = 'button'; play.id = 'wallpaper-play'; play.className = 'wmd-iconbtn';
     if (btn) btn.before(play);
     play.onclick = () => saveAppearance({ wallpaperPaused: !wallpaperIsPaused() }).catch((err) => toast(err.message, true));
   }
@@ -526,7 +548,7 @@ function applyVolume() {
   const range = $('#volume-range');
   if (range) {
     range.value = String(level);
-    range.style.setProperty('--h3-vol', level + '%');
+    range.style.setProperty('--wmd-vol', level + '%');
   }
   const mute = $('#mute-btn');
   if (mute) mute.title = v.muted ? '取消静音' : '静音';
@@ -571,23 +593,25 @@ function setRoute() {
   // 旧路由兼容：批量任务 / 任务 / 任务日志 统一进「任务管理」的对应页签
   if (route === 'jobs' || route === 'batch' || route === 'logs') {
     state.taskTab = route === 'batch' ? 'batch'
-      : route === 'logs' ? ((state.logTab || localStorage.getItem('h3.logs.tab') || 'video') === 'image' ? 'image' : 'video')
+      : route === 'logs' ? ((state.logTab || localStorage.getItem('wmd.logs.tab') || 'video') === 'image' ? 'image' : 'video')
       : 'running';
-    localStorage.setItem('h3.tasks.tab', state.taskTab);
+    localStorage.setItem('wmd.tasks.tab', state.taskTab);
     try { history.replaceState(null, '', '#tasks' + location.search); } catch { /* ignore */ }
     route = 'tasks';
   }
   state.route = ['image', 'studio', 'script', 'assets', 'batch', 'jobs', 'tasks', 'media', 'compare', 'logs', 'projects'].includes(route) ? route : 'image';
-  if (state.route === 'tasks' && !state.taskTab) state.taskTab = localStorage.getItem('h3.tasks.tab') || 'running';
+  if (state.route === 'tasks' && !state.taskTab) state.taskTab = localStorage.getItem('wmd.tasks.tab') || 'running';
   if (state.route !== 'projects' && !state.projectId) state.route = 'projects';
   if (state.route === 'script' && previousRoute !== 'script' && state.ask?.conversations && !state.ask.loading && !state.ask.generating) {
     askNewConversation();
   }
-  if (state.route === 'media' || state.route === 'assets') {
-    const targetRoute=state.route;
-    api('/api/'+targetRoute).then(data=>{state[targetRoute]=data;if(state.route===targetRoute)render();}).catch(e=>toast(e.message,true));
+  if (state.route === 'assets') {
+    api('/api/assets').then(data => { state.assets = data; if (state.route === 'assets') render(); }).catch(e => toast(e.message, true));
   }
-  $$('#nav .h3-maintab').forEach((b) => b.classList.toggle('is-active', b.dataset.route === state.route));
+  if (state.route === 'media') {
+    loadMediaTaskMenu().then(() => { if (state.route === 'media') render(); }).catch((e) => toast(e.message, true));
+  }
+  $$('#nav .wmd-maintab').forEach((b) => b.classList.toggle('is-active', b.dataset.route === state.route));
   render();
 }
 
@@ -595,6 +619,7 @@ window.addEventListener('hashchange', setRoute);
 
 function render() {
   const view = $('#view');
+  if (!view) return; // 页面还没挂好（或正在被整体替换）时不要硬渲染，否则整页报错
   let html = '';
   if (state.route === 'studio') html = renderStudio();
   else if (state.route === 'image') html = IJ.panel() + renderImage();
@@ -602,7 +627,7 @@ function render() {
   else if (state.route === 'batch') html = '<div class="page-scroll">' + renderBatch() + '</div>';
   else if (state.route === 'jobs') html = '<div class="page-scroll">' + renderJobs() + '</div>';
   else if (state.route === 'tasks') html = '<div class="page-scroll tasks-page">' + renderTasks() + '</div>';
-  else if (state.route === 'assets') html = '<div class="page-scroll assets-page" style="background:var(--h3-bg-1) !important">' + renderAssets() + '</div>';
+  else if (state.route === 'assets') html = '<div class="page-scroll assets-page" style="background:var(--wmd-bg-1) !important">' + renderAssets() + '</div>';
   else if (state.route === 'media') html = '<div class="page-scroll">' + renderMedia() + '</div>';
   else if (state.route === 'compare') html = '<div class="page-scroll is-compare">' + renderCompare() + '</div>';
   else if (state.route === 'logs') html = '<div class="page-scroll">' + renderLogs() + '</div>';
@@ -644,7 +669,7 @@ function goRoute(route) {
   else location.hash = next;
 }
 
-$$('#nav .h3-maintab').forEach((btn, index) => {
+$$('#nav .wmd-maintab').forEach((btn, index) => {
   btn.onclick = () => goRoute(btn.dataset.route);
   btn.title = `Ctrl+${index + 1}`;
 });
@@ -652,7 +677,7 @@ $$('#nav .h3-maintab').forEach((btn, index) => {
 document.addEventListener('keydown', (event) => {
   if (!(event.ctrlKey || event.metaKey) || event.shiftKey || event.altKey) return;
   const index = Number(event.key) - 1;
-  const tabs = $$('#nav .h3-maintab');
+  const tabs = $$('#nav .wmd-maintab');
   if (!Number.isInteger(index) || index < 0 || index >= tabs.length) return;
   event.preventDefault();
   goRoute(tabs[index].dataset.route);
@@ -660,40 +685,40 @@ document.addEventListener('keydown', (event) => {
 
 /* ------------------------------------------------------------------ studio */
 
-/* ---- 视频创作台：按原版 DOM 结构（h3-panel / h3-slots / h3-compose）重建 ---- */
+/* ---- 视频创作台：按原版 DOM 结构（wmd-panel / wmd-slots / wmd-compose）重建 ---- */
 
 const ICON = {
-  frame: '<svg class="h3-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18"></rect><path d="M7 3v18M17 3v18M3 7h4M3 17h4M17 7h4M17 17h4"></path></svg>',
-  swap: '<svg class="h3-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l4 4-4 4"></path><path d="M3 6h18"></path><path d="M7 22l-4-4 4-4"></path><path d="M21 18H3"></path></svg>',
-  x: '<svg class="h3-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"></path></svg>',
-  copy: '<svg class="h3-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>',
-  trash: '<svg class="h3-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"></path></svg>',
-  wand: '<svg class="h3-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m3 21 12-12M14 4l1.5 3L19 8.5 15.5 10 14 13l-1.5-3L9 8.5 12.5 7z"></path></svg>',
-  caret: '<svg class="h3-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg>',
-  audio: '<svg class="h3-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V6l10-2v12"></path><circle cx="6" cy="18" r="3"></circle><circle cx="16" cy="16" r="3"></circle></svg>',
-  play: '<svg class="h3-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m5 3 14 9-14 9z"></path></svg>',
-  skipBack: '<svg class="h3-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 20 9 12l10-8zM5 19V5"></path></svg>',
-  skipFwd: '<svg class="h3-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m5 4 10 8-10 8zM19 5v14"></path></svg>',
+  frame: '<svg class="wmd-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18"></rect><path d="M7 3v18M17 3v18M3 7h4M3 17h4M17 7h4M17 17h4"></path></svg>',
+  swap: '<svg class="wmd-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l4 4-4 4"></path><path d="M3 6h18"></path><path d="M7 22l-4-4 4-4"></path><path d="M21 18H3"></path></svg>',
+  x: '<svg class="wmd-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"></path></svg>',
+  copy: '<svg class="wmd-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>',
+  trash: '<svg class="wmd-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"></path></svg>',
+  wand: '<svg class="wmd-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m3 21 12-12M14 4l1.5 3L19 8.5 15.5 10 14 13l-1.5-3L9 8.5 12.5 7z"></path></svg>',
+  caret: '<svg class="wmd-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg>',
+  audio: '<svg class="wmd-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V6l10-2v12"></path><circle cx="6" cy="18" r="3"></circle><circle cx="16" cy="16" r="3"></circle></svg>',
+  play: '<svg class="wmd-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m5 3 14 9-14 9z"></path></svg>',
+  skipBack: '<svg class="wmd-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 20 9 12l10-8zM5 19V5"></path></svg>',
+  skipFwd: '<svg class="wmd-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m5 4 10 8-10 8zM19 5v14"></path></svg>',
 };
 
 function refSlotHtml(image, index, nextEmpty) {
   const num = index + 1;
   const isNext = !image && index === nextEmpty;
-  const cls = 'h3-slot' + (image ? ' has-media' : isNext ? ' is-next' : '');
+  const cls = 'wmd-slot' + (image ? ' has-media' : isNext ? ' is-next' : '');
   const style = `--i:${index}`;
   if (!image) {
     return `<div class="${cls}" data-act="add-image" data-index="${index}" style="${style}" title="点击从素材库选择图像，或把图片拖到这里">
-      <span class="h3-slot-num is-empty">图${num}</span>
+      <span class="wmd-slot-num is-empty">图${num}</span>
     </div>`;
   }
   return `<div class="${cls}" data-index="${index}" style="${style}" draggable="true" ${image.subject ? `data-subject="${num}"` : ''} title="${esc(image.name)}">
-    <img class="h3-slot-img" src="/api/file?path=${enc(image.path)}" alt="" />
-    <span class="h3-slot-num">图${num}</span>
-    ${image.subject ? `<span class="h3-slot-subject" title="&lt;Subject ${num}&gt;">S${num} ${esc(image.subject)}</span>` : ''}
-    <div class="h3-slot-actions">
-      <button type="button" class="h3-slot-act" data-act="name-subject" data-index="${index}" title="命名主体（供提示词 &lt;Subject n&gt; 引用）">${ICON.frame}</button>
-      <button type="button" class="h3-slot-act" data-act="add-image" data-index="${index}" title="更换图像">${ICON.swap}</button>
-      <button type="button" class="h3-slot-act is-danger" data-act="remove-image" data-index="${index}" title="移除">${ICON.x}</button>
+    <img class="wmd-slot-img" src="/api/file?path=${enc(image.path)}" alt="" />
+    <span class="wmd-slot-num">图${num}</span>
+    ${image.subject ? `<span class="wmd-slot-subject" title="&lt;Subject ${num}&gt;">S${num} ${esc(image.subject)}</span>` : ''}
+    <div class="wmd-slot-actions">
+      <button type="button" class="wmd-slot-act" data-act="name-subject" data-index="${index}" title="命名主体（供提示词 &lt;Subject n&gt; 引用）">${ICON.frame}</button>
+      <button type="button" class="wmd-slot-act" data-act="add-image" data-index="${index}" title="更换图像">${ICON.swap}</button>
+      <button type="button" class="wmd-slot-act is-danger" data-act="remove-image" data-index="${index}" title="移除">${ICON.x}</button>
     </div>
   </div>`;
 }
@@ -701,21 +726,21 @@ function refSlotHtml(image, index, nextEmpty) {
 function audioSlotHtml(audio, index) {
   const num = index + 1;
   if (!audio) {
-    return `<div class="h3-audio" data-index="${index}" title="选择内置音色或本地音频，也可把音频文件拖到这里">
-      <span class="h3-audio-num tnum">音频${num}</span>
-      <button type="button" class="h3-audio-pick" data-act="voice-pick" data-index="${index}" title="用内置音色朗读台词，生成一段音频">内置音色</button>
-      <button type="button" class="h3-audio-pick" data-act="add-audio" data-index="${index}" title="选一个本地音频文件">本地音频</button>
+    return `<div class="wmd-audio" data-index="${index}" title="选择内置音色或本地音频，也可把音频文件拖到这里">
+      <span class="wmd-audio-num tnum">音频${num}</span>
+      <button type="button" class="wmd-audio-pick" data-act="voice-pick" data-index="${index}" title="用内置音色朗读台词，生成一段音频">内置音色</button>
+      <button type="button" class="wmd-audio-pick" data-act="add-audio" data-index="${index}" title="选一个本地音频文件">本地音频</button>
     </div>`;
   }
-  return `<div class="h3-audio has-media" data-index="${index}" title="${esc(audio.path)}">
-    <span class="h3-audio-num tnum">音频${num}</span>
-    <span class="h3-audio-ico">${ICON.audio}</span>
-    <span class="h3-audio-name">${esc(audio.name)}</span>
-    <span class="h3-audio-tag">${audio.voiceId ? '音色库 · ' + esc(audio.voice || '') : audio.voice ? '内置音色' : '本地音频'}${audio.seconds ? ' · ' + audio.seconds + 's' : ''}</span>
-    <div class="h3-slot-actions" style="opacity:1">
-      <button type="button" class="h3-slot-act" data-act="preview-audio" data-index="${index}" title="试听">${ICON.play}</button>
-      <button type="button" class="h3-slot-act" data-act="voice-pick" data-index="${index}" title="换内置音色">${ICON.frame}</button>
-      <button type="button" class="h3-slot-act is-danger" data-act="remove-audio" data-index="${index}" title="移除">${ICON.x}</button>
+  return `<div class="wmd-audio has-media" data-index="${index}" title="${esc(audio.path)}">
+    <span class="wmd-audio-num tnum">音频${num}</span>
+    <span class="wmd-audio-ico">${ICON.audio}</span>
+    <span class="wmd-audio-name">${esc(audio.name)}</span>
+    <span class="wmd-audio-tag">${audio.voiceId ? '音色库 · ' + esc(audio.voice || '') : audio.voice ? '内置音色' : '本地音频'}${audio.seconds ? ' · ' + audio.seconds + 's' : ''}</span>
+    <div class="wmd-slot-actions" style="opacity:1">
+      <button type="button" class="wmd-slot-act" data-act="preview-audio" data-index="${index}" title="试听">${ICON.play}</button>
+      <button type="button" class="wmd-slot-act" data-act="voice-pick" data-index="${index}" title="换内置音色">${ICON.frame}</button>
+      <button type="button" class="wmd-slot-act is-danger" data-act="remove-audio" data-index="${index}" title="移除">${ICON.x}</button>
     </div>
   </div>`;
 }
@@ -749,11 +774,11 @@ async function openVoiceDialog(index) {
     <div class="modal-head">
       <h2>内置音色 · 音频 ${index + 1}</h2>
       <span class="grow"></span>
-      <button type="button" class="h3-btn h3-btn-sm h3-btn-ghost" data-close="1">关闭</button>
+      <button type="button" class="wmd-btn wmd-btn-sm wmd-btn-ghost" data-close="1">关闭</button>
     </div>
     <div class="modal-body">
-      <div class="h3-page-tabs" style="height:32px;margin:-6px 0 4px;border:0;padding:0">
-        ${tabs.map(([id, label]) => `<button type="button" class="h3-page-tab ${tab === id ? 'is-on' : ''}" data-voice-tab="${id}">${label}</button>`).join('')}
+      <div class="wmd-page-tabs" style="height:32px;margin:-6px 0 4px;border:0;padding:0">
+        ${tabs.map(([id, label]) => `<button type="button" class="wmd-page-tab ${tab === id ? 'is-on' : ''}" data-voice-tab="${id}">${label}</button>`).join('')}
       </div>
       ${tab === 'library' ? libraryPane(library, libraryError, existing) : sapiPane(dialogues, existing)}
     </div>
@@ -778,18 +803,18 @@ function libraryPane(library, error, existing) {
         <option value="">全部分组（${library.total}）</option>
         ${library.groups.map((g) => `<option value="${esc(g.name)}">${esc(g.name)}（${g.count}）</option>`).join('')}
       </select>
-      <button type="button" class="h3-btn h3-btn-sm" id="vl-refresh" title="重新扫描音色目录">重新扫描</button>
+      <button type="button" class="wmd-btn wmd-btn-sm" id="vl-refresh" title="重新扫描音色目录">重新扫描</button>
     </div>
     <div class="hint">音色库根目录：<span class="mono">${esc(library.root)}</span> · 选中后会把样本复制进 <span class="mono">data/uploads/voice/</span>，再进音频槽</div>
     <div class="vl-list" id="vl-list"></div>
-    <div class="row"><span class="hint" id="vl-count"></span><span class="grow"></span><button type="button" class="h3-btn h3-btn-sm" id="vl-more">加载更多</button></div>
+    <div class="row"><span class="hint" id="vl-count"></span><span class="grow"></span><button type="button" class="wmd-btn wmd-btn-sm" id="vl-more">加载更多</button></div>
   `;
 }
 
 function sapiPane(dialogues, existing) {
   return `
     <p class="hint">用系统自带的语音包离线合成 WAV（Windows System.Speech），生成后直接放进这个音频槽，再在提示词里用 &lt;Audio 1&gt; 引用。</p>
-    ${dialogues.length ? `<div class="row wrap"><span class="hint">从提示词里取到的台词：</span>${dialogues.slice(0, 6).map((line, i) => `<button type="button" class="h3-btn h3-btn-sm h3-btn-ghost" data-line="${i}" title="填进下面的文本框">${esc(line.slice(0, 18))}${line.length > 18 ? '…' : ''}</button>`).join('')}</div>` : ''}
+    ${dialogues.length ? `<div class="row wrap"><span class="hint">从提示词里取到的台词：</span>${dialogues.slice(0, 6).map((line, i) => `<button type="button" class="wmd-btn wmd-btn-sm wmd-btn-ghost" data-line="${i}" title="填进下面的文本框">${esc(line.slice(0, 18))}${line.length > 18 ? '…' : ''}</button>`).join('')}</div>` : ''}
     <div class="field"><label>朗读文字</label>
       <textarea class="textarea" id="voice-text" style="min-height:100px" placeholder="例如：师姐，我们快到了。">${esc(dialogues[0] || '')}</textarea>
     </div>
@@ -809,7 +834,7 @@ function sapiPane(dialogues, existing) {
     </div>
     <div class="hint" id="voice-state"></div>
     <div class="modal-foot" style="padding:8px 0 0;border:0">
-      <button type="button" class="h3-btn h3-btn-sm h3-btn-primary" id="voice-go">生成并放入音频槽</button>
+      <button type="button" class="wmd-btn wmd-btn-sm wmd-btn-primary" id="voice-go">生成并放入音频槽</button>
     </div>
   `;
 }
@@ -823,7 +848,7 @@ function voiceItemHtml(item) {
       ${line ? `<div class="vl-note" title="${esc(line)}">${esc(line)}</div>` : ''}
     </div>
     <span class="vl-time tnum">${item.seconds ? item.seconds + 's' : ''}</span>
-    <button type="button" class="h3-btn h3-btn-sm" data-act="vl-use" data-id="${item.id}">使用</button>
+    <button type="button" class="wmd-btn wmd-btn-sm" data-act="vl-use" data-id="${item.id}">使用</button>
   </div>`;
 }
 
@@ -986,7 +1011,7 @@ function promptPreviewHtml(text) {
   const s = state.studio;
   const source = String(text || '');
   if (!source.trim()) {
-    return `<span class="h3-prompt-placeholder">还没有提示词。点「插入骨架」按当前主体生成 6 段式骨架，或直接切到「代码」开始写。</span>`;
+    return `<span class="wmd-prompt-placeholder">还没有提示词。点「插入骨架」按当前主体生成 6 段式骨架，或直接切到「代码」开始写。</span>`;
   }
   let html = '';
   let cursor = 0;
@@ -996,7 +1021,7 @@ function promptPreviewHtml(text) {
     const value = esc(raw);
     const parts = value.split(/(主体定义|摘要|保留分析|详细描述|环境音|非剧情配乐|参考生成|镜头设计)/g);
     parts.forEach((part, i) => {
-      if (i % 2 === 1) html += `<span class="h3-chip is-section"><span>${part}</span></span>`;
+      if (i % 2 === 1) html += `<span class="wmd-chip is-section"><span>${part}</span></span>`;
       else html += part.replace(/\n/g, '<br>');
     });
   };
@@ -1004,18 +1029,18 @@ function promptPreviewHtml(text) {
     pushText(source.slice(cursor, m.index));
     if (m[1]) {
       const img = s.images[Number(m[1]) - 1];
-      html += `<span class="h3-chip is-media">${img ? `<img class="h3-chip-media" src="/api/file?path=${enc(img.path)}" alt="" />` : ''}<span>图${m[1]}</span></span>`;
+      html += `<span class="wmd-chip is-media">${img ? `<img class="wmd-chip-media" src="/api/file?path=${enc(img.path)}" alt="" />` : ''}<span>图${m[1]}</span></span>`;
     } else if (m[2]) {
       const img = s.images[Number(m[2]) - 1];
       const label = img && img.subject ? img.subject : '主体' + m[2];
-      html += `<span class="h3-chip is-subject">${img ? `<img class="h3-chip-media" src="/api/file?path=${enc(img.path)}" alt="" />` : ''}<span>${esc(label)}</span></span>`;
+      html += `<span class="wmd-chip is-subject">${img ? `<img class="wmd-chip-media" src="/api/file?path=${enc(img.path)}" alt="" />` : ''}<span>${esc(label)}</span></span>`;
     } else if (m[3]) {
       const aud = s.audios[Number(m[3]) - 1];
-      html += `<span class="h3-chip is-spec"><span>音频${m[3]}${aud ? ' · ' + esc(aud.name) : ''}</span></span>`;
+      html += `<span class="wmd-chip is-spec"><span>音频${m[3]}${aud ? ' · ' + esc(aud.name) : ''}</span></span>`;
     } else if (m[4] !== undefined) {
-      html += `<span class="h3-chip is-dialogue"><span>对白：</span><span>${esc(m[4])}</span></span>`;
+      html += `<span class="wmd-chip is-dialogue"><span>对白：</span><span>${esc(m[4])}</span></span>`;
     } else if (m[5]) {
-      html += `<span class="h3-chip is-spec is-clickable"><span>镜头${m[5]}</span></span>`;
+      html += `<span class="wmd-chip is-spec is-clickable"><span>镜头${m[5]}</span></span>`;
     }
     cursor = m.index + m[0].length;
   }
@@ -1035,7 +1060,7 @@ function promptRichHtml(text) {
   const pushText = (raw) => {
     const parts = esc(raw).split(/(主体定义|摘要|保留分析|详细描述|环境音|非剧情配乐|镜头设计|参考生成)/g);
     for (let i = 0; i < parts.length; i += 1) {
-      if (i % 2 === 1) html += `<span class="h3-chip is-section" contenteditable="false" data-token="${parts[i]}"><span>${parts[i]}</span></span>`;
+      if (i % 2 === 1) html += `<span class="wmd-chip is-section" contenteditable="false" data-token="${parts[i]}"><span>${parts[i]}</span></span>`;
       else html += parts[i].replace(/\n/g, '<br>');
     }
   };
@@ -1043,17 +1068,17 @@ function promptRichHtml(text) {
     pushText(source.slice(cursor, m.index));
     const g = m.groups || {};
     if (g.speaker) {
-      html += `<span class="h3-chip is-spec is-clickable" contenteditable="false" data-token="(S${g.speaker})"><span>说话人${g.speaker}</span></span>`;
+      html += `<span class="wmd-chip is-spec is-clickable" contenteditable="false" data-token="(S${g.speaker})"><span>说话人${g.speaker}</span></span>`;
     } else if (g.picture) {
       const img = s.images[Number(g.picture) - 1];
-      html += `<span class="h3-chip is-media" contenteditable="false" data-token="&lt;Picture ${g.picture}&gt;">${img ? `<img class="h3-chip-media" src="/api/file?path=${enc(img.path)}" alt="" />` : ''}<span>图${g.picture}</span></span>`;
+      html += `<span class="wmd-chip is-media" contenteditable="false" data-token="&lt;Picture ${g.picture}&gt;">${img ? `<img class="wmd-chip-media" src="/api/file?path=${enc(img.path)}" alt="" />` : ''}<span>图${g.picture}</span></span>`;
     } else if (g.subject) {
       const img = s.images[Number(g.subject) - 1];
       const label = img && img.subject ? img.subject : '主体' + g.subject;
-      html += `<span class="h3-chip is-subject" contenteditable="false" data-token="&lt;Subject ${g.subject}&gt;">${img ? `<img class="h3-chip-media" src="/api/file?path=${enc(img.path)}" alt="" />` : ''}<span>${esc(label)}</span></span>`;
+      html += `<span class="wmd-chip is-subject" contenteditable="false" data-token="&lt;Subject ${g.subject}&gt;">${img ? `<img class="wmd-chip-media" src="/api/file?path=${enc(img.path)}" alt="" />` : ''}<span>${esc(label)}</span></span>`;
     } else if (g.audio) {
       const aud = s.audios[Number(g.audio) - 1];
-      html += `<span class="h3-chip is-spec" contenteditable="false" data-token="&lt;Audio ${g.audio}&gt;"><span>音频${g.audio}${aud ? ' · ' + esc(aud.name) : ''}</span></span>`;
+      html += `<span class="wmd-chip is-spec" contenteditable="false" data-token="&lt;Audio ${g.audio}&gt;"><span>音频${g.audio}${aud ? ' · ' + esc(aud.name) : ''}</span></span>`;
     } else if (g.lang) {
       const lang = g.lang;
       let body = g.dialogue || '';
@@ -1061,9 +1086,9 @@ function promptRichHtml(text) {
       if (body.startsWith('（男声画外音）')) { voice = 'male'; body = body.slice('（男声画外音）'.length); }
       else if (body.startsWith('（女声画外音）')) { voice = 'female'; body = body.slice('（女声画外音）'.length); }
       const prefix = voice === 'male' ? '男声画外音：' : voice === 'female' ? '女声画外音：' : (langLabel[lang] || lang) + '：';
-      html += `<span class="h3-chip is-dialogue" contenteditable="false" data-dialogue="1" data-dialogue-lang="${esc(lang)}"${voice ? ' data-dialogue-voice="' + voice + '"' : ''}><span contenteditable="false" class="h3-dialogue-prefix">${prefix}</span><span contenteditable="true" data-dialogue-body="1">${esc(body)}</span></span>`;
+      html += `<span class="wmd-chip is-dialogue" contenteditable="false" data-dialogue="1" data-dialogue-lang="${esc(lang)}"${voice ? ' data-dialogue-voice="' + voice + '"' : ''}><span contenteditable="false" class="wmd-dialogue-prefix">${prefix}</span><span contenteditable="true" data-dialogue-body="1">${esc(body)}</span></span>`;
     } else if (g.shot) {
-      html += `<span class="h3-chip is-spec is-clickable" contenteditable="false" data-token="[Shot ${g.shot}]"><span>镜头${g.shot}</span></span>`;
+      html += `<span class="wmd-chip is-spec is-clickable" contenteditable="false" data-token="[Shot ${g.shot}]"><span>镜头${g.shot}</span></span>`;
     }
     cursor = m.index + m[0].length;
   }
@@ -1149,7 +1174,7 @@ function bindStudioRichEditor(editor) {
     const groups = [];
     for (const item of items) { let g = groups.find((x) => x.name === item.group); if (!g) { g = { name: item.group, items: [] }; groups.push(g); } g.items.push(item); }
     const colClass = (name) => ({ '图像': 'is-media', '主体': 'is-subject', '说话人': 'is-speaker', '对白': 'is-dialogue', '镜头': 'is-spec' })[name] || 'is-spec';
-    host.innerHTML = items.length ? groups.map((g) => '<div class="h3-mention-col ' + colClass(g.name) + '"><div class="h3-mention-title">' + esc(g.name) + '</div>' + g.items.map((item) => '<button type="button" class="h3-mention-item' + (items.indexOf(item) === index ? ' is-active' : '') + '" data-mi="' + items.indexOf(item) + '">' + (item.thumb ? '<img src="' + esc(item.thumb) + '" alt="" />' : '<span class="h3-mention-ico">' + (item.icon || '·') + '</span>') + '<span class="h3-mention-label">' + esc(item.label) + (item.desc ? '<small>' + esc(item.desc) + '</small>' : '') + '</span></button>').join('') + '</div>').join('') : '<p class="h3-mention-empty">没有匹配素材；先在左侧添加参考图/音频。</p>';
+    host.innerHTML = items.length ? groups.map((g) => '<div class="wmd-mention-col ' + colClass(g.name) + '"><div class="wmd-mention-title">' + esc(g.name) + '</div>' + g.items.map((item) => '<button type="button" class="wmd-mention-item' + (items.indexOf(item) === index ? ' is-active' : '') + '" data-mi="' + items.indexOf(item) + '">' + (item.thumb ? '<img src="' + esc(item.thumb) + '" alt="" />' : '<span class="wmd-mention-ico">' + (item.icon || '·') + '</span>') + '<span class="wmd-mention-label">' + esc(item.label) + (item.desc ? '<small>' + esc(item.desc) + '</small>' : '') + '</span></button>').join('') + '</div>').join('') : '<p class="wmd-mention-empty">没有匹配素材；先在左侧添加参考图/音频。</p>';
     host.querySelectorAll('[data-mi]').forEach((btn) => {
       btn.onmousedown = (event) => event.preventDefault();
       btn.onclick = () => choose(Number(btn.dataset.mi));
@@ -1174,14 +1199,14 @@ function bindStudioRichEditor(editor) {
     let node;
     if (item.dialogue) {
       node = document.createElement('span');
-      node.className = 'h3-chip is-dialogue';
+      node.className = 'wmd-chip is-dialogue';
       node.contentEditable = 'false';
       node.dataset.dialogue = '1';
       node.dataset.dialogueLang = item.dialogue.lang || 'Chinese';
       if (item.dialogue.voice) node.dataset.dialogueVoice = item.dialogue.voice;
       const prefix = document.createElement('span');
       prefix.contentEditable = 'false';
-      prefix.className = 'h3-dialogue-prefix';
+      prefix.className = 'wmd-dialogue-prefix';
       prefix.textContent = item.dialogue.voice === 'male' ? '男声画外音：' : item.dialogue.voice === 'female' ? '女声画外音：' : ({ Chinese: '中文对白', English: '英语对白', Korean: '韩语对白', Japanese: '日语对白' }[item.dialogue.lang] || item.dialogue.lang) + '：';
       const bodySpan = document.createElement('span');
       bodySpan.contentEditable = 'true';
@@ -1203,13 +1228,13 @@ function bindStudioRichEditor(editor) {
       node = document.createElement('span');
       node.contentEditable = 'false';
       node.dataset.token = item.token;
-      if (item.token.startsWith('<Picture')) node.className = 'h3-chip is-media';
-      else if (item.token.startsWith('<Subject')) node.className = 'h3-chip is-subject';
-      else if (item.token.startsWith('(S')) node.className = 'h3-chip is-spec is-clickable';
-      else node.className = 'h3-chip is-spec is-clickable';
+      if (item.token.startsWith('<Picture')) node.className = 'wmd-chip is-media';
+      else if (item.token.startsWith('<Subject')) node.className = 'wmd-chip is-subject';
+      else if (item.token.startsWith('(S')) node.className = 'wmd-chip is-spec is-clickable';
+      else node.className = 'wmd-chip is-spec is-clickable';
       if (item.thumb) {
         const img = document.createElement('img');
-        img.className = 'h3-chip-media';
+        img.className = 'wmd-chip-media';
         img.src = item.thumb;
         img.alt = '';
         node.appendChild(img);
@@ -1267,19 +1292,19 @@ function bindStudioRichEditor(editor) {
 }
 
 function stageEmptyHtml(wf) {
-  return `<div class="h3-empty">
-    <div class="h3-empty-card">
-      <h2 class="h3-empty-title">把参考图拖到左侧开始</h2>
-      <p class="h3-empty-desc">ZEALMAN-H3 把图像与音频参考、6 段式提示词提交到 H3 视频工作流，生成带对白与环境音的短视频。生成过程会在这里实时预览，完成后自动保存到你指定的文件夹。</p>
-      <ol class="h3-empty-steps">
+  return `<div class="wmd-empty">
+    <div class="wmd-empty-card">
+      <h2 class="wmd-empty-title">把参考图拖到左侧开始</h2>
+      <p class="wmd-empty-desc">创作台把图像与音频参考、六段式提示词提交到视频工作流，生成带对白与环境音的短视频。生成过程会在这里实时预览，完成后自动保存到你指定的文件夹。</p>
+      <ol class="wmd-empty-steps">
         <li><b>1</b><span>在左侧添加 1–${wf.images} 张参考图，点图上标签为角色 / 场景命名主体。</span></li>
         <li><b>2</b><span>${wf.audios ? `可选：为 ${wf.audios} 个音频槽选本地音频，绑定到主体作为音色参考。` : '当前工作流不接收音频参考。'}</span></li>
         <li><b>3</b><span>写提示词，用 &lt;Picture 1&gt; / &lt;Subject 1&gt; / &lt;Audio 1&gt; 引用素材，&lt;d&gt;写对白&lt;/d&gt;；或先插入骨架 / 示例。</span></li>
         <li><b>4</b><span>左上角选「渠道」（管理器里的豆包 / Gemini），底部选「视频模型」，再选画幅与时长，点「生成视频」。</span></li>
       </ol>
-      <div class="h3-empty-actions">
-        <button type="button" class="h3-btn" data-act="go-jobs"><span class="h3-btn-icon">${ICON.play}</span>查看任务日志</button>
-        <button type="button" class="h3-btn h3-btn-ghost" data-act="insert-skeleton">插入骨架</button>
+      <div class="wmd-empty-actions">
+        <button type="button" class="wmd-btn" data-act="go-jobs"><span class="wmd-btn-icon">${ICON.play}</span>查看任务日志</button>
+        <button type="button" class="wmd-btn wmd-btn-ghost" data-act="insert-skeleton">插入骨架</button>
       </div>
     </div>
   </div>`;
@@ -1289,9 +1314,11 @@ function renderStudio() {
   const s = state.studio;
   const ownJobs = state.jobs.filter(j => j.itemId === WB.context("video").itemId);
   const wf = currentWorkflow();
-  if (!wf) return `<div class="h3-empty"><div class="h3-empty-card"><h2 class="h3-empty-title">没有工作流</h2><p class="h3-empty-desc">在 设置 → 视频生成 里添加一个管理器渠道。</p></div></div>`;
+  if (!wf) return `<div class="wmd-empty"><div class="wmd-empty-card"><h2 class="wmd-empty-title">没有工作流</h2><p class="wmd-empty-desc">在 设置 → 视频生成 里添加一个管理器渠道。</p></div></div>`;
+  const skillFmt = studioSkillFormat(s, wf);
   const isAuto = wf.provider === 'autodl';
   const isManager = wf.provider === 'manager';
+
   const modelChoices = s.channelId
     ? state.workflows.filter((w) => w.channelId === s.channelId)
     : state.workflows.filter((w) => w.provider !== 'autodl');
@@ -1326,56 +1353,56 @@ function renderStudio() {
       : `<option value="${esc(wf.id)}" selected>${esc((channel && (channel.model || channel.name)) || wf.label)}</option>`);
 
   const remote = isManager
-    ? `<div class="h3-remote-group">
-      <button type="button" class="h3-remote h3-panel-remote is-ready" data-act="go-video-channels" title="外接管理器：用真实 Chrome 账号跑豆包 / Gemini">
-        <span class="h3-remote-dot"></span>
-        <span class="h3-remote-msg is-strong">${esc(wf.platform === 'gemini' ? 'Gemini · 管理器' : '豆包 · 管理器')}</span>
-        <span class="h3-remote-host">${esc((channel && channel.baseUrl) || '127.0.0.1:17778')}</span>
+    ? `<div class="wmd-remote-group">
+      <button type="button" class="wmd-remote wmd-panel-remote is-ready" data-act="go-video-channels" title="外接管理器：用真实 Chrome 账号跑豆包 / Gemini">
+        <span class="wmd-remote-dot"></span>
+        <span class="wmd-remote-msg is-strong">${esc(wf.platform === 'gemini' ? 'Gemini · 管理器' : '豆包 · 管理器')}</span>
+        <span class="wmd-remote-host">${esc((channel && channel.baseUrl) || '127.0.0.1:17778')}</span>
       </button>
-      <button type="button" class="h3-btn h3-btn-sm h3-btn-ghost" data-act="open-manager" title="打开管理器工作台（本机 17778）">打开管理器</button>
+      <button type="button" class="wmd-btn wmd-btn-sm wmd-btn-ghost" data-act="open-manager" title="打开管理器工作台（本机 17778）">打开管理器</button>
     </div>`
     : isAuto
-    ? `<button type="button" class="h3-remote h3-panel-remote is-ready" data-act="go-keys" title="官网 API 直接按 Key 计费调用，无需开云端机器">
-        <span class="h3-remote-dot"></span>
-        <span class="h3-remote-msg is-strong">AutoDL 官网 API · ${keyCount} 个 Key</span>
-        <span class="h3-remote-host">autodl.art</span>
+    ? `<button type="button" class="wmd-remote wmd-panel-remote is-ready" data-act="go-keys" title="官网 API 直接按 Key 计费调用，无需开云端机器">
+        <span class="wmd-remote-dot"></span>
+        <span class="wmd-remote-msg is-strong">AutoDL 官网 API · ${keyCount} 个 Key</span>
+        <span class="wmd-remote-host">autodl.art</span>
       </button>`
-    : `<button type="button" class="h3-remote h3-panel-remote ${channel ? 'is-ready' : 'is-unconfigured'}" data-act="go-video-channels" title="自定义视频渠道：填你自己的接口地址与 Key">
-        <span class="h3-remote-dot"></span>
-        <span class="h3-remote-msg is-strong">${channel ? esc(channel.name) : '自定义渠道'}</span>
-        <span class="h3-remote-host">${esc((channel && channel.baseUrl) || '未填写接口')}</span>
+    : `<button type="button" class="wmd-remote wmd-panel-remote ${channel ? 'is-ready' : 'is-unconfigured'}" data-act="go-video-channels" title="自定义视频渠道：填你自己的接口地址与 Key">
+        <span class="wmd-remote-dot"></span>
+        <span class="wmd-remote-msg is-strong">${channel ? esc(channel.name) : '自定义渠道'}</span>
+        <span class="wmd-remote-host">${esc((channel && channel.baseUrl) || '未填写接口')}</span>
       </button>`;
 
   const ratioOptions = isManager && (wf.ratios || []).length ? wf.ratios : ['9:16', '16:9', '1:1'];
   const currentRatio = (String(s.aspectRatio || '').match(/\d+:\d+/) || [wf.defaultRatio || '16:9'])[0];
   const aspectField = isAuto
-    ? `<div class="h3-field h3-compose-field is-aspect">
-        <div class="h3-field-head"><span class="h3-field-label">分辨率</span></div>
-        <div class="h3-select-wrap"><select class="h3-select" id="p-resolution">
+    ? `<div class="wmd-field wmd-compose-field is-aspect">
+        <div class="wmd-field-head"><span class="wmd-field-label">分辨率</span></div>
+        <div class="wmd-select-wrap"><select class="wmd-select" id="p-resolution">
           ${wf.resolutions.map((r) => `<option value="${esc(r)}" ${r === (s.resolution || wf.defaultResolution) ? 'selected' : ''}>${esc(r)}</option>`).join('')}
-        </select><span class="h3-select-caret">${ICON.caret}</span></div>
+        </select><span class="wmd-select-caret">${ICON.caret}</span></div>
       </div>`
-    : `<div class="h3-field h3-compose-field is-aspect">
-        <div class="h3-field-head"><span class="h3-field-label">画幅</span></div>
-        <div class="h3-select-wrap"><select class="h3-select" id="p-aspect">
+    : `<div class="wmd-field wmd-compose-field is-aspect">
+        <div class="wmd-field-head"><span class="wmd-field-label">画幅</span></div>
+        <div class="wmd-select-wrap"><select class="wmd-select" id="p-aspect">
           ${ratioOptions.map((r) => `<option value="${esc(r)}" ${r === currentRatio ? 'selected' : ''}>${esc(r)}${r === '9:16' ? ' 竖屏' : r === '16:9' ? ' 横屏' : ''}</option>`).join('')}
-        </select><span class="h3-select-caret">${ICON.caret}</span></div>
+        </select><span class="wmd-select-caret">${ICON.caret}</span></div>
       </div>`;
 
   const stage = lastJob
     ? `<div class="stage-live">
         <div class="stage-video">${video
           ? `<video src="/api/file?path=${enc(video.path)}" controls playsinline></video>`
-          : `<div class="stage-wait"><span class="h3-spinner"></span><span>${esc(lastJob.stage || '生成中')} · ${progress}%</span></div>`}</div>
+          : `<div class="stage-wait"><span class="wmd-spinner"></span><span>${esc(lastJob.stage || '生成中')} · ${progress}%</span></div>`}</div>
         <div class="stage-meta">
           <div class="stage-line"><strong>${esc(lastJob.title)}</strong><span class="grow"></span>${jobStatusBadge(lastJob)}</div>
           <div class="stage-bar"><i style="width:${progress}%"></i></div>
           <div class="stage-line hint"><span>${esc(lastJob.stage)} · ${progress}%</span><span class="grow"></span><span>${ago(lastJob.createdAt)}</span></div>
           ${lastJob.error ? `<div class="stage-line is-danger">${esc(lastJob.error)}</div>` : ''}
           <div class="stage-line">
-            <button type="button" class="h3-btn h3-btn-sm" data-act="open-job" data-id="${esc(lastJob.id)}">查看任务</button>
-            ${video ? `<button type="button" class="h3-btn h3-btn-sm h3-btn-ghost" data-act="play-job" data-id="${esc(lastJob.id)}">系统播放器</button>` : ''}
-            ${lastJob && lastJob.outputDir ? `<button type="button" class="h3-btn h3-btn-sm h3-btn-ghost" data-act="open-job-folder" data-path="${esc(lastJob.outputDir)}">打开文件夹</button>` : ''}
+            <button type="button" class="wmd-btn wmd-btn-sm" data-act="open-job" data-id="${esc(lastJob.id)}">查看任务</button>
+            ${video ? `<button type="button" class="wmd-btn wmd-btn-sm wmd-btn-ghost" data-act="play-job" data-id="${esc(lastJob.id)}">系统播放器</button>` : ''}
+            ${lastJob && lastJob.outputDir ? `<button type="button" class="wmd-btn wmd-btn-sm wmd-btn-ghost" data-act="open-job-folder" data-path="${esc(lastJob.outputDir)}">打开文件夹</button>` : ''}
           </div>
         </div>
       </div>`
@@ -1383,7 +1410,7 @@ function renderStudio() {
 
   const queue = recent.length
     ? `<div class="stage-queue">
-        <div class="stage-queue-head">最近任务<span class="h3-statusbar-spacer"></span><span class="tnum">${state.stats.queued || 0} 排队 · ${state.stats.running || 0} 生成中</span></div>
+        <div class="stage-queue-head">最近任务<span class="wmd-statusbar-spacer"></span><span class="tnum">${state.stats.queued || 0} 排队 · ${state.stats.running || 0} 生成中</span></div>
         ${recent.map((job) => `<button type="button" class="stage-queue-row" data-act="open-job" data-id="${esc(job.id)}">
           <span class="dot ${job.status === 'success' ? 'ok' : job.status === 'failed' ? 'bad' : job.status === 'running' ? 'warn' : ''}"></span>
           <span class="stage-queue-title">${esc(job.title)}</span>
@@ -1393,119 +1420,123 @@ function renderStudio() {
     : '';
 
   return `
-  <div class="h3-main studio-main">
-    <aside class="h3-panel studio-panel" style="width:${s.panelWidth ? s.panelWidth + 'px' : '67%'}">
-      <div class="h3-panel-body">
-        <div class="h3-panel-top">
-          <div class="h3-workflow">
-            <span class="h3-eyebrow">渠道</span>
-            <div class="h3-select-wrap h3-workflow-select">
-              <select class="h3-select" id="channel-select" title="视频渠道；默认渠道在 设置 → 视频生成 里改">${channelOptions}</select>
-              <span class="h3-select-caret">${ICON.caret}</span>
+  <div class="wmd-main studio-main">
+    <aside class="wmd-panel studio-panel" style="width:${s.panelWidth ? s.panelWidth + 'px' : '67%'}">
+      <div class="wmd-panel-body">
+        <div class="wmd-panel-top">
+          <div class="wmd-workflow">
+            <span class="wmd-eyebrow">渠道</span>
+            <div class="wmd-select-wrap wmd-workflow-select">
+              <select class="wmd-select" id="channel-select" title="视频渠道；默认渠道在 设置 → 视频生成 里改">${channelOptions}</select>
+              <span class="wmd-select-caret">${ICON.caret}</span>
             </div>
-            <span class="h3-workflow-tag ${isAuto ? 'is-autodl' : (isManager ? 'is-manager' : 'is-generic')}">${isAuto ? '官网API' : isManager ? '管理器' : '自定义'}</span>
+            <span class="wmd-workflow-tag ${isAuto ? 'is-autodl' : (isManager ? 'is-manager' : 'is-generic')}">${isAuto ? '官网API' : isManager ? '管理器' : '自定义'}</span>
           </div>
           ${remote}
         </div>
 
         ${generationPrefixHtml('video')}
-        <div class="h3-slots" id="slot-strip">
-          <div class="h3-slots-head">
-            <span class="h3-eyebrow">图像参考</span>
-            <span class="h3-slots-count tnum">${images.filter(Boolean).length}/${wf.images}</span>
-            <span class="h3-slots-sep"></span>
-            <span class="h3-eyebrow">音频参考</span>
-            <span class="h3-slots-count tnum">${audios.filter(Boolean).length}/${wf.audios}</span>
-            <span class="h3-slots-spacer"></span>
-            <span class="h3-slots-note">空槽不提交，提示词勿引用</span>
-            <button type="button" class="h3-link h3-slots-link" data-act="upload-images" title="从本机选择图片，按原比例完整放入空槽">上传图片</button>
-            <button type="button" class="h3-link h3-slots-link" data-act="upload-audio" title="从本机选择音频放入空音频槽">上传音频</button>
-            <button type="button" class="h3-link h3-slots-link" data-act="pick-asset" title="从素材库挑一张图放进下一个空槽">粘贴图片</button>
-            <button type="button" class="h3-link h3-slots-link" data-act="clear-assets">清空素材</button>
+        <div class="wmd-slots" id="slot-strip">
+          <div class="wmd-slots-head">
+            <span class="wmd-eyebrow">图像参考</span>
+            <span class="wmd-slots-count tnum">${images.filter(Boolean).length}/${wf.images}</span>
+            <span class="wmd-slots-sep"></span>
+            <span class="wmd-eyebrow">音频参考</span>
+            <span class="wmd-slots-count tnum">${audios.filter(Boolean).length}/${wf.audios}</span>
+            <span class="wmd-slots-spacer"></span>
+            <span class="wmd-slots-note">空槽不提交，提示词勿引用</span>
+            <button type="button" class="wmd-link wmd-slots-link" data-act="upload-images" title="从本机选择图片，按原比例完整放入空槽">上传图片</button>
+            <button type="button" class="wmd-link wmd-slots-link" data-act="upload-audio" title="从本机选择音频放入空音频槽">上传音频</button>
+            <button type="button" class="wmd-link wmd-slots-link" data-act="pick-asset" title="从素材库挑一张图放进下一个空槽">粘贴图片</button>
+            <button type="button" class="wmd-link wmd-slots-link" data-act="clear-assets">清空素材</button>
           </div>
-          <div class="h3-strip">
+          <div class="wmd-strip">
             ${Array.from({ length: wf.images }, (_, i) => refSlotHtml(images[i], i, nextEmpty)).join('')}
-            <span class="h3-strip-split"></span>
+            <span class="wmd-strip-split"></span>
             ${Array.from({ length: wf.audios }, (_, i) => audioSlotHtml(audios[i], i)).join('')}
           </div>
           <input type="file" id="studio-image-file" accept="image/*" multiple hidden />
         </div>
 
-        <div class="h3-field h3-field-grow">
-          <div class="h3-field-head">
-            <span class="h3-field-label">提示词</span>
-            <span class="h3-field-right">
-              <span class="h3-prompt-count tnum" id="prompt-count">${s.prompt.length}字</span>
-              <span class="h3-view-switch">
+        <div class="wmd-field wmd-field-grow">
+          <div class="wmd-field-head is-prompt-head">
+            <span class="wmd-field-label">提示词</span>
+            <span class="wmd-field-right">
+              <span class="wmd-prompt-count tnum" id="prompt-count">${s.prompt.length}字</span>
+              <span class="wmd-view-switch">
                 <button type="button" class="${mode === 'tags' ? 'is-on' : ''}" data-act="prompt-mode" data-mode="tags">标签</button>
                 <button type="button" class="${mode === 'code' ? 'is-on' : ''}" data-act="prompt-mode" data-mode="code">代码</button>
               </span>
-              <button type="button" class="h3-skill-btn" data-act="optimize" ${state.busy ? 'disabled' : ''} title="${state.busy ? '正在调用语言渠道' : '用语言渠道扩写成 6 段式提示词'}">${state.busy ? '优化中' : 'Skill 优化'}</button>
-              <button type="button" class="h3-iconbtn is-sm" data-act="llm-channel" title="Skill 优化：语言渠道">${ICON.wand}</button>
-              <button type="button" class="h3-link h3-slots-link" data-act="insert-skeleton" title="按当前主体与时长生成 6 段式骨架">插入骨架</button>
-              <button type="button" class="h3-link h3-slots-link" data-act="examples" title="插入示例提示词">示例</button>
-              <span class="h3-prompt-tools">
-                <button type="button" class="h3-iconbtn is-sm" data-act="copy-prompt" title="复制全文">${ICON.copy}</button>
-                <button type="button" class="h3-iconbtn is-sm" data-act="clear-prompt" title="清空">${ICON.trash}</button>
+              <span class="wmd-skill-group">
+                <button type="button" class="wmd-skill-btn${skillFmt === 'h3' ? ' is-on' : ''}" data-act="optimize" data-format="h3" ${state.busy ? 'disabled' : ''} title="${state.busy ? '正在调用语言渠道' : 'H3 优化：扩写成 MiniMax H3 六段式（subject_definitions / summary / retention_analysis / detailed_description / overall_soundscape / non_diegetic_music）'}">${state.busy ? '优化中' : 'H3 优化'}</button>
+                <button type="button" class="wmd-skill-btn is-seedance${skillFmt === 'seedance' ? ' is-on' : ''}" data-act="optimize" data-format="seedance" ${state.busy ? 'disabled' : ''} title="${state.busy ? '正在调用语言渠道' : 'Seedance 2.0 优化：扩写成白昼 v0.5 分镜格式（场景/角色/时间/物品/音色锁定 + 人物锚点/场景锚点/剧情承接 + SHOT 与台词）'}">${state.busy ? '优化中' : 'Seedance 2.0'}</button>
+              </span>
+              <button type="button" class="wmd-iconbtn is-sm" data-act="llm-channel" title="Skill 优化：语言渠道">${ICON.wand}</button>
+              <button type="button" class="wmd-link wmd-slots-link" data-act="insert-skeleton" data-format="h3" title="插入 H3 六段式骨架">骨架 H3</button>
+              <button type="button" class="wmd-link wmd-slots-link" data-act="insert-skeleton" data-format="seedance" title="插入 Seedance 2.0 分镜节拍稿骨架（本组总时长 / 背景 / 看点 / 场景1 / Ⅰ Ⅱ Ⅲ 节拍与台词），优化时据此产出白昼正文">骨架 SD</button>
+              <button type="button" class="wmd-link wmd-slots-link" data-act="examples" title="插入示例提示词">示例</button>
+              <span class="wmd-prompt-tools">
+                <button type="button" class="wmd-iconbtn is-sm" data-act="copy-prompt" title="复制全文">${ICON.copy}</button>
+                <button type="button" class="wmd-iconbtn is-sm" data-act="clear-prompt" title="清空">${ICON.trash}</button>
               </span>
             </span>
           </div>
-          <div class="h3-prompt-wrap${mode === 'code' ? ' is-editing' : ''}">
-            <div class="h3-prompt h3-rich-editor ${mode === 'tags' ? '' : 'is-hidden'}" id="prompt-view" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="输入 @ 引用参考图、主体、音频、说话人、对白、画外音或镜头">${mode === 'tags' ? promptRichHtml(s.prompt) : ''}</div>
-            <div class="h3-mention-pop" id="studio-mention-pop" hidden></div>            <textarea class="h3-prompt-code ${mode === 'code' ? '' : 'is-hidden'}" id="prompt-editor" spellcheck="false"
+          <div class="wmd-prompt-wrap${mode === 'code' ? ' is-editing' : ''}">
+            <div class="wmd-prompt wmd-rich-editor ${mode === 'tags' ? '' : 'is-hidden'}" id="prompt-view" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="输入 @ 引用参考图、主体、音频、说话人、对白、画外音或镜头">${mode === 'tags' ? promptRichHtml(s.prompt) : ''}</div>
+            <div class="wmd-mention-pop" id="studio-mention-pop" hidden></div>            <textarea class="wmd-prompt-code ${mode === 'code' ? '' : 'is-hidden'}" id="prompt-editor" spellcheck="false"
               placeholder="输入 @ 选择已上传的图片或音频。用 <Picture 1> 引用参考图、<Subject 1> 引用主体、<Audio 1> 引用音频，用 <d>[Chinese] 台词</d> 写对白。">${esc(s.prompt)}</textarea>
             <div id="studio-reference-menu" class="studio-reference-menu" role="listbox" aria-label="参考素材" hidden></div>
           </div>
           <div class="prompt-warn ${(s.warnings || []).length ? 'show' : ''}" id="prompt-warn">${(s.warnings || []).map((w) => '· ' + esc(w)).join('<br>')}</div>
         </div>
 
-        <div class="h3-compose">
-          <div class="h3-compose-params">
-            <div class="h3-field h3-compose-field is-model">
-              <div class="h3-field-head"><span class="h3-field-label">视频模型</span></div>
-              <div class="h3-select-wrap"><select class="h3-select" id="p-model" title="${esc(wf.note || '')}">
+        <div class="wmd-compose">
+          <div class="wmd-compose-params">
+            <div class="wmd-field wmd-compose-field is-model">
+              <div class="wmd-field-head"><span class="wmd-field-label">视频模型</span></div>
+              <div class="wmd-select-wrap"><select class="wmd-select" id="p-model" title="${esc(wf.note || '')}">
                 ${modelChoices.map((w) => `<option value="${esc(w.id)}" ${w.id === wf.id ? 'selected' : ''}>${esc(shortModel(w))}</option>`).join('')}
-              </select><span class="h3-select-caret">${ICON.caret}</span></div>
+              </select><span class="wmd-select-caret">${ICON.caret}</span></div>
             </div>
             ${aspectField}
-            <div class="h3-field h3-compose-field is-duration">
-              <div class="h3-field-head"><span class="h3-field-label">时长</span></div>
-              <div class="h3-select-wrap"><select class="h3-select" id="p-duration" ${(wf.durationOptions || []).length === 1 ? 'disabled' : ''}>
+            <div class="wmd-field wmd-compose-field is-duration">
+              <div class="wmd-field-head"><span class="wmd-field-label">时长</span></div>
+              <div class="wmd-select-wrap"><select class="wmd-select" id="p-duration" ${(wf.durationOptions || []).length === 1 ? 'disabled' : ''}>
                 ${((wf.durationOptions && wf.durationOptions.length) ? wf.durationOptions : Array.from({ length: 15 }, (_, i) => i + 1)).map((n) => `<option value="${n}" ${n === Number(s.duration) ? 'selected' : ''}>${n} 秒</option>`).join('')}
-              </select><span class="h3-select-caret">${ICON.caret}</span></div>
+              </select><span class="wmd-select-caret">${ICON.caret}</span></div>
             </div>
-            <div class="h3-field h3-compose-field is-num">
-              <div class="h3-field-head"><span class="h3-field-label">数量</span></div>
-              <input class="h3-input" id="p-count" type="number" min="1" max="5" value="${Number(s.count) || 1}" />
+            <div class="wmd-field wmd-compose-field is-num">
+              <div class="wmd-field-head"><span class="wmd-field-label">数量</span></div>
+              <input class="wmd-input" id="p-count" type="number" min="1" max="5" value="${Number(s.count) || 1}" />
             </div>
-            ${isManager ? '' : `<div class="h3-field h3-compose-field is-num">
-              <div class="h3-field-head"><span class="h3-field-label">种子</span></div>
-              <input class="h3-input h3-mono" id="p-seed" value="${esc(s.seed)}" placeholder="随机" />
+            ${isManager ? '' : `<div class="wmd-field wmd-compose-field is-num">
+              <div class="wmd-field-head"><span class="wmd-field-label">种子</span></div>
+              <input class="wmd-input wmd-mono" id="p-seed" value="${esc(s.seed)}" placeholder="随机" />
             </div>`}
-            ${wf.pass2 ? `<div class="h3-field h3-compose-field is-num">
-              <div class="h3-field-head"><span class="h3-field-label">${esc(wf.pass2.label || '二次采样')}</span></div>
-              <div class="h3-select-wrap"><select class="h3-select" id="p-megapixels2">
+            ${wf.pass2 ? `<div class="wmd-field wmd-compose-field is-num">
+              <div class="wmd-field-head"><span class="wmd-field-label">${esc(wf.pass2.label || '二次采样')}</span></div>
+              <div class="wmd-select-wrap"><select class="wmd-select" id="p-megapixels2">
                 ${(wf.pass2.options || []).map((m) => `<option value="${m}" ${Number(m) === Number(s.megapixels2 || wf.pass2.default) ? 'selected' : ''}>${m}</option>`).join('')}
-              </select><span class="h3-select-caret">${ICON.caret}</span></div>
+              </select><span class="wmd-select-caret">${ICON.caret}</span></div>
             </div>` : ''}
           </div>
-          <div class="h3-generate">
-            <button type="button" class="h3-btn h3-btn-primary h3-btn-lg" data-act="generate" ${state.busy ? 'disabled' : ''}>生成视频</button>
-            <div class="h3-generate-hint"><span class="tnum">${isAuto ? '官网 API' : esc(wf.providerLabel || '自定义')} · ${esc(isAuto ? (s.resolution || wf.defaultResolution) : s.aspectRatio.split(' ')[0])} · ${s.duration}s</span></div>
+          <div class="wmd-generate">
+            <button type="button" class="wmd-btn wmd-btn-primary wmd-btn-lg" data-act="generate" ${state.busy ? 'disabled' : ''}>生成视频</button>
+            <div class="wmd-generate-hint"><span class="tnum">${isAuto ? '官网 API' : esc(wf.providerLabel || '自定义')} · ${esc(isAuto ? (s.resolution || wf.defaultResolution) : s.aspectRatio.split(' ')[0])} · ${s.duration}s</span></div>
           </div>
         </div>
       </div>
     </aside>
 
-    <div class="h3-splitter" title="拖动调整创作台宽度"></div>
+    <div class="wmd-splitter" title="拖动调整创作台宽度"></div>
 
-    <div class="h3-stage">
-      <div class="h3-toolbar">
-        <span class="h3-toolbar-title">舞台</span>
-        <span class="h3-toolbar-spacer"></span>
-        <button type="button" class="h3-btn h3-btn-sm h3-btn-ghost" data-act="go-jobs">任务日志</button>
+    <div class="wmd-stage">
+      <div class="wmd-toolbar">
+        <span class="wmd-toolbar-title">舞台</span>
+        <span class="wmd-toolbar-spacer"></span>
+        <button type="button" class="wmd-btn wmd-btn-sm wmd-btn-ghost" data-act="go-jobs">任务日志</button>
       </div>
-      <div class="h3-stage-body">
+      <div class="wmd-stage-body">
         ${stage}
         ${queue}
       </div>
@@ -1521,20 +1552,21 @@ function bindStudio(root) {
 
   bindSplitter(root, '.studio-panel', (width) => {
     s.panelWidth = width || null;
-    if (width) localStorage.setItem('h3.panelWidth', String(width));
-    else localStorage.removeItem('h3.panelWidth');
+    if (width) localStorage.setItem('wmd.panelWidth', String(width));
+    else localStorage.removeItem('wmd.panelWidth');
   });
 
   const applyWorkflowDefaults = (next) => {
     if (!next) return;
     s.workflowId = next.id;
+    s.skillFormat = ''; // 换了渠道 / 模型，模板与优化格式回到跟随该渠道
     s.channelId = next.channelId || '';
     s.resolution = next.defaultResolution || '';
     s.megapixels = next.megapixelsDefault || 0;
     s.megapixels2 = next.pass2 ? next.pass2.default : 0;
     s.duration = Math.min(15, next.durationDefault || 10);
     if (next.defaultRatio) s.aspectRatio = next.defaultRatio;
-    localStorage.setItem('h3.workflowId', s.workflowId);
+    localStorage.setItem('wmd.workflowId', s.workflowId);
   };
 
   const channelSel = $('#channel-select', root);
@@ -1582,7 +1614,7 @@ function bindStudio(root) {
       if (files.length) await studioUploadImages(files);
     };
   }
-  const slotArea = $('.h3-slots', root);
+  const slotArea = $('.wmd-slots', root);
   if (slotArea) {
     slotArea.ondragover = (event) => { if (![...(event.dataTransfer.types || [])].includes('Files')) return; event.preventDefault(); slotArea.classList.add('is-drop'); };
     slotArea.ondragleave = () => slotArea.classList.remove('is-drop');
@@ -1649,13 +1681,28 @@ function bindStudio(root) {
         return;
       }
       if (act === 'insert-tag') { s.promptMode = 'code'; render(); return openTagMenu(); }
-      if (act === 'insert-skeleton') { s.promptMode = 'code'; s.prompt = state.prompt.skeleton; render(); toast('已插入六段式骨架'); return; }
+      if (act === 'insert-skeleton') {
+        s.promptMode = 'code';
+        const fmt = target.dataset.format === 'seedance'
+          ? 'seedance'
+          : target.dataset.format === 'h3' ? 'h3' : studioSkillFormat(s);
+        s.skillFormat = fmt;
+        const sdSkeleton = (state.prompt.seedance && state.prompt.seedance.skeleton) || state.prompt.seedanceSkeleton || '';
+        if (fmt === 'seedance') {
+          s.prompt = sdSkeleton;
+          render();
+          return toast(sdSkeleton ? '已插入 Seedance 2.0 分镜节拍稿' : 'Seedance 骨架没取到，刷新页面再试', !sdSkeleton);
+        }
+        s.prompt = state.prompt.skeleton;
+        render();
+        return toast('已插入六段式骨架');
+      }
       if (act === 'examples') return openExamples();
       if (act === 'clear-prompt') { s.prompt = ''; s.warnings = []; s.promptMode = 'code'; return render(); }
-      if (act === 'optimize') { s.promptMode = 'code'; return optimizePrompt(); }
+      if (act === 'optimize') { s.promptMode = 'code'; return optimizePrompt(target.dataset.format === 'seedance' ? 'seedance' : 'h3'); }
       if (act === 'generate') return generate();
       if (act === 'open-job') { return openJobDetail(target.dataset.id); }
-      if (act === 'go-jobs') { state.logTab='video';localStorage.setItem('h3.logs.tab','video');location.hash = '#logs'; return; }
+      if (act === 'go-jobs') { state.logTab='video';localStorage.setItem('wmd.logs.tab','video');location.hash = '#logs'; return; }
       if (act === 'open-manager') {
         const ch = (state.channels.video || []).find((c) => c.id === s.channelId);
         await api('/api/open', { method: 'POST', body: { url: (ch && ch.baseUrl) || 'http://127.0.0.1:17778' } });
@@ -1858,81 +1905,101 @@ function openExamples() {
   });
 }
 
-function openImagePicker(slotIndex) {
-  const items = (state.assets ? state.assets.items : []).filter((i) => i.kind === 'image');
-  openModal(`
-    <div class="modal-head"><h2>选择参考图</h2><span class="grow"></span>
-      <button class="btn sm" id="picker-upload">上传本地图片</button>
-      <button class="btn ghost sm" data-close="1">关闭</button></div>
-    <div class="modal-body">
-      <div class="grid-cards">${items.map((item, i) => `
-        <div class="asset-card" data-pick="${i}">
-          <div class="asset-thumb"><img src="${item.url}" alt="" loading="lazy" /></div>
-          <div class="asset-meta"><span class="name">${esc(item.name)}</span><span class="sub">${esc(item.typeLabel || '')}${item.group ? ' · ' + esc(item.group) : ''}${item.subject ? ' · ' + esc(item.subject) : ''}</span></div>
-        </div>`).join('') || '<div class="empty">素材库还没有图片</div>'}</div>
-    </div>
-  `);
-  $$('#modal-panel [data-pick]').forEach((card) => {
-    card.onclick = () => {
-      const item = items[Number(card.dataset.pick)];
-      state.studio.images[slotIndex] = { path: item.path, name: item.name, subject: item.subject || '', kind: 'image' };
-      closeModal();
-      render();
-    };
-  });
-  $('#picker-upload').onclick = () => {
-    const input = $('#file-input');
-    input.accept = 'image/*';
-    input.onchange = async () => {
-      const file = input.files && input.files[0];
-      input.value = '';
-      if (!file) return;
-      const saved = await uploadFile(file, 'image');
-      state.studio.images[slotIndex] = saved;
-      closeModal();
-      render();
-    };
-    input.click();
+/* 素材库选择器：人物 / 场景 / 道具 三个分类（对应素材库三个文件夹）+ 其他 */
+const ASSET_PICKER_CATEGORIES = [['character', '人物'], ['scene', '场景'], ['prop', '道具'], ['other', '其他']];
+
+function assetPickerItem(item, fallbackLabel) {
+  return {
+    path: item.path || '',
+    rel: item.rel || '',
+    name: item.name || '',
+    url: item.url || '',
+    kind: item.kind || 'image',
+    bytes: item.bytes || 0,
+    tag: item.typeLabel || item.category || fallbackLabel || '',
   };
 }
 
+async function openLibraryPicker(opts = {}) {
+  const want = opts.accept === 'audio' ? 'audio' : 'image';
+  const title = opts.title || (want === 'audio' ? '选择参考音频' : '选择参考图');
+  let lib = null;
+  try { lib = await api('/api/assets/library'); } catch { lib = null; }
+  const legacy = ((state.assets && state.assets.items) || []).filter((i) => i.kind === want);
+  const buckets = {};
+  for (const [id, label] of ASSET_PICKER_CATEGORIES) {
+    const raw = id === 'other'
+      ? [...((lib && lib.other) || []), ...(((lib && lib.items) || []).filter((i) => i.type === 'storyboard')), ...legacy]
+      : (((lib && lib.materials) || {})[id] || []);
+    buckets[id] = raw.filter((i) => (i.kind || want) === want).map((i) => assetPickerItem(i, label));
+  }
+  const tabs = ASSET_PICKER_CATEGORIES;
+  let active = (tabs.find(([id]) => buckets[id].length) || tabs[0])[0];
+
+  const draw = () => {
+    const items = buckets[active];
+    const activeLabel = (tabs.find(([id]) => id === active) || tabs[0])[1];
+    openModal(`
+      <div class="modal-head"><h2>${esc(title)}</h2><span class="grow"></span>
+        <button class="btn sm" id="picker-upload">上传本地${want === 'audio' ? '音频' : '图片'}</button>
+        <button class="btn ghost sm" data-close="1">关闭</button></div>
+      <div class="modal-body asset-picker">
+        <div class="asset-picker-tabs">${tabs.map(([id, label]) => `<button type="button" class="chip ${id === active ? 'active' : ''}" data-picker-tab="${id}">${esc(label)}<span class="asset-picker-count">${buckets[id].length}</span></button>`).join('')}</div>
+        <div class="grid-cards">${items.length ? items.map((item, i) => `
+          <div class="asset-card" data-pick="${i}">
+            <div class="asset-thumb">${want === 'audio' ? '♪' : `<img src="${esc(item.url)}" alt="" loading="lazy" />`}</div>
+            <div class="asset-meta"><span class="name">${esc(item.name)}</span><span class="sub">${esc(item.tag)}${item.bytes ? ' · ' + fmtBytes(item.bytes) : ''}</span></div>
+          </div>`).join('') : `<div class="empty">${esc(activeLabel)}文件夹里还没有${want === 'audio' ? '音频' : '图片'}，可以直接上传</div>`}</div>
+      </div>`);
+    $$('#modal-panel [data-picker-tab]').forEach((btn) => {
+      btn.onclick = () => { active = btn.dataset.pickerTab; draw(); };
+    });
+    $$('#modal-panel [data-pick]').forEach((card) => {
+      card.onclick = () => {
+        const item = items[Number(card.dataset.pick)];
+        if (item && opts.onPick) Promise.resolve(opts.onPick(item)).catch((err) => toast(err.message, true));
+      };
+    });
+    const upload = $('#picker-upload');
+    if (upload) upload.onclick = () => {
+      const input = $('#file-input');
+      input.accept = want === 'audio' ? 'audio/*' : 'image/*';
+      input.onchange = async () => {
+        const file = input.files && input.files[0];
+        input.value = '';
+        if (!file) return;
+        try {
+          const saved = await uploadFile(file, want);
+          if (opts.onPick) await opts.onPick(assetPickerItem(saved, '本地上传'));
+        } catch (err) { toast(err.message, true); }
+      };
+      input.click();
+    };
+  };
+  draw();
+}
+
+function openImagePicker(slotIndex) {
+  return openLibraryPicker({
+    title: '选择参考图',
+    onPick: (item) => {
+      state.studio.images[slotIndex] = { path: item.path, name: item.name, subject: '', kind: 'image' };
+      closeModal();
+      render();
+    },
+  });
+}
+
 function openAudioPicker(slotIndex) {
-  const items = (state.assets ? state.assets.items : []).filter((i) => i.kind === 'audio');
-  openModal(`
-    <div class="modal-head"><h2>选择参考音频</h2><span class="grow"></span>
-      <button class="btn sm" id="picker-upload">上传本地音频</button>
-      <button class="btn ghost sm" data-close="1">关闭</button></div>
-    <div class="modal-body">
-      <div class="grid-cards">${items.map((item, i) => `
-        <div class="asset-card" data-pick="${i}">
-          <div class="asset-thumb">♪</div>
-          <div class="asset-meta"><span class="name">${esc(item.name)}</span><span class="sub">${esc(item.folder)} · ${fmtBytes(item.bytes)}</span></div>
-        </div>`).join('') || '<div class="empty">素材库还没有音频</div>'}</div>
-      <div class="hint">原版的「内置音色」由远程工作流提供，源码版只支持本地音频文件。</div>
-    </div>
-  `);
-  $$('#modal-panel [data-pick]').forEach((card) => {
-    card.onclick = () => {
-      const item = items[Number(card.dataset.pick)];
+  return openLibraryPicker({
+    accept: 'audio',
+    title: '选择参考音频',
+    onPick: (item) => {
       state.studio.audios[slotIndex] = { path: item.path, name: item.name, kind: 'audio' };
       closeModal();
       render();
-    };
+    },
   });
-  $('#picker-upload').onclick = () => {
-    const input = $('#file-input');
-    input.accept = 'audio/*';
-    input.onchange = async () => {
-      const file = input.files && input.files[0];
-      input.value = '';
-      if (!file) return;
-      const saved = await uploadFile(file, 'audio');
-      state.studio.audios[slotIndex] = saved;
-      closeModal();
-      render();
-    };
-    input.click();
-  };
 }
 
 function studioAssetsPayload() {
@@ -1944,8 +2011,24 @@ function studioAssetsPayload() {
   return { assets, subjects };
 }
 
-let validateTimer = null;
-function validatePromptSoon() {
+/**
+ * 内置提示词模板跟着「渠道 + 视频模型」走：
+ * 豆包 / Seedance → 白昼 v0.5 分镜格式；MiniMax H3（官网 API 工作流）→ 六段式。
+ * 用户手动点过某一边时以手动为准，直到下次切渠道或模型再回到跟随。
+ */
+function skillFormatOf(wf) {
+  const id = String((wf && wf.id) || '').toLowerCase();
+  const label = String((wf && (wf.label || wf.display)) || '').toLowerCase();
+  if (id.includes('doubao') || id.includes('seedance') || label.includes('豆包') || label.includes('seedance')) return 'seedance';
+  return 'h3';
+}
+
+function studioSkillFormat(s, wf) {
+  const manual = s && (s.skillFormat === 'h3' || s.skillFormat === 'seedance');
+  return manual ? s.skillFormat : skillFormatOf(wf || currentWorkflow());
+}
+
+let validateTimer = null;function validatePromptSoon() {
   clearTimeout(validateTimer);
   validateTimer = setTimeout(async () => {
     const s = state.studio;
@@ -1963,9 +2046,11 @@ function validatePromptSoon() {
   }, 700);
 }
 
-async function optimizePrompt() {
+async function optimizePrompt(format = 'h3') {
   const s = state.studio;
+  const mode = format === 'seedance' ? 'seedance' : 'h3';
   if (!s.prompt.trim()) return toast('先写点想要的画面再优化', true);
+  s.skillFormat = mode;
   state.busy = true;
   render();
   try {
@@ -1979,11 +2064,16 @@ async function optimizePrompt() {
         duration: s.duration,
         language: (state.config.prompt && state.config.prompt.language) || 'zh',
         includeImages: true,
+        format: mode,
       },
     });
     s.prompt = data.prompt;
     s.warnings = data.warnings || [];
-    toast(`优化完成 · ${data.model || ''} · ${Math.round(data.elapsedMs / 1000)} 秒`);
+    const label = mode === 'seedance' ? 'Seedance 2.0' : 'H3';
+    const stats = (mode === 'seedance' && data.stats)
+      ? ` · ${data.duration ? data.duration + ' 秒 / ' : ''}${data.stats.shots} 镜 / ${data.stats.dialogue} 句`
+      : '';
+    toast(`优化完成 · ${label} · ${data.model || ''}${stats} · ${Math.round(data.elapsedMs / 1000)} 秒`);
   } catch (err) {
     toast(err.message, true);
   } finally {
@@ -2022,7 +2112,7 @@ async function generate() {
     const data = await api('/api/jobs', { method: 'POST', body });
     state.jobs = (await api('/api/jobs')).jobs;
     if (WB.context("video").itemId === workbenchContext.itemId) state.lastJobId = data.jobs[0].id;
-    try { localStorage.setItem('h3.lastJobId', state.lastJobId); } catch { /* ignore */ }
+    try { localStorage.setItem('wmd.lastJobId', state.lastJobId); } catch { /* ignore */ }
     toast(`已加入队列 ${data.jobs.length} 条`);
   } catch (err) {
     toast(err.message, true);
@@ -2074,7 +2164,7 @@ function renderJobs(embed = false) {
         <td data-label="创建" class="small">${fmtTime(job.createdAt)}<div class="hint">${ago(job.createdAt)}</div></td>
         <td data-label="操作"><div class="cell-actions">
           ${job.status === 'queued' || job.status === 'running' ? `<button class="btn sm" data-act="cancel" data-id="${job.id}">取消</button>` : ''}
-          ${job.provider === 'manager' && job.remotePromptId && ['failed', 'canceled'].includes(job.status) ? `<button class="btn sm" data-act="resume" data-id="${job.id}">继续查询／下载</button>` : ''}
+          ${job.provider === 'manager' && job.remotePromptId && (['failed', 'canceled'].includes(job.status) || (job.status === 'queued' && job.held)) ? `<button class="btn sm" data-act="resume" data-id="${job.id}">继续查询／下载</button>` : ''}
           ${job.status === 'failed' || job.status === 'canceled' || job.status === 'success' ? `<button class="btn sm" data-act="retry" data-id="${job.id}">重试</button>` : ''}
           ${job.status === 'queued' ? `<button class="btn sm" data-act="${job.held ? 'unhold' : 'hold'}" data-id="${job.id}">${job.held ? '解锁' : '锁定'}</button>` : ''}
           ${video ? `<button class="btn sm" data-act="play" data-id="${job.id}">播放</button>` : ''}
@@ -2105,7 +2195,7 @@ function bindJobs(root) {
     const act = target.dataset.act;
     const id = target.dataset.id;
     try {
-      if (act === 'go-logs') { state.logTab='video';localStorage.setItem('h3.logs.tab','video');location.hash='#logs';return; }
+      if (act === 'go-logs') { state.logTab='video';localStorage.setItem('wmd.logs.tab','video');location.hash='#logs';return; }
       if (act === 'go-studio') { location.hash = '#studio'; return; }
       if (act === 'cancel') { await api(`/api/jobs/${id}/cancel`, { method: 'POST' }); toast('已请求取消'); }
       if (act === 'resume') { await api(`/api/jobs/${id}/resume`, { method: 'POST' }); toast('已继续原任务，不会重新生成'); }
@@ -2598,11 +2688,101 @@ function requirePathJoin(root, rel) {
 
 /* ------------------------------------------------------------------ media */
 
-function renderMedia() {
+function episodeData() {
+  const data = state.episodes || {};
+  return {
+    episodes: Array.isArray(data.episodes) ? data.episodes : [],
+    assignments: data.assignments && typeof data.assignments === 'object' ? data.assignments : {},
+    jianying: data.jianying || null,
+  };
+}
+
+function mediaEpisodeMatches(item, filter) {
+  if (!filter) return true;
+  const { assignments } = episodeData();
+  const assigned = assignments[item.rel] || '';
+  if (filter === '__none__') return !assigned;
+  return assigned === filter;
+}
+
+function episodeNameOf(id) {
+  const found = episodeData().episodes.find((episode) => episode.id === id);
+  return found ? found.name : '';
+}
+
+/** 媒体库任务菜单所需的数据（只取聚合，不拉文件明细）。 */
+async function loadMediaTaskMenu() {
   const kind = state.mediaKind || 'video';
-  const data = state.media;
+  if (!state.episodes) await reloadMediaEpisodes();
+  state.mediaTasks = await api('/api/media/tasks?kind=' + kind);
+  if (state.mediaTask) await loadMediaTaskItems(state.mediaTask);
+  else state.mediaTaskItems = null;
+}
+
+async function loadMediaTaskItems(taskTitle) {
+  const kind = state.mediaKind || 'video';
+  const data = await api('/api/media?kind=' + kind + '&task=' + encodeURIComponent(taskTitle || ''));
+  state.mediaTaskItems = data;
+  state.mediaTask = taskTitle || '';
+  return data;
+}
+
+function mediaProjectHead(data, extraActions) {
+  const projects = state.projects || [];
+  return `<div class="page-head">
+    <div><h1>媒体库</h1><p class="media-project-bar">
+      ${projects.length ? `<label>项目 <select class="select" id="media-project">${projects.map((project) => `<option value="${esc(project.id)}" ${project.id === data.projectId ? 'selected' : ''}>${esc(project.name)}</option>`).join('')}</select></label>` : `<span class="media-project">项目：${esc(data.projectName || data.projectId || '未选择项目')}</span>`}
+      <span class="mono">${esc(data.root || '')}</span></p></div>
+    <div class="page-actions">${extraActions}</div>
+  </div>`;
+}
+
+/** 默认视图：按任务列出菜单，一个缩略图都不预加载。 */
+function renderMediaTaskMenu() {
+  const kind = state.mediaKind || 'video';
+  const data = state.mediaTasks;
   if (!data) return `<div class="empty"><span class="spinner"></span></div>`;
-  const items = data.items.filter((i) => i.kind === kind);
+  const counts = data.counts || { video: 0, image: 0 };
+  const tasks = data.tasks || [];
+  const actions = `
+      <button class="btn" data-act="media-import" title="把你自己生成或下载的成片复制进媒体库目录，并登记任务名/分镜名">导入成片</button>
+      <button class="btn" data-act="open-media-root">打开目录</button>
+      <button class="btn" data-act="refresh-media">刷新</button>
+      <button class="btn" data-act="episode-new">新建分集</button>`;
+  const menu = tasks.length ? `<div class="media-task-menu">${tasks.map((task) => `
+    <button type="button" class="media-task-tile" data-media-task="${esc(task.taskTitle)}">
+      <span class="media-task-cover">${task.cover
+        ? (task.coverKind === 'video'
+          ? `<video src="${task.cover}#t=0.5" preload="none" muted></video>`
+          : `<img src="${task.cover}" loading="lazy" alt="" />`)
+        : '<span class="hint">无封面</span>'}</span>
+      <span class="media-task-body">
+        <b>${esc(task.taskTitle)}</b>
+        <span class="hint">${task.videos ? `视频 ${task.videos}` : ''}${task.videos && task.images ? ' · ' : ''}${task.images ? `图像 ${task.images}` : ''} · ${fmtBytes(task.bytes)}</span>
+        <span class="hint">最近 ${new Date(task.mtime).toLocaleString('zh-CN', { hour12: false })}</span>
+      </span>
+      <span class="media-task-open">查看 →</span>
+    </button>`).join('')}</div>`
+    : `<div class="card"><div class="empty"><strong>还没有成片</strong><p>生成的成片会自动保存到媒体库目录，按日期 / 任务分文件夹；也可以用右上角「导入成片」把自己生成或下载的视频放进来。</p></div></div>`;
+  return `
+  ${mediaProjectHead(data, actions)}
+  <div class="filters">
+    <button class="chip ${kind === 'video' ? 'active' : ''}" data-kind="video">视频 ${counts.video || 0}</button>
+    <button class="chip ${kind === 'image' ? 'active' : ''}" data-kind="image">图像 ${counts.image || 0}</button>
+    <span class="hint media-task-tip">共 ${tasks.length} 个任务 · 点一个任务再加载它的成片，避免一次把全部缩略图都拉下来</span>
+  </div>
+  ${menu}`;
+}
+
+function renderMedia() {
+  if (!state.mediaTask) return renderMediaTaskMenu();
+  const kind = state.mediaKind || 'video';
+  const data = state.mediaTaskItems;
+  if (!data) return `<div class="empty"><span class="spinner"></span></div>`;
+  const { episodes, assignments, jianying } = episodeData();
+  const filter = state.mediaEpisode || '';
+  const allItems = data.items.filter((i) => i.kind === kind);
+  const items = allItems.filter((item) => mediaEpisodeMatches(item, filter));
   const shotNumber = (value) => {
     const match = /(\d+)/.exec(String(value || ''));
     return match ? Number(match[1]) : 9999;
@@ -2614,35 +2794,50 @@ function renderMedia() {
     groups.get(key).push({ item, index });
   });
   groups.forEach((rows) => rows.sort((a, b) => (shotNumber(a.item.shotLabel || a.item.outputLabel) - shotNumber(b.item.shotLabel || b.item.outputLabel)) || (b.item.mtime - a.item.mtime)));
-  const projectLabel = data.projectName || data.projectId || '未选择项目';
-  const projects = state.projects || [];
-  return `
-  <div class="page-head">
-    <div><h1>媒体库</h1><p class="media-project-bar">
-      ${projects.length ? `<label>项目 <select class="select" id="media-project">${projects.map((project) => `<option value="${esc(project.id)}" ${project.id === data.projectId ? 'selected' : ''}>${esc(project.name)}</option>`).join('')}</select></label>` : `<span class="media-project">项目：${esc(projectLabel)}</span>`}
-      <span class="mono">${esc(data.root)}</span></p></div>
-    <div class="page-actions">
+  const current = episodes.find((episode) => episode.id === filter) || null;
+  const countOf = (episodeId) => allItems.filter((item) => assignments[item.rel] === episodeId).length;
+  const unassigned = allItems.filter((item) => !assignments[item.rel]).length;
+  const importLabel = current ? '导入剪映：' + current.name : (episodes.length ? '导入剪映（全部集）' : '导入剪映');
+  const importable = current
+    ? countOf(current.id)
+    : (episodes.length ? episodes.reduce((sum, episode) => sum + countOf(episode.id), 0) : allItems.length);
+  const missing = jianying && jianying.available === false;
+  const actions = `
+      <button class="btn ghost" data-act="media-tasks-back">← 所有任务</button>
+      <button class="btn" data-act="media-import">导入成片</button>
       ${kind === 'video' ? '<button class="btn" data-act="rename-media-shots">按镜头名重命名</button>' : ''}
       <button class="btn" data-act="open-media-root">打开目录</button>
       <button class="btn" data-act="refresh-media">刷新</button>
-      <button class="btn primary" data-act="media-edit">剪辑 / 工程</button>
-    </div>
-  </div>
+      <button class="btn" data-act="episode-new">新建分集</button>
+      <button class="btn primary" data-act="jianying-import" ${importable ? '' : 'disabled'} title="把这一集（或全部集）的成片按镜头顺序做成剪映草稿">${importLabel}</button>`;
+  return `
+  ${mediaProjectHead(data, actions)}
+  <div class="media-task-current"><b>${esc(state.mediaTask)}</b><span class="hint">${allItems.length} 个${kind === 'video' ? '视频' : '图像'} · 只加载了这个任务</span></div>
   <div class="filters">
     <button class="chip ${kind === 'video' ? 'active' : ''}" data-kind="video">视频 ${data.items.filter((i) => i.kind === 'video').length}</button>
     <button class="chip ${kind === 'image' ? 'active' : ''}" data-kind="image">图像 ${data.items.filter((i) => i.kind === 'image').length}</button>
   </div>
+  <div class="ep-bar">
+    <button class="ep-chip ${filter ? '' : 'active'}" data-episode="" data-drop-episode="">全部 <b>${allItems.length}</b></button>
+    ${episodes.map((episode) => `<button class="ep-chip ${filter === episode.id ? 'active' : ''}" data-episode="${esc(episode.id)}" data-drop-episode="${esc(episode.id)}">${esc(episode.name)} <b>${countOf(episode.id)}</b></button>`).join('')}
+    ${episodes.length ? `<button class="ep-chip ${filter === '__none__' ? 'active' : ''}" data-episode="__none__" data-drop-episode="__none__">未分集 <b>${unassigned}</b></button>` : ''}
+    ${current ? `<span class="ep-actions"><button class="btn ghost sm" data-act="episode-rename">重命名</button><button class="btn ghost sm" data-act="episode-delete">删除分集</button></span>` : ''}
+    <span class="ep-hint">把卡片拖到某一集上即可归入 · 剪辑交给剪映：点右上「导入剪映」生成草稿后打开剪映接着剪${missing ? ' · 没找到剪映草稿目录，先打开一次剪映' : ''}</span>
+  </div>
   ${items.length ? [...groups.entries()].map(([taskTitle, rows]) => `<section class="media-task-group">
-    <div class="media-task-head"><b>${esc(taskTitle)}</b><span class="hint">${rows.length} 条</span></div>
-    <div class="grid-cards">${rows.map(({ item, index }) => `
-      <div class="media-card" data-media="${index}">
-        <div class="media-thumb ${item.kind === 'video' ? 'is-video' : ''}">${item.kind === 'image' ? `<img src="${item.url}" loading="lazy" />` : `<video src="${item.url}#t=0.5" preload="metadata" muted></video>`}</div>
+    <div class="media-task-head"><b>${esc(taskTitle)}</b><span class="hint">${rows.length} 条</span><span class="grow"></span><button class="btn ghost sm" data-act="group-assign" data-task="${esc(taskTitle)}">整组归入…</button></div>
+    <div class="grid-cards">${rows.map(({ item, index }) => {
+      const episodeName = episodeNameOf(assignments[item.rel] || '');
+      return `
+      <div class="media-card" data-media="${index}" data-rel="${esc(item.rel)}" draggable="true" title="拖到上方的某一集即可归入">
+        <div class="media-thumb ${item.kind === 'video' ? 'is-video' : ''}">${item.kind === 'image' ? `<img src="${item.url}" loading="lazy" />` : `<video src="${item.url}#t=0.5" preload="metadata" muted></video>`}${episodeName ? `<span class="ep-badge">${esc(episodeName)}</span>` : ''}</div>
         <div class="media-meta">
           <span class="name">${esc(item.shotLabel || item.outputLabel || item.name)}</span>
           <span class="sub">${item.name.replace(/\.[^.]+$/, '') !== (item.shotLabel || item.outputLabel) ? esc(item.name) + ' · ' : ''}${esc(item.day)} · ${fmtBytes(item.bytes)}</span>
         </div>
-      </div>`).join('')}</div>
-  </section>`).join('') : `<div class="card"><div class="empty"><strong>还没有${kind === 'video' ? '视频' : '图片'}</strong><p>生成的成片会自动保存到媒体库目录，按日期 / 任务分文件夹。</p></div></div>`}
+      </div>`;
+    }).join('')}</div>
+  </section>`).join('') : `<div class="card"><div class="empty"><strong>${filter ? '这一集还没有成片' : '还没有' + (kind === 'video' ? '视频' : '图片')}</strong><p>${filter ? '把卡片拖到上方的这一集，或先切到「全部」再拖。' : '这个任务下暂时没有成片，换个任务，或用「导入成片」补一条。'}</p></div></div>`}
   `;
 }
 
@@ -2673,7 +2868,7 @@ async function openMediaRenameModal() {
     button.disabled = true;
     try {
       const result = await api('/api/media/rename-shots', { method: 'POST', body: { dryRun: false } });
-      state.media = await api('/api/media');
+      await loadMediaTaskMenu();
       closeModal();
       render();
       toast(`已重命名 ${result.moved.length} 个成片`);
@@ -2681,6 +2876,66 @@ async function openMediaRenameModal() {
       button.disabled = false;
       toast(err.message, true);
     }
+  };
+}
+
+function openMediaImportModal() {
+  const media = state.mediaTasks || state.mediaTaskItems || state.media || {};
+  const projectName = media.projectName || (state.mediaTask || '手工导入');
+  const panel = openModal(`<div class="modal-head">
+      <div><h2>导入成片</h2><div class="hint">自己生成或下载的视频，复制一份进媒体库（${esc(media.root || '媒体库目录')}），原文件不动</div></div>
+      <button class="btn ghost sm" data-close="1">关闭</button>
+    </div>
+    <div class="modal-body">
+      <div class="field"><label>任务名</label>
+        <input class="input" id="media-import-task" value="${esc(projectName)}" placeholder="例如：首尔没有忘记你" /></div>
+      <p class="hint">落盘位置：media/&lt;日期&gt;/import-xxx/&lt;原文件名&gt;，同名任务在媒体库里会归成一组。</p>
+      <div class="field"><label>分镜名（留空用文件名）</label>
+        <input class="input" id="media-import-shot" value="" placeholder="例如：镜头 07" /></div>
+      <div class="field"><label>选择文件</label>
+        <input class="input" id="media-import-files" type="file" multiple accept="video/*,image/*,audio/*" /></div>
+      <div class="hint" id="media-import-status"></div>
+    </div>
+    <div class="modal-foot"><span class="grow"></span><button class="btn ghost" data-close="1">取消</button><button class="btn primary" id="media-import-ok">开始导入</button></div>`);
+  const status = panel.querySelector('#media-import-status');
+  panel.querySelector('#media-import-ok').onclick = async () => {
+    const button = panel.querySelector('#media-import-ok');
+    const files = [...(panel.querySelector('#media-import-files').files || [])];
+    if (!files.length) { toast('先选要导入的文件', true); return; }
+    const taskTitle = panel.querySelector('#media-import-task').value.trim();
+    const shotInput = panel.querySelector('#media-import-shot').value.trim();
+    button.disabled = true;
+    const done = [];
+    for (let index = 0; index < files.length; index++) {
+      const file = files[index];
+      status.textContent = `正在导入 ${index + 1}/${files.length}：${file.name}`;
+      const shotLabel = files.length === 1 ? (shotInput || file.name.replace(/\.[^.]+$/, '')) : file.name.replace(/\.[^.]+$/, '');
+      const query = new URLSearchParams({ name: file.name, taskTitle, shotLabel });
+      let payload = null;
+      try {
+        const res = await fetch('/api/media/import?' + query.toString(), {
+          method: 'POST',
+          headers: { 'Content-Type': file.type || 'application/octet-stream' },
+          body: file,
+        });
+        payload = await res.json().catch(() => null);
+        if (!payload || !payload.ok) throw new Error((payload && payload.error) || `请求失败 HTTP ${res.status}`);
+      } catch (err) {
+        button.disabled = false;
+        status.textContent = '';
+        toast(`${file.name} 导入失败：${err.message}`, true);
+        return;
+      }
+      done.push(payload.data);
+    }
+    await reloadMediaEpisodes();
+    closeModal();
+    // 导入完成后直接进这个任务的成片，省得再回菜单找
+    state.mediaTask = (done[0] && done[0].taskTitle) || taskTitle || '';
+    state.mediaEpisode = '';
+    await loadMediaTaskMenu();
+    render();
+    toast(`已导入 ${done.length} 个成片到 ${done[0].day}`);
   };
 }
 
@@ -2699,25 +2954,83 @@ function openMediaDetail(item) {
       <div class="kv"><span>文件</span><span class="mono">${esc(item.name)}</span></div>
       <div class="kv"><span>大小</span><span>${fmtBytes(item.bytes)}</span></div>
     </div>
-    <div class="modal-foot"><button class="btn primary" id="media-preview-edit">加入剪辑</button><button class="btn" data-close="1">关闭</button></div>
+    <div class="modal-foot"><button class="btn primary" id="media-preview-jianying" title="把这一条成片单独做成剪映草稿">导入剪映</button><button class="btn" data-close="1">关闭</button></div>
   `);
   $('#modal-panel .modal-body').insertAdjacentHTML('beforeend','<section id="generation-details">正在读取生成资料…</section>');
   WB.mediaDetails(item);
-  $('#media-preview-edit').onclick = () => openVideoEditor(item).catch(e => toast(e.message, true));
+  const jianying = episodeData().jianying;
+  const jyButton = $('#media-preview-jianying');
+  if (jianying && jianying.available === false) { jyButton.disabled = true; jyButton.title = '没找到剪映草稿目录，先打开一次剪映'; }
+  jyButton.onclick = async () => {
+    closeModal();
+    await importToJianying({ rels: item.rel ? [item.rel] : [] });
+  };
 }
 
 function bindMedia(root) {
   root.querySelector('#media-project')?.addEventListener('change', async (event) => {
-    try { await setActiveProject(event.target.value); }
-    catch (err) { toast(err.message, true); }
+    try {
+      state.mediaEpisode = '';
+      await setActiveProject(event.target.value);
+    } catch (err) { toast(err.message, true); }
+  });
+  root.addEventListener('dragstart', (event) => {
+    const card = event.target.closest('[data-media]');
+    if (!card || !card.dataset.rel) return;
+    event.dataTransfer.setData('text/plain', card.dataset.rel);
+    event.dataTransfer.effectAllowed = 'move';
+    card.classList.add('is-dragging');
+  });
+  root.addEventListener('dragend', (event) => {
+    event.target.closest('[data-media]')?.classList.remove('is-dragging');
+    $$('.ep-chip.drop-hover', root).forEach((chip) => chip.classList.remove('drop-hover'));
+  });
+  root.addEventListener('dragover', (event) => {
+    const chip = event.target.closest('[data-drop-episode]');
+    if (!chip) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    chip.classList.add('drop-hover');
+  });
+  root.addEventListener('dragleave', (event) => {
+    const chip = event.target.closest('[data-drop-episode]');
+    if (chip) chip.classList.remove('drop-hover');
+  });
+  root.addEventListener('drop', async (event) => {
+    const chip = event.target.closest('[data-drop-episode]');
+    if (!chip) return;
+    event.preventDefault();
+    chip.classList.remove('drop-hover');
+    const rel = event.dataTransfer.getData('text/plain');
+    if (rel) await assignMediaEpisode(chip.dataset.dropEpisode, [rel]);
   });
   root.addEventListener('click', async (event) => {
+    const taskTile = event.target.closest('[data-media-task]');
+    if (taskTile) {
+      try {
+        state.mediaEpisode = '';
+        await loadMediaTaskItems(taskTile.dataset.mediaTask);
+        await reloadMediaEpisodes();
+        render();
+      } catch (err) { toast(err.message, true); }
+      return;
+    }
+    const episodeBtn = event.target.closest('[data-episode]');
+    if (episodeBtn) { state.mediaEpisode = episodeBtn.dataset.episode || ''; return render(); }
     const kindBtn = event.target.closest('[data-kind]');
-    if (kindBtn) { state.mediaKind = kindBtn.dataset.kind; return render(); }
+    if (kindBtn) {
+      state.mediaKind = kindBtn.dataset.kind;
+      state.mediaEpisode = '';
+      try {
+        await loadMediaTaskMenu();
+        render();
+      } catch (err) { toast(err.message, true); }
+      return;
+    }
     const card = event.target.closest('[data-media]');
     if (card) {
       const kind = state.mediaKind || 'video';
-      const items = state.media.items.filter((i) => i.kind === kind);
+      const items = ((state.mediaTaskItems && state.mediaTaskItems.items) || []).filter((i) => i.kind === kind && mediaEpisodeMatches(i, state.mediaEpisode || ''));
       const item = items[Number(card.dataset.media)];
       if (!item) return;
       return openMediaDetail(item);
@@ -2725,12 +3038,191 @@ function bindMedia(root) {
     const target = event.target.closest('[data-act]');
     if (!target) return;
     try {
-      if (target.dataset.act === 'media-edit') return await openVideoEditor();
       if (target.dataset.act === 'rename-media-shots') return await openMediaRenameModal();
-      if (target.dataset.act === 'refresh-media') { state.media = await api('/api/media'); return render(); }
-      if (target.dataset.act === 'open-media-root') { await api('/api/reveal', { method: 'POST', body: { path: state.media.root } }); }
+      if (target.dataset.act === 'media-import') return openMediaImportModal();
+      if (target.dataset.act === 'media-tasks-back') {
+        state.mediaTask = '';
+        state.mediaTaskItems = null;
+        await loadMediaTaskMenu();
+        return render();
+      }
+      if (target.dataset.act === 'refresh-media') {
+        await loadMediaTaskMenu();
+        await reloadMediaEpisodes();
+        return render();
+      }
+      if (target.dataset.act === 'open-media-root') {
+        const root = (state.mediaTaskItems && state.mediaTaskItems.root) || (state.mediaTasks && state.mediaTasks.root);
+        await api('/api/reveal', { method: 'POST', body: { path: root || '' } });
+      }
+      if (target.dataset.act === 'episode-new') return openEpisodeCreateModal();
+      if (target.dataset.act === 'episode-rename') return openEpisodeRenameModal();
+      if (target.dataset.act === 'episode-delete') return deleteCurrentEpisode();
+      if (target.dataset.act === 'group-assign') return openEpisodeAssignModal(target.dataset.task || '');
+      if (target.dataset.act === 'jianying-import') return await importToJianying();
     } catch (err) { toast(err.message, true); }
   });
+}
+
+async function reloadMediaEpisodes() {
+  try { state.episodes = await api('/api/media/episodes'); } catch { /* 保留旧数据 */ }
+}
+
+async function assignMediaEpisode(episodeId, rels) {
+  const list = (rels || []).filter(Boolean);
+  if (!list.length) return;
+  const target = !episodeId || episodeId === '__none__' ? '' : episodeId;
+  try {
+    await api('/api/media/episodes', { method: 'POST', body: { action: 'assign', episodeId: target, rels: list } });
+    await reloadMediaEpisodes();
+    render();
+    toast(`已归入 ${target ? episodeNameOf(target) : '未分集'}：${list.length} 条`);
+  } catch (err) {
+    toast(err.message, true);
+  }
+}
+
+function groupRels(taskTitle) {
+  const kind = state.mediaKind || 'video';
+  const filter = state.mediaEpisode || '';
+  return ((state.mediaTaskItems && state.mediaTaskItems.items) || [])
+    .filter((item) => item.kind === kind && (item.taskTitle || '未记录任务') === taskTitle && mediaEpisodeMatches(item, filter))
+    .map((item) => item.rel);
+}
+
+function openEpisodeCreateModal() {
+  const { episodes } = episodeData();
+  const suggested = '第' + (episodes.length + 1) + '集';
+  const panel = openModal(`<div class="modal-head">
+      <div><h2>新建分集</h2><div class="hint">在项目下建一个「集」，再把媒体库里的片段拖进去</div></div>
+      <button class="btn ghost sm" data-close="1">关闭</button>
+    </div>
+    <div class="modal-body">
+      <label class="field"><span>分集名称</span><input class="input" id="ep-name" value="${esc(suggested)}" placeholder="第1集" /></label>
+    </div>
+    <div class="modal-foot"><span class="grow"></span><button class="btn ghost" data-close="1">取消</button><button class="btn primary" id="ep-create-ok">创建</button></div>`);
+  const input = panel.querySelector('#ep-name');
+  input.focus();
+  input.select();
+  panel.querySelector('#ep-create-ok').onclick = async () => {
+    const name = input.value.trim();
+    try {
+      await api('/api/media/episodes', { method: 'POST', body: { action: 'create', name } });
+      await reloadMediaEpisodes();
+      closeModal();
+      render();
+      toast('已创建分集：' + name);
+    } catch (err) { toast(err.message, true); }
+  };
+}
+
+function openEpisodeRenameModal() {
+  const current = episodeData().episodes.find((episode) => episode.id === state.mediaEpisode);
+  if (!current) { toast('先选中一集'); return; }
+  const panel = openModal(`<div class="modal-head">
+      <div><h2>重命名分集</h2><div class="hint">${esc(current.name)}</div></div>
+      <button class="btn ghost sm" data-close="1">关闭</button>
+    </div>
+    <div class="modal-body">
+      <label class="field"><span>分集名称</span><input class="input" id="ep-name" value="${esc(current.name)}" /></label>
+    </div>
+    <div class="modal-foot"><span class="grow"></span><button class="btn ghost" data-close="1">取消</button><button class="btn primary" id="ep-rename-ok">保存</button></div>`);
+  const input = panel.querySelector('#ep-name');
+  input.focus();
+  input.select();
+  panel.querySelector('#ep-rename-ok').onclick = async () => {
+    try {
+      await api('/api/media/episodes', { method: 'POST', body: { action: 'rename', id: current.id, name: input.value.trim() } });
+      await reloadMediaEpisodes();
+      closeModal();
+      render();
+      toast('已重命名');
+    } catch (err) { toast(err.message, true); }
+  };
+}
+
+async function deleteCurrentEpisode() {
+  const current = episodeData().episodes.find((episode) => episode.id === state.mediaEpisode);
+  if (!current) { toast('先选中一集'); return; }
+  if (!confirm(`删除「${current.name}」这一集？片段仍在媒体库里，只是不再属于任何一集。`)) return;
+  try {
+    await api('/api/media/episodes', { method: 'POST', body: { action: 'delete', id: current.id } });
+    state.mediaEpisode = '';
+    await reloadMediaEpisodes();
+    render();
+    toast('已删除分集：' + current.name);
+  } catch (err) { toast(err.message, true); }
+}
+
+function openEpisodeAssignModal(taskTitle) {
+  const rels = groupRels(taskTitle);
+  if (!rels.length) { toast('这一组没有可归入的片段'); return; }
+  const { episodes } = episodeData();
+  const rows = episodes.length
+    ? episodes.map((episode) => `<button type="button" class="btn ep-pick" data-episode-id="${esc(episode.id)}"><span>${esc(episode.name)}</span><em>${episode.count || 0} 条</em></button>`).join('')
+    : `<p class="hint">还没有分集，先在下面新建一集。</p>`;
+  const panel = openModal(`<div class="modal-head">
+      <div><h2>整组归入分集</h2><div class="hint">${esc(taskTitle)} · ${rels.length} 条</div></div>
+      <button class="btn ghost sm" data-close="1">关闭</button>
+    </div>
+    <div class="modal-body">
+      <div class="ep-pick-list">${rows}</div>
+      <div class="ep-new-row"><input class="input" id="ep-new-name" placeholder="新建一集，例如 第1集" /><button class="btn" id="ep-new-create">新建并归入</button></div>
+    </div>`);
+  panel.addEventListener('click', async (event) => {
+    const pick = event.target.closest('[data-episode-id]');
+    if (!pick) return;
+    closeModal();
+    await assignMediaEpisode(pick.dataset.episodeId, rels);
+  });
+  panel.querySelector('#ep-new-create').onclick = async () => {
+    const name = panel.querySelector('#ep-new-name').value.trim();
+    if (!name) { toast('先给这一集起个名字'); return; }
+    try {
+      const episode = await api('/api/media/episodes', { method: 'POST', body: { action: 'create', name } });
+      closeModal();
+      await assignMediaEpisode(episode.id, rels);
+    } catch (err) { toast(err.message, true); }
+  };
+}
+
+async function importToJianying(options = {}) {
+  const filter = state.mediaEpisode || '';
+  const { episodes, jianying } = episodeData();
+  if (jianying && jianying.available === false) { toast('没找到剪映草稿目录，先打开一次剪映再导入', true); return; }
+  if (jianying && jianying.running) { toast('剪映正在运行，请先关闭剪映再导入', true); return; }
+  const rels = (Array.isArray(options.rels) ? options.rels : []).filter(Boolean);
+  const episode = rels.length ? null : episodes.find((item) => item.id === filter);
+  const body = rels.length
+    ? { rels }
+    : (episode ? { episodeId: episode.id } : (episodes.length ? { all: true } : {}));
+  try {
+    toast('正在生成剪映草稿…');
+    const result = await api('/api/media/jianying', { method: 'POST', body });
+    showJianyingResult(result);
+    await reloadMediaEpisodes();
+    render();
+  } catch (err) {
+    toast(err.message, true);
+  }
+}
+
+function showJianyingResult(result) {
+  const rows = (result.created || []).map((row) => `<div class="kv"><span>${esc(row.name)}</span><span>${row.clips} 个片段 · ${fmtClock(row.duration)}</span></div>`).join('');
+  const panel = openModal(`<div class="modal-head">
+      <div><h2>已生成剪映草稿</h2><div class="hint">共 ${(result.created || []).length} 个，打开剪映就能在「本地草稿」里看到</div></div>
+      <button class="btn ghost sm" data-close="1">关闭</button>
+    </div>
+    <div class="modal-body">
+      <div class="jy-result">${rows || '<p class="hint">没有生成草稿。</p>'}</div>
+      <div class="kv"><span>草稿目录</span><span class="mono">${esc(result.root || '')}</span></div>
+    </div>
+    <div class="modal-foot"><span class="grow"></span><button class="btn" id="jy-open-root">打开草稿目录</button><button class="btn primary" data-close="1">知道了</button></div>`);
+  panel.classList.add('modal-wide');
+  panel.querySelector('#jy-open-root').onclick = async () => {
+    try { await api('/api/reveal', { method: 'POST', body: { path: result.root } }); }
+    catch (err) { toast(err.message, true); }
+  };
 }
 
 /* ------------------------------------------------------------------ image */
@@ -2751,9 +3243,9 @@ function imageSizeOptions(channel) {
   return ['auto', '1024x1024', '1536x1024', '1024x1536', '1792x1024', '1024x1792'];
 }
 
-const GEAR = '<svg class="h3-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>';
-const IMG_ICON = '<svg class="h3-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><path d="m21 15-5-5L5 21"></path></svg>';
-const DOWN_ICON = '<svg class="h3-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><path d="m7 10 5 5 5-5"></path><path d="M12 15V3"></path></svg>';
+const GEAR = '<svg class="wmd-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>';
+const IMG_ICON = '<svg class="wmd-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><path d="m21 15-5-5L5 21"></path></svg>';
+const DOWN_ICON = '<svg class="wmd-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><path d="m7 10 5 5 5-5"></path><path d="M12 15V3"></path></svg>';
 
 function fileUrl(file) {
   return '/api/file?path=' + encodeURIComponent(file);
@@ -2762,7 +3254,7 @@ function fileUrl(file) {
 // 拖动分隔条调整左侧面板宽度（原版双击可复位）
 function bindSplitter(root, panelSel, onResize) {
   const panel = $(panelSel, root);
-  const splitter = $('.h3-splitter', root) || $('.zs-splitter', root);
+  const splitter = $('.wmd-splitter', root) || $('.zs-splitter', root);
   if (!panel || !splitter) return;
   splitter.addEventListener('mousedown', (event) => {
     event.preventDefault();
@@ -2791,13 +3283,13 @@ function bindSplitter(root, panelSel, onResize) {
 
 
 function imageTabsHtml(tab) {
-  return `<div class="h3-page-tabs">
-    <button type="button" class="h3-page-tab ${tab === 'edit' ? 'is-on' : ''}" data-img-tab="edit">图像编辑</button>
-    <button type="button" class="h3-page-tab ${tab === 'generate' ? 'is-on' : ''}" data-img-tab="generate">图像生成</button>
-    <button type="button" class="h3-page-tab ${tab === 'reverse' ? 'is-on' : ''}" data-img-tab="reverse">图像反推</button>
-    <button type="button" class="h3-page-tab ${tab === 'scene' ? 'is-on' : ''}" data-img-tab="scene">场景建模</button>
-    <span class="h3-toolbar-spacer"></span>
-    <button type="button" class="h3-iconbtn" data-act="manage-image-channels" title="图像渠道">${GEAR}</button>
+  return `<div class="wmd-page-tabs">
+    <button type="button" class="wmd-page-tab ${tab === 'edit' ? 'is-on' : ''}" data-img-tab="edit">图像编辑</button>
+    <button type="button" class="wmd-page-tab ${tab === 'generate' ? 'is-on' : ''}" data-img-tab="generate">图像生成</button>
+    <button type="button" class="wmd-page-tab ${tab === 'reverse' ? 'is-on' : ''}" data-img-tab="reverse">图像反推</button>
+    <button type="button" class="wmd-page-tab ${tab === 'scene' ? 'is-on' : ''}" data-img-tab="scene">场景建模</button>
+    <span class="wmd-toolbar-spacer"></span>
+    <button type="button" class="wmd-iconbtn" data-act="manage-image-channels" title="图像模型">${GEAR}</button>
   </div>`;
 }
 
@@ -2805,9 +3297,12 @@ function generationPrefixValue(kind) {
   const value=kind==='video'?state.studio:state.image;
   if(typeof value.prefixPrompt==='string')return value.prefixPrompt;
   const style=state.styleDetail;if(!style)return '';
-  let layer=kind==='video'?'video':value.styleLayer||'auto';
-  if(layer==='auto'){const text=value.prompt||'';layer=/角色|人物|身份板|立绘|形象/.test(text)?'character':/场景|环境|背景|地点/.test(text)?'scene':/道具|物品|物件|武器/.test(text)?'prop':'video';}
-  return String(style[layer]||'').trim();
+  if(kind==='image'){
+    const layer=value.styleLayer||'free';
+    if(layer==='free')return '';
+    return String(style[layer]||'').trim();
+  }
+  return String(style.video||'').trim();
 }
 const prefixOpen={image:false,video:false};
 const layoutOpen={image:true};
@@ -2818,12 +3313,12 @@ function generationPrefixHtml(kind) {
   const flat=text.replace(/\s+/g,' ').trim();
   const toggle='<button type="button" class="btn sm ghost" data-prefix-toggle="'+kind+'" aria-expanded="'+(open?'true':'false')+'" aria-controls="'+kind+'-prefix-body" title="'+(open?'收起前置提示词':'展开前置提示词')+'">'+(open?'收起 ▴':'展开 ▾')+'</button>';
   const summary=open?'':'<p class="generation-prefix-summary">已收起：'+esc(flat?flat.slice(0,42)+(flat.length>42?'…':''):'未填写（留空则不添加）')+'</p>';
-  const layer=kind==='image'?'<select class="zs-select" id="image-style-layer" aria-label="前置词类型">'+[['auto','按正文自动选择'],['character','人物'],['scene','场景'],['prop','道具'],['video','通用 / 视频']].map(([id,title])=>'<option value="'+id+'" '+((value.styleLayer||'auto')===id?'selected':'')+'>'+title+'</option>').join('')+'</select>':'';
+  const layer=kind==='image'?'<select class="zs-select" id="image-style-layer" aria-label="前置词类型">'+[['free','自由（不注入）'],['character','人物'],['scene','场景'],['prop','道具']].map(([id,title])=>'<option value="'+id+'" '+((value.styleLayer||'auto')===id?'selected':'')+'>'+title+'</option>').join('')+'</select>':'';
   const body=open?'<div class="generation-prefix-body" id="'+kind+'-prefix-body">'+layer+'<textarea id="'+kind+'-prefix" class="generation-parameter-text" rows="4" placeholder="填写要加在正文之前的风格要求；留空则不添加">'+esc(text)+'</textarea><small>'+esc(typeof value.prefixPrompt==='string'?'当前画面自定义前置词':state.styleDetail?'来自项目风格：'+state.styleDetail.name:'当前项目未设置前置词，可直接填写')+'</small></div>':'';
   // 收起时用负外边距抵消所在面板的行间距，让上下各只留 2px；两个页面容器的行距不同，分别取值。
   // 收起时用负外边距抵消面板行距，上下各留 2px；图片页下方紧跟“图片比例”，它收起时由它自己带负边距。
   const nextCompact=kind==='image'&&layoutOpen.image===false;
-  const collapseStyle=open?'':' style="margin-top:'+(kind==='video'?-14:-18)+'px;margin-bottom:'+(kind==='video'?-13:(nextCompact?0:-18))+'px"';
+  const collapseStyle='';
   return '<div class="generation-parameter-field generation-prefix-field generation-prefix-field-'+kind+(open?'':' is-collapsed is-compact')+'"'+collapseStyle+'><div class="generation-parameter-head generation-prefix-head"><label for="'+kind+'-prefix">前置提示词</label>'+toggle+'<button type="button" class="btn sm ghost" data-prefix-reset="'+kind+'">使用项目风格</button></div>'+summary+body+'</div>';
 }
 function imageLayoutParametersHtml() {
@@ -2834,7 +3329,7 @@ function imageLayoutParametersHtml() {
   const toggle='<button type="button" class="btn sm ghost" data-layout-toggle="image" aria-expanded="'+(open?'true':'false')+'" aria-controls="image-layout-body" title="'+(open?'收起比例与分区设置':'展开比例与分区设置')+'">'+(open?'收起 ▴':'展开 ▾')+'</button>';
   const summary=open?'':'<p class="generation-prefix-summary">已收起：'+esc(ratio==='auto'?'由模型决定':ratio)+' · '+esc(selected.name)+'</p>';
   const preview=selected.shape?'<div class="image-layout-diagram '+selected.shape+'" style="aspect-ratio:'+ratio.replace(':','/')+'">'+selected.cells.map((text,n)=>'<span class="layout-cell cell-'+n+'">'+esc(text)+'</span>').join('')+'</div>':'';
-  const body=open?'<div class="generation-layout-body" id="image-layout-body"><select class="zs-select" id="image-ratio" aria-label="图片比例">'+['auto',...GenerationParams.ratios].map(r=>'<option value="'+r+'" '+(r===ratio?'selected':'')+'>'+(r==='auto'?'由模型决定':r)+'</option>').join('')+'</select><label for="image-layout">图片样式 / 分区布局</label><select class="zs-select" id="image-layout" '+(ratio==='auto'?'disabled':'')+'>'+choices.map(l=>'<option value="'+l.id+'" '+(l.id===selected.id?'selected':'')+'>'+esc(l.name)+'</option>').join('')+'</select>'+preview+'<label for="image-layout-prompt">分区说明（可编辑）</label><textarea id="image-layout-prompt" class="generation-parameter-text" rows="5" '+(ratio==='auto'?'disabled':'')+' placeholder="自由构图，或填写每个小块放置的内容">'+esc(text)+'</textarea><small>比例和分区要求会加入生成提示词；像素尺寸使用下方渠道分辨率。</small></div>':'';
+  const body=open?'<div class="generation-layout-body" id="image-layout-body"><select class="zs-select" id="image-ratio" aria-label="图片比例">'+['auto',...GenerationParams.ratios].map(r=>'<option value="'+r+'" '+(r===ratio?'selected':'')+'>'+(r==='auto'?'由模型决定':r)+'</option>').join('')+'</select><label for="image-layout">图片样式 / 分区布局</label><select class="zs-select" id="image-layout" '+(ratio==='auto'?'disabled':'')+'>'+choices.map(l=>'<option value="'+l.id+'" '+(l.id===selected.id?'selected':'')+'>'+esc(l.name)+'</option>').join('')+'</select>'+preview+'<label for="image-layout-prompt">分区说明（可编辑）</label><textarea id="image-layout-prompt" class="generation-parameter-text" rows="5" '+(ratio==='auto'?'disabled':'')+' placeholder="自由构图，或填写每个小块放置的内容">'+esc(text)+'</textarea><small>比例和分区要求会加入生成提示词；像素尺寸使用下方图片尺寸。</small></div>':'';
   const collapseStyle=open?'':' style="margin-top:-18px;margin-bottom:-18px"';
   return '<div class="generation-parameter-field generation-layout-field'+(open?'':' is-collapsed is-compact')+'"'+collapseStyle+'><div class="generation-parameter-head"><label>图片比例</label>'+toggle+'</div>'+summary+body+'</div>';
 }
@@ -2862,8 +3357,8 @@ function imagePanelHtml(tab, ch) {
       <div class="zs-field-head">
         <span class="zs-field-label">生图模型</span>
         <span class="zs-field-right">
-          <button type="button" class="zs-keystate ${ch ? 'zs-keystate-ready' : 'zs-keystate-missing'}" data-act="manage-image-channels" title="${ch ? '已配置渠道，点击管理' : '还没有图像渠道，点击新增'}">
-            <span class="zs-keystate-dot"></span>${ch ? esc(ch.name) : '未配置渠道'}
+          <button type="button" class="zs-keystate ${ch ? 'zs-keystate-ready' : 'zs-keystate-missing'}" data-act="manage-image-channels" title="${ch ? '已配置模型，点击管理' : '还没有图像模型，点击新增'}">
+            <span class="zs-keystate-dot"></span>${ch ? esc(ch.model || ch.name) : '未配置模型'}
           </button>
         </span>
       </div>
@@ -2871,24 +3366,10 @@ function imagePanelHtml(tab, ch) {
         <div class="zs-select-wrap">
           <select class="zs-select" id="img-channel">
             ${imageChannels().length
-              ? imageChannels().map((c) => `<option value="${esc(c.id)}" ${c.id === ch.id ? 'selected' : ''}>${esc(c.name)}${c.active ? ' · 默认' : ''} · ${esc(c.model || c.type)}</option>`).join('')
-              : '<option value="">没有图像渠道</option>'}
+              ? imageChannels().map((c) => `<option value="${esc(c.id)}" ${c.id === ch.id ? 'selected' : ''}>${esc(c.model || c.name)}${c.active ? ' · 默认' : ''}</option>`).join('')
+              : '<option value="">没有可用的图像模型</option>'}
           </select>
           <span class="zs-select-caret">${ICON.caret}</span>
-        </div>
-        <div class="zs-row" title="渠道 / 类型">
-          <div class="zs-select-wrap">
-            <select class="zs-select" disabled>
-              <option>${ch ? esc(ch.type) : '—'}</option>
-            </select>
-            <span class="zs-select-caret">${ICON.caret}</span>
-          </div>
-          <div class="zs-select-wrap">
-            <select class="zs-select" disabled>
-              <option>${ch ? esc(ch.model || '默认模型') : '—'}</option>
-            </select>
-            <span class="zs-select-caret">${ICON.caret}</span>
-          </div>
         </div>
       </div>
     </div>`;
@@ -2901,23 +3382,15 @@ function imagePanelHtml(tab, ch) {
     }[tab] || '';
     return tabsBar + `
       <div class="zs-field">
-        <div class="h3-field-hint">${purpose}</div>
-        <div class="h3-field-hint">这个页签需要先有一个图像渠道：OpenAI Images / Gemini / Chat 生图，或者你自己的中转接口。</div>
+        <div class="wmd-field-hint">${purpose}</div>
+        <div class="wmd-field-hint">这个页签需要先有一个图像模型：OpenAI Images / Gemini / Chat 生图，或者你自己的中转接口。</div>
       </div>
-      <div class="zs-panel-foot"><button type="button" class="zs-btn zs-btn-primary zs-btn-lg zs-generate-btn" data-act="add-image-channel">新增图像渠道</button></div>`;
+      <div class="zs-panel-foot"><button type="button" class="zs-btn zs-btn-primary zs-btn-lg zs-generate-btn" data-act="add-image-channel">新增图像模型</button></div>`;
   }
 
   if (tab === 'reverse') {
     return tabsBar + `
-      <div class="zs-field">
-        <div class="zs-field-head"><span class="zs-field-label">源图</span></div>
-        <div class="zs-row">
-          <div class="zs-select-wrap image-source-chip">
-            <select class="zs-select" disabled><option>${source ? esc(source.name) : '未选择'}</option></select>
-          </div>
-          <button type="button" class="zs-btn zs-btn-sm" data-act="pick-source">选择</button>
-        </div>
-      </div>
+      ${imageSourcePickerHtml(source)}
       <div class="zs-field">
         <div class="zs-field-head"><span class="zs-field-label">反推结果</span>
           <span class="zs-field-right"><span class="zs-inline-actions">
@@ -2931,20 +3404,15 @@ function imagePanelHtml(tab, ch) {
       </div>
       <div class="zs-panel-foot">
         <button type="button" class="zs-btn zs-btn-primary zs-btn-lg zs-generate-btn" data-act="image-reverse" ${im.busy || IJ.active(WB.context('image').itemId) ? 'disabled' : ''}>${im.busy ? '反推中…' : '反推提示词'}</button>
-        <p class="h3-field-hint">使用当前语言渠道，需要模型支持图片输入。</p>
       </div>`;
   }
 
   return tabsBar + generationPrefixHtml('image') + imageLayoutParametersHtml() + `
-    ${tab === 'edit' ? `<div class="zs-field">
-      <div class="zs-field-head"><span class="zs-field-label">源图</span></div>
-      <div class="zs-row">
-        <div class="zs-select-wrap image-source-chip">
-          <select class="zs-select" disabled><option>${source ? esc(source.name) : '未选择'}</option></select>
-        </div>
-        <button type="button" class="zs-btn zs-btn-sm" data-act="pick-source">选择</button>
-      </div>
-    </div>` : ''}
+    <div class="zs-field">
+      <div class="zs-field-head"><span class="zs-field-label">风格类别</span></div>
+      <div class="zs-select-wrap"><select class="zs-select" id="img-style-category">${[['free','自由（不注入项目风格）'],['character','人物'],['scene','场景'],['prop','道具']].map(([id,label]) => `<option value="${id}" ${(im.styleLayer || 'free') === id ? 'selected' : ''}>${label}</option>`).join('')}</select><span class="zs-select-caret">${ICON.caret}</span></div>
+    </div>
+    ${tab === 'edit' ? imageSourcePickerHtml(source) : ''}
     <div class="zs-field">
       <div class="zs-field-head"><span class="zs-field-label">${tab === 'edit' ? '编辑指令' : '提示词'}</span></div>
       <div class="zs-prompt">
@@ -2953,14 +3421,14 @@ function imagePanelHtml(tab, ch) {
           <span class="zs-prompt-count" id="img-prompt-count">${im.prompt.length}字</span>
           <span class="zs-prompt-spacer"></span>
           <button type="button" class="zs-iconbtn" data-act="image-clear-prompt" title="清空">${ICON.trash}</button>
-          <button type="button" class="zs-magic" data-act="image-optimize" ${im.busy || IJ.active(WB.context('image').itemId) ? 'disabled' : ''} title="用当前语言渠道扩写提示词">
+          <button type="button" class="zs-magic" data-act="image-optimize" ${im.busy || IJ.active(WB.context('image').itemId) ? 'disabled' : ''} title="用当前推理模型扩写提示词">
             <span>${im.busy ? '优化中…' : '优化提示词'}</span>
           </button>
         </div>
       </div>
     </div>
     <div class="zs-field">
-      <div class="zs-field-head"><span class="zs-field-label">渠道分辨率 / 数量</span></div>
+      <div class="zs-field-head"><span class="zs-field-label">图片尺寸 / 数量</span></div>
       <div class="zs-row">
         <div class="zs-select-wrap">
           <select class="zs-select" id="img-size">${sizes.map((s2) => `<option value="${esc(s2)}" ${s2 === im.size ? 'selected' : ''}>${esc(s2)}</option>`).join('')}</select>
@@ -3052,21 +3520,16 @@ function imageWorkspaceHtml(tab, ch) {
   const item = imageCurrent();
   const imageTask=IJ.current();
   const generating=!!imageTask||im.busy;
-  const status = imageTask ? imageTask.phase : !ch ? '没有图像渠道 · 先在左侧新增一个'
+  const status = imageTask ? imageTask.phase : !ch ? '没有图像模型 · 先在左侧新增一个'
     : item ? `${item.name}${item.width ? ` · ${item.width}×${item.height}` : ''}${item.bytes ? ` · ${fmtBytes(item.bytes)}` : ''}${im.selection ? ' · 已选区' : ''}`
     : (tab === 'reverse' ? '选择源图后点「反推提示词」' : '就绪 - 在左侧写提示词，点「图像生成」');
-  const thumbs = (tab !== 'reverse' && (im.results || []).length)
-    ? im.results.map((it, i) => `<button type="button" class="zd-tab ${i === (im.previewIndex || 0) ? 'zd-tab-active' : ''}" data-preview="${i}" title="${esc(it.name)}">
-        <span class="zd-tab-name">${esc(it.name)}</span><span role="button" tabindex="0" class="zd-tab-close" data-close-document="${i}" aria-label="关闭 ${esc(it.name)}" title="关闭图片（保留原文件）">×</span><span class="zd-tab-size">${it.width || ''}${it.height ? '×' + it.height : ''}</span>
-      </button>`).join('')
-    : '';
-
   return `<div class="zd-toolbar">
     <div class="zd-tool-group zd-filemenu" id="img-filemenu">
       <button type="button" class="zd-tool zd-filemenu-btn" data-act="img-file-menu" title="文件">
         <span class="zd-tool-label">文件</span>
       </button>
       <div class="zd-filemenu-pop">
+        <button type="button" class="zd-filemenu-item" data-act="image-import">导入图片文件…</button>
         <button type="button" class="zd-filemenu-item" data-act="pick-result">打开图片<span class="zd-filemenu-keys">Ctrl+O</span></button>
         <button type="button" class="zd-filemenu-item" data-act="image-paste">粘贴剪贴板<span class="zd-filemenu-keys">Ctrl+V</span></button>
         <button type="button" class="zd-filemenu-item" data-act="image-history">最近生成…</button>
@@ -3106,20 +3569,16 @@ function imageWorkspaceHtml(tab, ch) {
     <button type="button" class="zd-tool" data-act="asset-result" ${im.previewIndex != null && (im.results || []).length ? '' : 'disabled'} title="把结果存进素材库"><span class="zd-tool-label">存素材库</span></button>
     <button type="button" class="zd-tool" data-act="use-result" ${(im.results || []).length ? '' : 'disabled'} title="把结果作为视频参考图"><span class="zd-tool-label">去视频</span></button>
   </div>
-  <div class="zd-tabs">
-    ${thumbs}
-    <button type="button" class="zd-tab-add" data-act="pick-result" title="从素材库选图打开">+</button>
-    <span class="zd-tabs-spacer"></span>
-  </div>
   <div class="zd-canvas-area">
     ${IJ.canvas() || (im.busy ? `<div class="img-generating"><span class="img-spin"></span><b>正在生成图片…</b><small>${esc(ch ? ch.name : '')}${im.count > 1 ? ' · ' + im.count + ' 张' : ''}</small></div>` : '')}
     ${item ? imageViewerHtml(item) : generating ? '' : `<div class="zd-empty">
         <div class="zd-empty-card">
           <div class="zd-empty-frame">${IMG_ICON}</div>
-          <div class="zd-empty-title">${ch ? '把图片拖到这里开始' : '先新增一个图像渠道'}</div>
+          <div class="zd-empty-title">${ch ? '把图片拖到这里开始' : '先新增一个图像模型'}</div>
           <div class="zd-empty-sub">${ch ? '或从素材库选图 · 也可以直接文生图，结果会显示在这里' : '支持 OpenAI Images / Gemini / Chat 生图，以及任意中转站'}</div>
           <div class="zd-empty-actions">
-            ${ch ? `<button type="button" class="zd-btn zd-btn-primary" data-act="pick-result">打开图片</button>` : `<button type="button" class="zd-btn zd-btn-primary" data-act="add-image-channel">新增图像渠道</button>`}
+            ${ch ? `<button type="button" class="zd-btn zd-btn-primary" data-act="pick-result">打开图片</button>
+      <button type="button" class="zd-btn" data-act="image-import">导入文件</button>` : `<button type="button" class="zd-btn zd-btn-primary" data-act="add-image-channel">新增图像模型</button>`}
             ${ch ? `<button type="button" class="zd-btn" data-act="image-paste">粘贴剪贴板</button>` : ''}
           </div>
           <ul class="zd-empty-steps">
@@ -3133,6 +3592,11 @@ function imageWorkspaceHtml(tab, ch) {
   <div class="zd-statusbar">
     <span class="zd-status-main" title="${esc(status)}">${esc(status)}</span>
     <span class="zd-status-spacer"></span>
+    ${(im.results || []).length > 1 ? `<span class="zd-docnav">
+      <button type="button" class="zd-tool" data-act="doc-prev" title="上一张">‹</button>
+      <span class="zd-docnav-count" title="当前第几张">${(im.previewIndex || 0) + 1}/${im.results.length}</span>
+      <button type="button" class="zd-tool" data-act="doc-next" title="下一张">›</button>
+    </span>` : ''}
   </div>`;
 }
 
@@ -3184,7 +3648,7 @@ function imageResizeDialog() {
   const nw = img.naturalWidth || img.width;
   const nh = img.naturalHeight || img.height;
   openModal(`
-    <div class="modal-head"><h2>图像大小</h2><span class="grow"></span><button type="button" class="h3-btn h3-btn-sm h3-btn-ghost" data-close="1">关闭</button></div>
+    <div class="modal-head"><h2>图像大小</h2><span class="grow"></span><button type="button" class="wmd-btn wmd-btn-sm wmd-btn-ghost" data-close="1">关闭</button></div>
     <div class="modal-body">
       <div class="row">
         <div class="field grow"><label>宽（像素）</label><input class="input" id="img-w" type="number" min="1" value="${nw}" /></div>
@@ -3193,8 +3657,8 @@ function imageResizeDialog() {
       <label class="hint"><input type="checkbox" id="img-lock" checked /> 锁定比例（${nw}×${nh}）</label>
     </div>
     <div class="modal-foot">
-      <button type="button" class="h3-btn h3-btn-sm h3-btn-ghost" data-close="1">取消</button>
-      <button type="button" class="h3-btn h3-btn-sm h3-btn-primary" id="img-size-go">应用</button>
+      <button type="button" class="wmd-btn wmd-btn-sm wmd-btn-ghost" data-close="1">取消</button>
+      <button type="button" class="wmd-btn wmd-btn-sm wmd-btn-primary" id="img-size-go">应用</button>
     </div>`);
   const w = $('#img-w');
   const h = $('#img-h');
@@ -3387,6 +3851,13 @@ function bindImageCanvas(root) {
       }
       if (act === 'image-fit') { state.image.zoom = 'fit'; return render(); }
       if (act === 'image-actual') { state.image.zoom = 1; return render(); }
+      if (act === 'doc-prev' || act === 'doc-next') {
+        const list = state.image.results || [];
+        if (!list.length) return;
+        const step = act === 'doc-prev' ? -1 : 1;
+        state.image.previewIndex = ((state.image.previewIndex || 0) + step + list.length) % list.length;
+        return render();
+      }
     } catch (err) { toast(err.message, true); }
   });
 
@@ -3406,7 +3877,7 @@ function bindImageCanvas(root) {
 function openImageHistory() {
   const list = state.imageHistory || [];
   openModal(`
-    <div class="modal-head"><h2>最近生成</h2><span class="grow"></span><button type="button" class="h3-btn h3-btn-sm h3-btn-ghost" data-close="1">关闭</button></div>
+    <div class="modal-head"><h2>最近生成</h2><span class="grow"></span><button type="button" class="wmd-btn wmd-btn-sm wmd-btn-ghost" data-close="1">关闭</button></div>
     <div class="modal-body">
       ${list.length ? `<div class="grid-cards">${list.map((batch, i) => `<div class="asset-card" data-history="${i}">
         <div class="asset-thumb">${batch.items && batch.items[0] ? `<img src="${batch.items[0].url}" loading="lazy" />` : ''}</div>
@@ -3435,10 +3906,11 @@ function openImageHistory() {
 
 function renderImage() {
   const tab = state.image.tab || 'generate';
-  if (tab === 'scene') return '<div class="h3-image-host">' + imageTabsHtml(tab) + sceneWorkspaceHtml() + '</div>';
+  if (tab === 'scene') return '<div class="wmd-image-host is-scene">' + imageTabsHtml(tab) + sceneWorkspaceHtml() + '</div>';
   const ch = imageChannel();
-  return `<div class="h3-image-host zs-app">
+  return `<div class="wmd-image-host zs-app">
     ${imageTabsHtml(tab)}
+    <input type="file" id="image-import-file" accept="image/*" hidden />
     <div class="zs-main">
       <aside class="zs-panel" style="width:${state.image.panelWidth || 440}px">
         <div class="zs-panel-inner" style="width:${state.image.panelWidth || 440}px">
@@ -3461,6 +3933,7 @@ function bindImage(root) {
   }
   bindSplitter(root, '.zs-panel', (width) => { im.panelWidth = width || 440; });
   bindImageCanvas(root);
+  bindImageSourcePicker(root);
   root.addEventListener('keydown', event => {
     const close = event.target.closest('[data-close-document]');
     if (close && (event.key === 'Enter' || event.key === ' ')) {
@@ -3470,10 +3943,41 @@ function bindImage(root) {
   });
   const chSel = $('#img-channel', root);
   if (chSel) chSel.onchange = () => { im.channelId = chSel.value; im.size = 'auto'; render(); };
+  const categorySel = $('#img-style-category', root);
+  if (categorySel) categorySel.onchange = () => { im.styleLayer = categorySel.value; delete im.prefixPrompt; render(); };
   const sizeSel = $('#img-size', root);
   if (sizeSel) sizeSel.onchange = () => { im.size = sizeSel.value; };
   const countEl = $('#img-count', root);
   if (countEl) countEl.onchange = () => { im.count = Math.max(1, Math.min(4, Number(countEl.value) || 1)); };
+  const importInput = $('#image-import-file', root);
+  if (importInput) importInput.onchange = async () => {
+    const files = [...(importInput.files || [])];
+    importInput.value = '';
+    if (files.length) await imageImportToCanvas(files).catch((err) => toast(err.message, true));
+  };
+  if (state.image._pasteHandler) document.removeEventListener('paste', state.image._pasteHandler);
+  state.image._pasteHandler = async (event) => {
+    if (state.route !== 'image' || document.querySelector('.modal-backdrop')) return;
+    // 焦点在源图框里时由源图框自己接剪贴板，不要再往画布塞一份
+    if (event.target && event.target.closest && event.target.closest('.src-picker-field')) return;
+    const files = [...((event.clipboardData && event.clipboardData.files) || [])].filter((f) => String(f.type || '').startsWith('image/'));
+    if (!files.length) return;
+    event.preventDefault();
+    await imageImportToCanvas(files).catch((err) => toast(err.message, true));
+  };
+  document.addEventListener('paste', state.image._pasteHandler);
+  const canvasArea = $('.zd-canvas-area', root);
+  if (canvasArea) {
+    canvasArea.ondragover = (event) => { if (![...(event.dataTransfer.types || [])].includes('Files')) return; event.preventDefault(); canvasArea.classList.add('is-drop'); };
+    canvasArea.ondragleave = () => canvasArea.classList.remove('is-drop');
+    canvasArea.ondrop = async (event) => {
+      const files = [...(event.dataTransfer.files || [])].filter((f) => String(f.type || '').startsWith('image/'));
+      if (!files.length) return;
+      event.preventDefault();
+      canvasArea.classList.remove('is-drop');
+      await imageImportToCanvas(files).catch((err) => toast(err.message, true));
+    };
+  }
   const promptEl = $('#img-prompt', root);
   if (promptEl) {
     promptEl.oninput = () => {
@@ -3493,7 +3997,7 @@ function bindImage(root) {
     const thumb = event.target.closest('[data-preview]');
     if (thumb) { im.previewIndex = Number(thumb.dataset.preview); return render(); }
     const clearSource = event.target.closest('[data-clear-source]');
-    if (clearSource) { im.source = null; return render(); }
+    if (clearSource) return imageClearSource({ keepFocus: true });
     const target = event.target.closest('[data-act]');
     if (!target) return;
     const act = target.dataset.act;
@@ -3510,6 +4014,7 @@ function bindImage(root) {
         imagePushHistory();
         return render();
       }
+      if (act === 'image-import') { const el = $('#image-import-file'); if (el) el.click(); return; }
       if (act === 'pick-result') return openSourcePicker();
       if (act === 'pick-source') return openSourcePicker();
       if (act === 'copy-reverse') {
@@ -3582,12 +4087,12 @@ function bindImage(root) {
       }
       if (act === 'image-generate') {
         const ch=imageChannel();
-        if(!ch)return toast('请选择图像渠道',true);
+        if(!ch)return toast('请选择图像模型',true);
         if(!im.prompt.trim())return toast('先写提示词',true);
         if(IJ.active(workbenchContext.itemId))return toast('当前画面已有未结束的图像任务，请查看任务日志',true);
         if((im.tab||'generate')==='edit'&&!im.source)return toast('先选源图',true);
         await WB.flush('image');
-        const body={...workbenchContext,background:true,requestId:crypto.randomUUID(),channelId:ch.id,prompt:im.prompt,prefixPrompt:generationPrefixValue('image'),styleLayer:im.styleLayer||'auto',imageRatio:im.imageRatio||'auto',imageLayoutId:im.imageLayoutId||'free',layoutPrompt:im.layoutPrompt,size:im.size,count:im.count,styleId:state.project?.styleId,refs:(im.tab||'generate')==='edit'&&im.source?[{path:im.source.path,name:im.source.name}]:(im.refs||[])};
+        const body={...workbenchContext,background:true,requestId:crypto.randomUUID(),channelId:ch.id,prompt:im.prompt,prefixPrompt:generationPrefixValue('image'),styleLayer:im.styleLayer||'free',imageRatio:im.imageRatio||'auto',imageLayoutId:im.imageLayoutId||'free',layoutPrompt:im.layoutPrompt,size:im.size,count:im.count,styleId:state.project?.styleId,refs:(im.tab||'generate')==='edit'&&im.source?[{path:im.source.path,name:im.source.name}]:(im.refs||[])};
         im.busy=true;render();
         try{
           await api('/api/images/generate',{method:'POST',body});
@@ -3600,21 +4105,135 @@ function bindImage(root) {
   });
 }
 
+function imageSetSource(item) {
+  state.image.source = { path: item.path, name: item.name || '图片', url: item.url, width: item.width || 0, height: item.height || 0 };
+  state.image._focusSource = true;
+  closeModal();
+  try { WB.schedule('image'); } catch {}
+  render();
+  toast('已选择源图：' + state.image.source.name);
+}
+
+/* 清掉源图：删除按钮与 Backspace/Delete 共用这条路径 */
+function imageClearSource(opts = {}) {
+  if (!state.image.source) return;
+  state.image.source = null;
+  if (opts.keepFocus) state.image._focusSource = true;
+  try { WB.schedule('image'); } catch {}
+  render();
+  toast('已删除源图');
+}
+
+async function imageImportToCanvas(files) {
+  const file = [...files].find((f) => String(f.type || '').startsWith('image/'));
+  if (!file) return;
+  const item = await imageSaveDataUrl(await fileToDataUrl(file));
+  state.image.results = [...(state.image.results || []), item];
+  state.image.previewIndex = state.image.results.length - 1;
+  state.image.source = { path: item.path, name: item.name || file.name, url: item.url, width: item.width || 0, height: item.height || 0 };
+  imagePushHistory();
+  render();
+  toast('已导入图片：' + (item.name || file.name));
+}
+
+async function imageSourceFromFile(file) {
+  const dataUrl = await fileToDataUrl(file);
+  const item = await imageSaveDataUrl(dataUrl);
+  imageSetSource(item);
+}
+
+/* 源图选择器：常驻在面板里（拖入 / 粘贴 / 上传 / 素材库），不再弹窗 */
+function imageSourcePickerHtml(source) {
+  const previewSrc = source ? (source.url || '/api/file?path=' + encodeURIComponent(source.path)) : '';
+  return `<div class="zs-field src-picker-field">
+    <div class="zs-field-head">
+      <span class="zs-field-label">源图</span>
+      <span class="zs-field-right">
+        <span class="src-picker-state" title="${esc(source ? source.name : '未选择')}">${source ? esc(source.name) : '未选择'}</span>
+      </span>
+    </div>
+    <div class="src-stage ${source ? 'is-filled' : 'is-empty'}" data-source-drop="1" tabindex="0" title="${source ? '点一下选中，Backspace 或 Delete 删除' : '点一下选中这里，再按 Ctrl+V 粘贴图片'}">
+      ${source
+        ? `<img class="src-stage-img" src="${esc(previewSrc)}" alt="" />`
+        : `<div class="src-stage-empty"><b>拖入图片</b><span>点一下选中这里，Ctrl+V 直接粘贴</span></div>`}
+      <span class="src-stage-badge">${source ? '已选中 · Ctrl+V 换图 · Backspace 删除' : '已选中 · Ctrl+V 粘贴'}</span>
+      <input type="file" accept="image/*" hidden data-source-input="1" />
+    </div>
+    <div class="src-actions">
+      <button type="button" class="zs-btn zs-btn-sm" data-source-library="1">素材库</button>
+      <button type="button" class="zs-btn zs-btn-sm" data-source-upload="1">上传</button>
+      <button type="button" class="zs-btn zs-btn-sm" data-source-paste="1">粘贴</button>
+      ${source ? '<button type="button" class="zs-btn zs-btn-sm src-danger" data-clear-source="1">删除</button>' : ''}
+    </div>
+  </div>`;
+}
+
+function bindImageSourcePicker(root) {
+  const drop = $('[data-source-drop]', root);
+  if (!drop) return;
+  const input = $('[data-source-input]', root);
+  const upload = $('[data-source-upload]', root);
+  if (upload && input) upload.onclick = () => input.click();
+  if (input) input.onchange = () => {
+    const file = (input.files || [])[0];
+    input.value = '';
+    if (file) imageSourceFromFile(file).catch((err) => toast(err.message, true));
+  };
+  const library = $('[data-source-library]', root);
+  if (library) library.onclick = () => openSourcePicker();
+  drop.onclick = () => drop.focus();
+  const field = drop.closest('.src-picker-field') || drop;
+  field.addEventListener('keydown', (event) => {
+    if (event.key !== 'Backspace' && event.key !== 'Delete') return;
+    if (!state.image.source) return;
+    event.preventDefault();
+    event.stopPropagation();
+    imageClearSource({ keepFocus: true });
+  });
+  if (state.image._focusSource) {
+    state.image._focusSource = false;
+    drop.focus();
+  }
+  drop.addEventListener('paste', (event) => {
+    const file = [...((event.clipboardData && event.clipboardData.files) || [])].find((f) => String(f.type || '').startsWith('image/'));
+    if (!file) return;
+    event.preventDefault();
+    event.stopPropagation();
+    imageSourceFromFile(file).catch((err) => toast(err.message, true));
+  });
+  drop.ondragover = (event) => {
+    if (![...((event.dataTransfer && event.dataTransfer.types) || [])].includes('Files')) return;
+    event.preventDefault();
+    drop.classList.add('is-drop');
+  };
+  drop.ondragleave = () => drop.classList.remove('is-drop');
+  drop.ondrop = (event) => {
+    const file = [...((event.dataTransfer && event.dataTransfer.files) || [])].find((f) => String(f.type || '').startsWith('image/'));
+    if (!file) return;
+    event.preventDefault();
+    drop.classList.remove('is-drop');
+    imageSourceFromFile(file).catch((err) => toast(err.message, true));
+  };
+  const paste = $('[data-source-paste]', root);
+  if (paste) paste.onclick = async () => {
+    try {
+      if (!navigator.clipboard || !navigator.clipboard.read) throw new Error('这个浏览器不支持读剪贴板');
+      const entries = await navigator.clipboard.read();
+      for (const entry of entries) {
+        const type = (entry.types || []).find((t) => t.startsWith('image/'));
+        if (!type) continue;
+        const blob = await entry.getType(type);
+        return imageSourceFromFile(new File([blob], '剪贴板图片.png', { type }));
+      }
+      toast('剪贴板里没有图片', true);
+    } catch (err) { toast(err.message, true); }
+  };
+}
+
 function openSourcePicker() {
-  const items = (state.assets ? state.assets.items : []).filter((i) => i.kind === 'image');
-  openModal(`
-    <div class="modal-head"><h2>选择源图</h2><span class="grow"></span><button class="btn ghost sm" data-close="1">关闭</button></div>
-    <div class="modal-body"><div class="grid-cards">${items.map((item, i) => `
-      <div class="asset-card" data-pick="${i}"><div class="asset-thumb"><img src="${item.url}" loading="lazy" /></div>
-      <div class="asset-meta"><span class="name">${esc(item.name)}</span><span class="sub">${esc(item.folder)}</span></div></div>`).join('') || '<div class="empty">素材库还没有图片</div>'}</div></div>
-  `);
-  $$('#modal-panel [data-pick]').forEach((card) => {
-    card.onclick = () => {
-      const item = items[Number(card.dataset.pick)];
-      state.image.source = { path: item.path, name: item.name, url: item.url };
-      closeModal();
-      render();
-    };
+  return openLibraryPicker({
+    title: '选择源图',
+    onPick: (item) => imageSetSource(item),
   });
 }
 
@@ -3634,8 +4253,8 @@ function comparePaneHtml(side) {
         <span class="cmp-empty-ico">${IMG_ICON}</span>
         <span>拖入图片 / 视频，或从下面选择</span>
         <div class="cmp-empty-actions">
-          <button type="button" class="h3-btn h3-btn-sm" data-act="cmp-pick" data-side="${side}">媒体库</button>
-          <button type="button" class="h3-btn h3-btn-sm" data-act="cmp-local" data-side="${side}">本地文件</button>
+          <button type="button" class="wmd-btn wmd-btn-sm" data-act="cmp-pick" data-side="${side}">媒体库</button>
+          <button type="button" class="wmd-btn wmd-btn-sm" data-act="cmp-local" data-side="${side}">本地文件</button>
         </div>
       </div>
     </div>`;
@@ -3660,14 +4279,14 @@ function renderCompare() {
       <span class="cmp-title">对比</span>
       <span class="cmp-pick">A—${c.left ? esc(c.left.name) : ''}</span>
       <span class="cmp-pick">B—${c.right ? esc(c.right.name) : ''}</span>
-      <span class="h3-toolbar-spacer"></span>
+      <span class="wmd-toolbar-spacer"></span>
       <div class="cmp-mode">
-        <button type="button" class="h3-seg-item ${overlay ? '' : 'is-active'}" data-act="cmp-mode" data-mode="side">对比模式</button>
-        <button type="button" class="h3-seg-item ${overlay ? 'is-active' : ''}" data-act="cmp-mode" data-mode="overlay">叠加对比</button>
+        <button type="button" class="wmd-seg-item ${overlay ? '' : 'is-active'}" data-act="cmp-mode" data-mode="side">对比模式</button>
+        <button type="button" class="wmd-seg-item ${overlay ? 'is-active' : ''}" data-act="cmp-mode" data-mode="overlay">叠加对比</button>
       </div>
-      <button type="button" class="h3-link h3-slots-link" data-act="cmp-swap" title="交换 A / B">⇄ 交换 A/B</button>
-      <button type="button" class="h3-link h3-slots-link" data-act="cmp-clear-all" title="清空两侧">清空</button>
-      <button type="button" class="h3-btn h3-btn-sm" data-act="cmp-export" title="把当前两帧并排导出成 PNG，存进素材库">导出并排合成</button>
+      <button type="button" class="wmd-link wmd-slots-link" data-act="cmp-swap" title="交换 A / B">⇄ 交换 A/B</button>
+      <button type="button" class="wmd-link wmd-slots-link" data-act="cmp-clear-all" title="清空两侧">清空</button>
+      <button type="button" class="wmd-btn wmd-btn-sm" data-act="cmp-export" title="把当前两帧并排导出成 PNG，存进素材库">导出并排合成</button>
     </div>
 
     <div class="cmp-stage ${overlay ? 'is-overlay' : ''}">
@@ -3678,14 +4297,14 @@ function renderCompare() {
 
     <div class="cmp-dock">
       <div class="cmp-transport">
-        <button type="button" class="h3-iconbtn is-sm" data-act="cmp-prev" title="上一帧">${ICON.skipBack}</button>
-        <button type="button" class="h3-iconbtn is-sm" data-act="cmp-play" title="播放 / 暂停（空格）">${ICON.play}</button>
-        <button type="button" class="h3-iconbtn is-sm" data-act="cmp-next" title="下一帧">${ICON.skipFwd}</button>
+        <button type="button" class="wmd-iconbtn is-sm" data-act="cmp-prev" title="上一帧">${ICON.skipBack}</button>
+        <button type="button" class="wmd-iconbtn is-sm" data-act="cmp-play" title="播放 / 暂停（空格）">${ICON.play}</button>
+        <button type="button" class="wmd-iconbtn is-sm" data-act="cmp-next" title="下一帧">${ICON.skipFwd}</button>
         <span class="cmp-time tnum" id="cmp-time">00:00</span>
         <input class="cmp-seek" id="cmp-seek" type="range" min="0" max="1000" step="1" value="0" />
         <span class="cmp-time tnum" id="cmp-duration">00:00</span>
         <label class="cmp-loop" title="循环播放"><input type="checkbox" id="cmp-loop" ${c.loop ? 'checked' : ''} /> 循环</label>
-        <select class="h3-select cmp-speed" id="cmp-speed" title="播放速度">
+        <select class="wmd-select cmp-speed" id="cmp-speed" title="播放速度">
           ${[0.25, 0.5, 0.75, 1, 1.5, 2].map((s) => `<option value="${s}" ${Number(s) === Number(c.speed || 1) ? 'selected' : ''}>${s}x</option>`).join('')}
         </select>
       </div>
@@ -3821,7 +4440,7 @@ function bindCompare(root) {
 function openComparePicker(side) {
   const items = ((state.media && state.media.items) || []).filter((i) => i.kind === 'video' || i.kind === 'image');
   openModal(`
-    <div class="modal-head"><h2>选择素材 · ${side === 'left' ? 'A' : 'B'}</h2><span class="grow"></span><button type="button" class="h3-btn h3-btn-sm h3-btn-ghost" data-close="1">关闭</button></div>
+    <div class="modal-head"><h2>选择素材 · ${side === 'left' ? 'A' : 'B'}</h2><span class="grow"></span><button type="button" class="wmd-btn wmd-btn-sm wmd-btn-ghost" data-close="1">关闭</button></div>
     <div class="modal-body">
       ${items.length ? `<div class="grid-cards">${items.map((item, i) => `
         <div class="asset-card" data-pick="${i}">
@@ -3904,6 +4523,15 @@ async function exportCompare() {
 }
 
 
+function askImageUrl(raw) {
+  const url = String(raw || '').trim();
+  if (!url) return '';
+  if (/^data:image\/(png|jpe?g|gif|webp);base64,/i.test(url)) return url;
+  if (/^https?:\/\//i.test(url)) return url;
+  if (/^\/(api|media|assets|wallpapers)\//.test(url)) return url;
+  return '';
+}
+
 function mdInline(text) {
   let html = esc(text);
   html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
@@ -3911,12 +4539,18 @@ function mdInline(text) {
   html = html.replace(/__([^_]+)__/g, '<strong>$1</strong>');
   html = html.replace(/~~([^~]+)~~/g, '<del>$1</del>');
   html = html.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+  html = html.replace(/!\[([^\]]*)\]\(\s*([^)\s]+)\s*\)/g, (whole, alt, src) => {
+    const url = askImageUrl(src);
+    if (!url) return whole;
+    return `<span class="ask-inline-media"><img class="ask-inline-img" src="${url}" alt="${alt}" loading="lazy" data-act="ask-open-inline" data-url="${url}" data-label="${alt || '图片'}" /><span class="ask-inline-missing">图片未能加载 · ${esc(alt || url)}</span></span>`;
+  });
   html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
   return html;
 }
 
 function markdownLite(text) {
-  const src = String(text || '').replace(/\r\n/g, '\n');
+  // 全角竖线也当表格分隔符：模型偶尔会混用 ｜ 和 |
+  const src = String(text || '').replace(/\r\n/g, '\n').replace(/｜/g, '|');
   const chunks = src.split(/```/);
   let out = '';
   for (let c = 0; c < chunks.length; c += 1) {
@@ -3992,20 +4626,20 @@ function markdownLite(text) {
 
 /* ------------------------------------------------------------------ ask 页复刻（剧本创作台） */
 
-function askProjectId() { return state.projectId || 'h3-studio'; }
+function askProjectId() { return state.projectId || 'wenyun-m-desktop'; }
 
 const ASK_GENERAL = { id: '', name: '普通聊天', description: '只保留智能助手身份，不注入技能或固定流程；需要时由你选择技能。', prompts: ['你好，先介绍一下你能做什么。', '帮我把这个想法整理成可以开拍的方案。'] };
 const ASK_SKILLS = [
   { id: 'novel', name: '小说创作', description: '从一句梗概到可改编的短篇小说 / 章节，带人物、钩子和下一节悬念。', prompts: ['写一个 800 字的短篇开头：雨夜，外卖员在便利店门口捡到一部还在响的手机。', '给我 3 个「雪山寺庙门口重逢」的故事方向。'] },
   { id: 'script', name: '小说转剧本', description: '小说 / 梗概改写成可拍的短剧剧本：分场、台词、场尾钩子。', prompts: ['把下面这段小说改写成 3 场短剧剧本：', '把刚才的小说改成 60 秒竖屏短剧，保留结尾反转。'] },
-  { id: 'storyboard', name: '剧本转分镜', description: '剧本拆成 H3 分镜：镜号、时长、景别、六段式提示词。', prompts: ['把上面的剧本拆成 3 个 15 秒分镜。', '帮我把这场戏拆成分镜，标好 <Picture N> 和 <Subject N>。'] },
+  { id: 'storyboard', name: '剧本转分镜', description: '剧本拆成标准分镜：镜号、时长、景别、六段式提示词。', prompts: ['把上面的剧本拆成 3 个 15 秒分镜。', '帮我把这场戏拆成分镜，标好 <Picture N> 和 <Subject N>。'] },
   { id: 'prompt', name: '分镜转提示词', description: '分镜改写成视频创作台可直接粘贴的六段式提示词。', prompts: ['把上面的分镜写成可直接出片的提示词。', '把这段描述改写成合规的六段式。'] },
   { id: 'review', name: '提示词审核', description: '检查六段、引用、时长和人物一致性，给出可出片结论。', prompts: ['审核这条提示词能不能出片：', '帮我检查分镜引用、时长和人物一致性。'] },
 ];
 
 const ASK_CHAIN = {
   novel: { next: 'script', label: '转成剧本', verb: '改写成短剧剧本', guidance: 'script' },
-  script: { next: 'storyboard', label: '拆成分镜', verb: '拆成可生成的 H3 分镜', guidance: 'storyboard' },
+  script: { next: 'storyboard', label: '拆成分镜', verb: '拆成可生成的标准分镜', guidance: 'storyboard' },
   storyboard: { next: 'prompt', label: '生成视频提示词', verb: '改写成视频创作台可用的提示词', guidance: 'prompt' },
   prompt: { next: null, label: '送到创作台', verb: '', guidance: 'prompt' },
 };
@@ -4025,7 +4659,7 @@ const ASK_INTERNAL_TOOLS = [
   { name: 'search_workspace_documents', description: '在对话附件与项目知识库里做全文检索。', kind: 'task' },
   { name: 'read_workspace_document', description: '分页读取附件 / 知识库文档正文。', kind: 'task' },
   { name: 'create_workspace_artifact', description: '生成可预览的交付文件（Markdown 优先）。', kind: 'task' },
-  { name: 'list_creation_models', description: '列出可用的图像渠道与视频模型（含时长、画幅）。', kind: 'create' },
+  { name: 'list_creation_models', description: '列出可用的图像模型与视频模型（含时长、画幅）。', kind: 'create' },
   { name: 'generate_image', description: '调用图像模型出图，可作参考图或首帧。', kind: 'create' },
   { name: 'submit_video_job', description: '把提示词提交到视频工作台生成视频（异步）。', kind: 'create' },
   { name: 'check_video_job', description: '查询视频任务进度、阶段与错误。', kind: 'create' },
@@ -4035,6 +4669,24 @@ const ASK_INTERNAL_TOOLS = [
 ];
 
 const ASK_EFFORT_LABELS = { none: '关闭', low: '轻量', high: '深入', max: '最高' };
+// 本地权限三档：只调"能写哪里、能不能跑命令"，高危命令任何档位都被系统强制阻断
+const ASK_PERMISSIONS = [
+  { id: 'readonly', label: '仅查看', icon: '👁', desc: '只读检索，不写文件、不移动、不生成、不执行命令' },
+  { id: 'workspace', label: '工作区权限', icon: '🗂', desc: '项目目录内可读写、移动、生成；命令需完全权限' },
+  { id: 'full', label: '完全权限', icon: '⚡', desc: '本机任意路径可读写（系统目录除外）' },
+];
+const ASK_PERM_DEFAULT = 'workspace';
+
+function askPermission(id) {
+  return ASK_PERMISSIONS.find((p) => p.id === id) || ASK_PERMISSIONS.find((p) => p.id === ASK_PERM_DEFAULT);
+}
+
+function askPermissionSet(id) {
+  const a = askState();
+  a.permission = askPermission(id).id;
+  try { localStorage.setItem('wmd.askPermission', a.permission); } catch { /* ignore */ }
+  return a.permission;
+}
 const ASK_MODEL_HINTS = {
   browser: 'Chrome 中打开的本地窗口比手机更稳，建议在桌面浏览器继续。',
 };
@@ -4047,8 +4699,14 @@ function askState() {
       draft: '',
       search: '',
       generating: false,
-      historyOpen: true,
+      historyOpen: (() => { try { return localStorage.getItem('wmd.askHistoryOpen') !== '0'; } catch { return true; } })(),
       capabilitiesOpen: false,
+      // 参考出图开关：关掉就不调用图像渠道（省钱），设置跟着浏览器记住
+      refImages: (() => { try { return localStorage.getItem('wmd.askRefImages') !== '0'; } catch { return true; } })(),
+      // 本地权限档位：仅查看 / 工作区权限 / 完全权限
+      permission: (() => { try { return askPermission(localStorage.getItem('wmd.askPermission') || '').id; } catch { return ASK_PERM_DEFAULT; } })(),
+      permMenu: false,
+      toolsSupported: true,
       panelTab: 'analysis',
       capTab: 'tools',
       pluginTab: 'skill',
@@ -4057,6 +4715,8 @@ function askState() {
       removed: null,
       rename: { open: false, id: '', text: '' },
       toolDetail: null,
+      installSkill: null,
+      queues: {},
       previewFile: null,
       workspacePage: 'console',
       models: null,
@@ -4078,7 +4738,7 @@ function askState() {
   }
   if (!state.ask._widthLoaded) {
     state.ask._widthLoaded = true;
-    const saved = Number(localStorage.getItem('h3.previewWidth'));
+    const saved = Number(localStorage.getItem('wmd.previewWidth'));
     state.ask.previewWidth = saved >= 240 ? saved : null;
   }
   return state.ask;
@@ -4086,7 +4746,10 @@ function askState() {
 
 function askSkillList() {
   const a = askState();
-  return [ASK_GENERAL].concat(ASK_SKILLS, a.customSkills || []);
+  const all = (a.skills && a.skills.length)
+    ? a.skills
+    : ASK_SKILLS.map((s) => ({ ...s, source: 'builtin' }));
+  return [ASK_GENERAL].concat(all);
 }
 
 function askSkill(id) {
@@ -4097,20 +4760,29 @@ function askSkillName(id) {
   return id ? askSkill(id).name : '';
 }
 
+// 技能统一来源：内置技能 + 自定义技能都来自 /agent/skills，右侧组件与插件管理共用
 async function askLoadSkills() {
   const a = askState();
   try {
-    const data = await askApi('/plugins?kind=skill').then((r) => r.json());
+    const data = await askApi('/skills').then((r) => r.json());
     const list = Array.isArray(data) ? data : data.items || [];
-    a.customSkills = list.map((item) => ({
-      id: 'plugin:' + item.id,
-      name: item.name,
-      description: item.description || '自定义技能',
-      prompts: [],
-      custom: true,
-      runtime: item.runtime_status,
-    }));
+    a.skills = list.map((item) => {
+      const id = String(item.id || '');
+      const source = item.source || (id.startsWith('plugin:') ? 'custom' : 'builtin');
+      return {
+        id,
+        name: item.name || '未命名技能',
+        description: item.description || (source === 'custom' ? '自定义技能' : ''),
+        prompts: Array.isArray(item.prompts) ? item.prompts : [],
+        source,
+        runtime: item.runtime_status,
+        enabled: item.enabled !== false,
+        pluginId: item.plugin_id || (id.startsWith('plugin:') ? id.slice(7) : ''),
+      };
+    });
+    a.customSkills = a.skills.filter((s) => s.source === 'custom');
   } catch {
+    a.skills = a.skills || [];
     a.customSkills = a.customSkills || [];
   }
 }
@@ -4141,10 +4813,49 @@ async function askApi(path, init = {}) {
   return res;
 }
 
+async function askUpload(path, form) {
+  const res = await fetch('/api/agent' + path, {
+    method: 'POST',
+    headers: { 'X-Project-Id': askProjectId() },
+    body: form,
+  });
+  if (!res.ok) {
+    let message = '技能上传失败（' + res.status + '）';
+    try {
+      const data = await res.json();
+      message = typeof data.detail === 'string' ? data.detail : (data.detail && data.detail.message) || message;
+    } catch { /* ignore */ }
+    throw new Error(message);
+  }
+  return res.json().catch(() => ({}));
+}
+
+/* 对话级运行登记：切换对话不再打断正在跑的任务，后台继续，回到对话就能看到结果 */
+function askRuns(a = askState()) { if (!a.runs) a.runs = new Map(); return a.runs; }
+function askRunOf(id) { return id ? askRuns(askState()).get(id) || null : null; }
+function askAbortRuns() {
+  const a = askState();
+  for (const run of askRuns(a).values()) { try { run.controller.abort(); } catch { /* ignore */ } }
+  askRuns(a).clear();
+  a.generating = false;
+  a.request = null;
+  a.controller = null;
+  a.startedAt = 0;
+}
+function askSyncRunState() {
+  const a = askState();
+  const run = askRunOf(a.activeId);
+  a.generating = !!run;
+  a.request = run ? { sessionId: run.chatId, requestId: run.requestId, controller: run.controller, runId: run.runId || '' } : null;
+  a.controller = run ? run.controller : null;
+  a.startedAt = run ? run.startedAt : 0;
+  // 回到还在跑的对话时先显示已有内容，避免从零开始补字
+  if (run && run.msg) run.msg._reveal = null;
+}
+
 async function askRestore() {
   const a = askState();
-  if (a.controller) a.controller.abort();
-  a.generating = false;
+  askAbortRuns();
   a.conversations = [];
   a.activeId = '';
   a.draft = '';
@@ -4154,7 +4865,17 @@ async function askRestore() {
   try {
     const list = await askApi('/sessions').then((r) => r.json());
     a.conversations = Array.isArray(list) ? list : [];
-    askNewConversation();
+    // 刷新后回到上次停留的对话，而不是每次新开一个
+    const remembered = (() => { try { return localStorage.getItem('wmd-ask-active') || ''; } catch { return ''; } })();
+    const existing = remembered ? a.conversations.find((c) => c.id === remembered) : null;
+    if (existing) {
+      a.activeId = existing.id;
+      a.skillId = '';
+      a.workspacePage = 'console';
+      askSyncRunState();
+    } else {
+      askNewConversation();
+    }
   } catch (err) {
     a.error = err.message;
     a.conversations = [];
@@ -4162,11 +4883,106 @@ async function askRestore() {
   } finally {
     a.loading = false;
     if (state.route === 'script') askRenderAll();
+    askRemember();
+    askLoadActiveRuns();
   }
 }
 
+// 从服务端拿还在这跑的对话（刷新后据此恢复“生成中”和左侧转圈）
+async function askLoadActiveRuns() {
+  const a = askState();
+  let data = null;
+  try { data = await askApi('/runs/active').then((r) => r.json()); } catch { return; }
+  const items = (data && data.items) || [];
+  const live = new Set(items.map((x) => x.session_id));
+  for (const run of askRuns(a).values()) {
+    if (run.attached && !live.has(run.chatId)) {
+      const other = askRuns(a);
+      other.delete(run.chatId);
+    }
+  }
+  for (const item of items) {
+    if (!item || !item.session_id || askRunOf(item.session_id)) continue;
+    askRuns(a).set(item.session_id, {
+      chatId: item.session_id,
+      requestId: '',
+      runId: item.run_id,
+      controller: null,
+      startedAt: item.started_at || Date.now(),
+      msg: null,
+      attached: true,
+    });
+  }
+  askSyncRunState();
+  askRefreshHistoryFlags();
+  if (askRunOf(a.activeId)) askAttachRun(a.activeId);
+}
+
+// 刷新/切回时重新接上正在跑的任务：按事件序号补齐内容
+async function askAttachRun(chatId) {
+  const a = askState();
+  const run = askRunOf(chatId);
+  if (!run || run.attaching) return;
+  if (!run.runId) return;
+  const chat = (a.conversations || []).find((c) => c.id === chatId);
+  if (!chat) return;
+  // 后端已经把这一轮的结果写回会话了（刷新前就跑完了），不要再补一条
+  const tailMsg = chat.messages[chat.messages.length - 1];
+  if (tailMsg && tailMsg.role === 'assistant' && tailMsg.execution && tailMsg.execution.id === run.runId) {
+    askRuns(a).delete(chatId);
+    askSyncRunState();
+    askRefreshHistoryFlags();
+    if (a.activeId === chatId) askRenderMessages();
+    return;
+  }
+  run.attaching = true;
+  if (!run.msg) {
+    const tail = chat.messages[chat.messages.length - 1];
+    run.msg = tail && tail.role === 'assistant' && tail._runId === run.runId
+      ? tail
+      : { id: 'run-' + run.runId, role: 'assistant', text: '', time: Date.now(), _streaming: true, _runId: run.runId };
+    if (!chat.messages.includes(run.msg)) chat.messages.push(run.msg);
+  }
+  run.msg._streaming = true;
+  askSyncRunState();
+  if (a.activeId === chatId) askRenderMessages();
+  let cursor = 0;
+  let sawDone = false;
+  for (let guard = 0; guard < 3600; guard += 1) {
+    if (askRunOf(chatId) !== run) return;
+    let page = null;
+    try {
+      page = await askApi('/runs/' + encodeURIComponent(run.runId) + '/events?after=' + cursor).then((r) => r.json());
+    } catch {
+      page = null;
+    }
+    if (page) {
+      for (const ev of page.items || []) {
+        if (typeof ev.sequence === 'number') cursor = Math.max(cursor, ev.sequence);
+        if (ev.type === 'done') sawDone = true;
+        askApplyEvent(run.msg, ev);
+      }
+      if (a.activeId === chatId) askRevealKick();
+      const done = (page.items || []).some((ev) => ev.type === 'done' || ev.type === 'error');
+      const finished = page.finished === true;
+      if (done || (finished && !(page.items || []).length)) break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 600));
+  }
+  const runs = askRuns(a);
+  if (runs.get(chatId) === run) runs.delete(chatId);
+  run.msg._streaming = false;
+  run.msg._reveal = null;
+  if (!sawDone && run.msg.text && !run.msg.error && !/\[生成已停止\]/.test(run.msg.text)) run.msg.text += '\n\n[生成已停止]';
+  chat.updated = Date.now();
+  if (a.activeId === chatId) { askSyncRunState(); askRenderMessages(); }
+  askRefreshHistoryFlags();
+  askPersist();
+  askDrainQueue(chatId);
+}
+
 function askRemember() {
-  try { if (askState().activeId) localStorage.setItem('h3-ask-active', askState().activeId); } catch { /* ignore */ }
+  try { if (askState().activeId) localStorage.setItem('wmd-ask-active', askState().activeId); } catch { /* ignore */ }
 }
 
 let askSyncTimer = null;
@@ -4188,8 +5004,6 @@ function askNewConversation() {
   a.workspacePage = 'console';
   a.skillId = '';
   a.previewFile = null;
-  if (a.controller) a.controller.abort();
-  a.generating = false;
   a.mention = null;
   a.command = { mode: null, query: null, index: 0 };
   const c = { id: askId(), title: '新的创作对话', pinned: false, updated: Date.now(), messages: [] };
@@ -4197,6 +5011,7 @@ function askNewConversation() {
   a.activeId = c.id;
   a.draft = '';
   a.attachments = [];
+  askSyncRunState();
   askRemember();
   if (state.route === 'script') askRenderAll();
   return c;
@@ -4207,9 +5022,7 @@ function askResetForProject() {
   const a = state.ask;
   if (!a) return;
   if (askSyncTimer) { clearTimeout(askSyncTimer); askSyncTimer = null; }
-  if (a.controller) { try { a.controller.abort(); } catch { /* ignore */ } }
-  a.controller = null;
-  a.generating = false;
+  askAbortRuns();
   a.conversations = null;
   a.activeId = '';
   a.draft = '';
@@ -4225,15 +5038,15 @@ function askSelect(id) {
   a.skillId = '';
   a.previewFile = null;
   a.workspacePage = 'console';
-  if (a.controller) a.controller.abort();
-  a.generating = false;
   a.mention = null;
   a.activeId = id;
   a.draft = '';
   a.attachments = [];
+  askSyncRunState();
   askRemember();
   askRenderAll();
   askScrollBottom();
+  if (askRunOf(id) && askRunOf(id).attached) askAttachRun(id);
 }
 
 function askPreview(c) {
@@ -4260,12 +5073,74 @@ function askMarkdown(text) {
   return markdownLite(text);
 }
 
+// 把一次运行的真实轨迹（思考 / 工具调用 / 结果）整理成可折叠的行
+function askTraceRows(msg) {
+  const items = (msg && msg.trajectory) || [];
+  const rows = [];
+  for (const item of items) {
+    const kind = item.kind || '';
+    if (item.role === 'user') continue;
+    if (item.role === 'assistant' && kind === 'final') continue;
+    if (item.role === 'assistant') {
+      const calls = Array.isArray(item.tool_calls) ? item.tool_calls : [];
+      const text = String(item.content || '').trim();
+      if (text && calls.length) rows.push({ type: 'think', text });
+      for (const call of calls) {
+        let args = '';
+        try { args = typeof call.arguments === 'string' ? call.arguments : JSON.stringify(call.arguments || {}); } catch { args = ''; }
+        rows.push({ type: 'tool', name: call.name || 'tool', args: String(args || '').replace(/\s+/g, ' ').slice(0, 80) });
+      }
+      if (text && !calls.length) rows.push({ type: 'think', text });
+      continue;
+    }
+    if (item.role === 'tool') {
+      rows.push({ type: 'result', name: item.tool_name || '', status: item.status || 'success', text: String(item.content || '').replace(/\s+/g, ' ') });
+    }
+  }
+  return rows;
+}
+
+function askTraceRowHtml(row) {
+  if (row.type === 'think') {
+    return `<li class="is-think"><span class="ask-row-ico">✳</span><b>思考</b><em title="${esc(row.text)}">${esc(row.text)}</em></li>`;
+  }
+  if (row.type === 'tool') {
+    return `<li class="is-tool"><span class="ask-row-ico">›_</span><b>运行命令</b><em title="${esc(row.args)}">${esc(row.name)}${row.args ? ' · ' + esc(row.args) : ''}</em></li>`;
+  }
+  const failed = row.status && row.status !== 'success';
+  return `<li class="is-result ${failed ? 'is-failed' : ''}"><span class="ask-row-ico">↳</span><b>${failed ? '失败' : '结果'}</b><em title="${esc(row.text)}">${esc(row.name ? row.name + '：' : '')}${esc(row.text)}</em></li>`;
+}
+
+// 拉取某条回复对应运行的完整轨迹（思考 / 工具调用），用于消息里的“执行过程”
+const askTraceLoading = new Set();
+async function askLoadMessageTrace(msg, runId, chatId) {
+  const a = askState();
+  const sid = chatId || a.activeId;
+  const id = String(runId || (msg && msg.execution && msg.execution.id) || '');
+  if (!id || !sid) return;
+  if (askTraceLoading.has(id)) return;
+  askTraceLoading.add(id);
+  try {
+    const data = await askApi('/sessions/' + encodeURIComponent(sid) + '/trajectory?run_id=' + encodeURIComponent(id)).then((r) => r.json());
+    msg.trajectory = (data && data.items) || [];
+  } catch {
+    msg.trajectory = [];
+  } finally {
+    askTraceLoading.delete(id);
+  }
+  if (state.route === 'script') askRenderMessages();
+}
+
 function askTraceHtml(msg, pending) {
   const exec = msg.execution;
-  if (!exec || !exec.plan) {
-    return `<p class="ask-process-note">${esc(exec ? askHeading(exec, pending) : (pending ? '执行中…' : '历史回复'))}</p>`;
+  if (!exec) {
+    return pending ? '<p class="ask-process-note">执行中…</p>' : '';
   }
-  const steps = (exec.plan.steps || []).map((step, index) => {
+  const planSteps = (exec.plan && Array.isArray(exec.plan.steps)) ? exec.plan.steps : [];
+  const tools = Array.isArray(exec.tools) ? exec.tools : [];
+  const rows = askTraceRows(msg);
+  const loaded = Array.isArray(msg.trajectory);
+  const stepHtml = planSteps.map((step, index) => {
     const stateText = { pending: '待执行', running: '执行中', completed: '已完成', blocked: '待补充' }[step.status] || step.status;
     const icon = step.status === 'completed' ? '✓' : step.status === 'running' ? '◐' : step.status === 'blocked' ? '!' : index + 1;
     return `<li class="${esc(step.status || '')}">
@@ -4277,13 +5152,29 @@ function askTraceHtml(msg, pending) {
         ${(step.evidence && step.evidence.length) ? `<details class="ask-evidence"><summary>依据材料 · ${step.evidence.length} 项 ›</summary>${step.evidence.map((s) => `<div><b>${esc(s.title || '')}</b><span>${esc(s.kind === 'guidance' ? '指导文档' : s.kind === 'workspace' ? '工作空间文件' : s.kind === 'artifact' ? '生成的交付文件' : '用户提供')} · ${esc(s.id || '')}</span><p>${esc(String(s.content || '').slice(0, 400))}</p></div>`).join('')}</details>` : ''}
       </div></li>`;
   }).join('');
-  return `<details class="ask-trace" ${pending ? 'open' : ''}>
-    <summary class="ask-trace-head"><span>${esc(askHeading(exec, pending))}</span><span class="ask-chev">›</span></summary>
-    ${(exec.validation_issues && exec.validation_issues.length) ? `<p class="ask-goal">${esc(exec.validation_issues.join('；'))}</p>` : ''}
-    ${exec.plan.goal ? `<p class="ask-goal">${esc(exec.plan.goal)}</p>` : ''}
-    <ol class="ask-steps">${steps}</ol>
-    <footer>步骤产出基于列出的用户材料与文档；模型分析不代表业务指标计算已验证。完整用户 / 助手 / 工具记录可在右侧「运行轨迹」查看。</footer>
-  </details>`;
+  const toolHtml = tools.map((tool) => `<li><span>›</span><b>运行命令</b><em>${esc(tool.name || 'tool')}</em>${tool.status && tool.status !== 'success' ? '<small>失败</small>' : ''}</li>`).join('');
+  const runId = (exec && exec.id) || '';
+  const hasRows = rows.length > 0;
+  const hasPlan = planSteps.length > 0;
+  const canLoad = !loaded && !!runId;
+  const open = !!pending || !!msg.traceOpen;
+  const nothing = loaded && !hasRows && !hasPlan && !toolHtml;
+  if (nothing && !pending) {
+    // 这轮确实没有工具与步骤：只保留一行状态，不再摆空占位
+    return `<div class="ask-trace is-static"><div class="ask-trace-head is-static"><span>${esc(askHeading(exec, false))}</span></div></div>`;
+  }
+  if (!hasRows && !hasPlan && !toolHtml && !pending && !canLoad) return '';
+  return `<section class="ask-trace ${pending ? 'is-running' : ''} ${open ? 'is-open' : ''}" data-trace-run="${esc(runId)}">
+    <button type="button" class="ask-trace-head" data-act="ask-trace-toggle" data-run="${esc(runId)}" aria-expanded="${open ? 'true' : 'false'}"><span>${esc(askHeading(exec, pending))}</span><span class="ask-chev">${open ? '⌄' : '›'}</span></button>
+    ${open ? `<div class="ask-trace-body">
+      ${(exec.validation_issues && exec.validation_issues.length) ? `<p class="ask-goal">${esc(exec.validation_issues.join('；'))}</p>` : ''}
+      ${hasRows ? `<ul class="ask-trace-rows">${rows.map(askTraceRowHtml).join('')}</ul>` : ''}
+      ${toolHtml ? `<ul class="ask-tool-runs">${toolHtml}</ul>` : ''}
+      ${hasPlan ? `<section class="ask-trace-section">${exec.plan.goal ? `<p class="ask-goal">${esc(exec.plan.goal)}</p>` : ''}<ol class="ask-steps">${stepHtml}</ol></section>` : ''}
+      ${canLoad ? `<button type="button" class="ask-trace-load" data-act="ask-load-trace" data-run="${esc(runId)}">加载执行过程</button>` : ''}
+      ${(loaded && !hasRows && !hasPlan && !toolHtml) ? '<p class="ask-trace-empty">这次没有产生步骤记录</p>' : ''}
+    </div>` : ''}
+  </section>`;
 }
 
 function askHeading(exec, pending) {
@@ -4306,50 +5197,912 @@ function askFilesHtml(files) {
   </button>`).join('')}</div>`;
 }
 
+/* ------------------- 对话里的交互组件（豆包 GenUI / DIL） ------------------- */
+// 豆包系模型偶尔会把交互组件源码直接写进回复：
+//   {@body const [style,setStyle] = DIL.useState("诗意苍凉")}
+//   <box border radius="xl" padding={4} gap={4}>
+//     <text weight="medium">1. 整体氛围</text>
+//     <radio-group value={style} onChange={setStyle}>…</radio-group>
+//     <button block onClick={() => GenUI.issueNewTurn("…"+style+"…")}>生成</button>
+//   </box>
+// 这里把它还原成真实的单选卡片 + 动作按钮，标签不会再裸露在对话正文里。
+
+const askGenUiMemory = new Map();
+const GU_TAG_SRC = '<(\\/?)([a-zA-Z][\\w-]*)((?:\\{[^{}]*\\}|"[^"]*"|\'[^\']*\'|[^<>"\'])*?)(\\/?)>';
+
+/* --- 格式协议 ---------------------------------------------------------------
+   一条回复里只允许两种格式，且必须靠标签边界区分清楚：
+   1) 正文 = Markdown：普通文字、标题、列表、表格、代码块。这里出现的 <…> 一律当文字。
+   2) 组件 = 下面这张白名单里的标签，标签名大小写不敏感、可写 GridItem / Column 这类别名。
+   任何不在白名单里的标签都不进正文：带属性的（<Foo bar="1"/>）、自闭合的组件式标签
+   直接吞掉，避免把模型内部协议漏给用户；正文里的素材编号 <Picture N>、<Subject N>、
+   <Audio N>、台词 <d>[Chinese] …</d> 没有属性，照原样保留。                              */
+const GU_RENDER_TAGS = new Set([
+  'box', 'card', 'panel', 'row', 'col', 'stack', 'group', 'grid', 'grid-item',
+  'text', 'image', 'img', 'asyncimage', 'asyncimagegroup', 'divider',
+  'radio-group', 'checkbox-group', 'radio', 'checkbox', 'option', 'choice',
+  'button', 'input', 'textarea', 'link', 'a', 'tag',
+]);
+const GU_CONTAINER_TAGS = new Set(['box', 'card', 'panel', 'row', 'col', 'stack', 'group', 'grid', 'grid-item']);
+const GU_TAG_ALIASES = {
+  column: 'col', columns: 'col', section: 'box', container: 'box', wrapper: 'box', layout: 'box',
+  caption: 'text', label: 'text', paragraph: 'text',
+  item: 'grid-item', hr: 'divider', chip: 'tag', badge: 'tag',
+  checkboxgroup: 'checkbox-group', radiogroup: 'radio-group', select: 'radio-group',
+};
+const GU_SAFE_PROSE_TAGS = new Set(['b', 'i', 'u', 's', 'em', 'strong', 'code', 'br', 'sub', 'sup', 'mark', 'small', 'kbd', 'del', 'ins']);
+const GU_TAG_CANON = new Map();
+for (const name of GU_RENDER_TAGS) GU_TAG_CANON.set(name.replace(/-/g, ''), name);
+for (const [alias, name] of Object.entries(GU_TAG_ALIASES)) GU_TAG_CANON.set(alias.replace(/-/g, ''), name);
+
+function guTagName(raw) {
+  const flat = String(raw == null ? '' : raw).toLowerCase().replace(/[-_\s]/g, '');
+  return GU_TAG_CANON.get(flat) || String(raw == null ? '' : raw).toLowerCase();
+}
+
+// 一眼能看出是不是组件协议：白名单标签、带属性、或大写开头的自闭合标签
+function guLooksComponent(name, attrs, selfClose) {
+  const tag = guTagName(name);
+  if (GU_RENDER_TAGS.has(tag)) return true;
+  if (GU_SAFE_PROSE_TAGS.has(tag)) return false;
+  if (/=/.test(String(attrs || ''))) return true;
+  return !!selfClose && /^[A-Z]/.test(String(name || ''));
+}
+
+// 万一有标签漏到 Markdown 段落里（流式中途、模型忘闭合），这里兜底不再裸露
+function guScrubLeaks(text) {
+  let out = String(text == null ? '' : text);
+  if (out.indexOf('<') < 0) return out;
+  const whole = out;
+  out = out.replace(new RegExp(GU_TAG_SRC, 'g'), (all, close, name, attrs, selfClose, offset) => {
+    if (guInCode(whole, offset)) return all;                  // 代码块里讨论的标签是文字
+    if (GU_RENDER_TAGS.has(guTagName(name))) return '';        // 组件标签漏进正文：吞掉
+    if (GU_SAFE_PROSE_TAGS.has(guTagName(name))) return all;   // <br> 这类内联 HTML 原样保留
+    if (close) return all;                                     // </d> 这类正文标记保留
+    return guLooksComponent(name, attrs, selfClose) ? '' : all;
+  });
+  // 流式输出时尾巴上那半个标签也别闪出来
+  const tail = /<\s*\/?([A-Za-z][\w:-]*)((?:\s[^<>]*)?)$/.exec(out);
+  if (tail && !guInCode(out, tail.index) && guLooksComponent(tail[1], tail[2] || '', /\/$/.test(out))) out = out.slice(0, tail.index);
+  return out;
+}
+
+// 引号没写完的组件标签（流式中途最常见）连 GU_TAG_SRC 都匹配不到，按行兜底：
+// 能捞到画面描述就重建成规范标签，捞不到就整行丢掉
+function guLooseAttrs(body) {
+  const out = {};
+  const re = /([A-Za-z_][\w:-]*)\s*=\s*(?:"([^"]*)"?|'([^']*)'?|([^\s>]+))/g;
+  let m;
+  const src = String(body || '');
+  while ((m = re.exec(src))) out[m[1]] = m[2] !== undefined ? m[2] : m[3] !== undefined ? m[3] : m[4];
+  return out;
+}
+
+function guFixStrayTags(text) {
+  const src = String(text == null ? '' : text);
+  if (src.indexOf('<') < 0) return src;
+  const lines = src.split('\n');
+  const atStart = new RegExp('^[ \\t]*' + GU_TAG_SRC);
+  let fence = false;
+  let changed = false;
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (/^\s*```/.test(line)) { fence = !fence; continue; }
+    if (fence) continue;
+    if ((line.match(/`/g) || []).length % 2 === 1) continue;
+    const head = /^[ \t]*<\s*\/?([A-Za-z][\w:-]*)/.exec(line);
+    if (!head) continue;
+    const name = head[1];
+    if (atStart.test(line)) continue;                          // 正常闭合的标签，交给分段器
+    const tag = guTagName(name);
+    if (GU_SAFE_PROSE_TAGS.has(tag)) continue;
+    if (!GU_RENDER_TAGS.has(tag) && !/^[A-Z]/.test(name)) continue;
+    const attrs = guLooseAttrs(line);
+    const query = attrs.query || attrs.prompt || attrs.queries || '';
+    const ratio = String(attrs.aspectRatio || attrs.aspect_ratio || attrs.ratio || '').replace(/\/+$/, '');
+    lines[i] = query
+      ? `<AsyncImage query="${String(query).replace(/"/g, "'")}"${ratio ? ` aspectRatio="${ratio.replace(/"/g, '')}"` : ''}/>`
+      : '';
+    changed = true;
+  }
+  return changed ? lines.join('\n') : src;
+}
+
+function guReadString(src, index) {
+  const quote = src[index];
+  let out = '';
+  let i = index + 1;
+  while (i < src.length) {
+    const ch = src[i];
+    if (ch === '\\') {
+      const next = src[i + 1];
+      out += next === 'n' ? '\n' : next === 't' ? '\t' : next;
+      i += 2;
+      continue;
+    }
+    if (ch === quote) return { value: out, next: i + 1 };
+    out += ch;
+    i += 1;
+  }
+  return { value: out, next: src.length };
+}
+
+// 只做字符串拼接求值，不执行模型给的任意代码
+function guEvalExpr(expr, values) {
+  let src = String(expr == null ? '' : expr).trim();
+  if (!src) return '';
+  const store = values || {};
+  const call = /GenUI\.[A-Za-z_$][\w$]*\s*\(/.exec(src);
+  if (call) {
+    let i = call.index + call[0].length;
+    const start = i;
+    let depth = 1;
+    while (i < src.length && depth > 0) {
+      const ch = src[i];
+      if (ch === '"' || ch === "'") { i = guReadString(src, i).next; continue; }
+      if (ch === '(') depth += 1;
+      else if (ch === ')') depth -= 1;
+      i += 1;
+    }
+    src = src.slice(start, Math.max(start, i - 1));
+  }
+  let out = '';
+  let i = 0;
+  while (i < src.length) {
+    const ch = src[i];
+    if (ch === '"' || ch === "'") { const r = guReadString(src, i); out += r.value; i = r.next; continue; }
+    if (ch === '`') {
+      let k = i + 1;
+      while (k < src.length && src[k] !== '`') {
+        if (src[k] === '$' && src[k + 1] === '{') {
+          let depth = 1;
+          let e = k + 2;
+          while (e < src.length && depth > 0) {
+            if (src[e] === '{') depth += 1;
+            else if (src[e] === '}') depth -= 1;
+            e += 1;
+          }
+          out += guEvalExpr(src.slice(k + 2, Math.max(k + 2, e - 1)), store);
+          k = e;
+          continue;
+        }
+        out += src[k];
+        k += 1;
+      }
+      i = k + 1;
+      continue;
+    }
+    const ident = /^[A-Za-z_$][\w$]*/.exec(src.slice(i));
+    if (ident) {
+      const name = ident[0];
+      if (Object.prototype.hasOwnProperty.call(store, name)) out += String(store[name] == null ? '' : store[name]);
+      i += name.length;
+      continue;
+    }
+    i += 1;
+  }
+  return out;
+}
+
+function guStateDecls(text) {
+  const decls = {};
+  const re = /\{@body\s+const\s*\[\s*([A-Za-z_$][\w$]*)\s*,\s*([A-Za-z_$][\w$]*)\s*\]\s*=\s*DIL\.useState\(\s*(?:"([^"]*)"|'([^']*)'|`([^`]*)`)?\s*\)\s*\}/g;
+  const src = String(text || '');
+  let m;
+  while ((m = re.exec(src))) {
+    decls[m[1]] = { setter: m[2], value: m[3] !== undefined ? m[3] : m[4] !== undefined ? m[4] : m[5] !== undefined ? m[5] : '' };
+  }
+  return decls;
+}
+
+function guStripDecls(text) {
+  return String(text || '').replace(/^[ \t]*\{@body[^\n]*\}[ \t]*\r?\n?/gm, '').replace(/^[ \t]*\{@body[^\n]*\}[ \t]*/gm, '');
+}
+
+// 代码块/行内代码里的标签是“被讨论的文字”，不能当组件执行
+function guInCode(src, index) {
+  const upto = String(src || '').slice(0, Math.max(0, index));
+  if ((upto.match(/```/g) || []).length % 2 === 1) return true;
+  const line = upto.slice(upto.lastIndexOf('\n') + 1);
+  return (line.match(/`/g) || []).length % 2 === 1;
+}
+
+function guLocateBlock(text) {
+  const src = String(text || '');
+  // 块首 = 任意白名单标签（不只是容器）。模型常常单独甩一个 <AsyncImage …/> 或
+  // <text …>…</text>，只认容器的话这段协议就会原样漏进正文。
+  const probe = new RegExp(GU_TAG_SRC, 'g');
+  let head = null;
+  let m;
+  while ((m = probe.exec(src))) {
+    if (m[1]) continue;
+    if (!GU_RENDER_TAGS.has(guTagName(m[2]))) continue;
+    if (guInCode(src, m.index)) continue;
+    head = { index: m.index, end: probe.lastIndex, selfClose: !!m[4] };
+    break;
+  }
+  if (!head) return null;
+  if (head.selfClose) return { start: head.index, end: head.end, body: src.slice(head.index, head.end), partial: false };
+  const re = new RegExp(GU_TAG_SRC, 'g');
+  re.lastIndex = head.index;
+  let depth = 0;
+  while ((m = re.exec(src))) {
+    if (m[4]) continue;
+    if (m[1]) {
+      depth -= 1;
+      if (depth <= 0) return { start: head.index, end: re.lastIndex, body: src.slice(head.index, re.lastIndex), partial: false };
+    } else {
+      depth += 1;
+    }
+  }
+  return { start: head.index, end: src.length, body: src.slice(head.index), partial: true };
+}
+
+function guSegments(text) {
+  const segs = [];
+  let rest = String(text || '');
+  for (let guard = 0; guard < 400; guard += 1) {
+    const block = guLocateBlock(rest);
+    if (!block) { segs.push({ type: 'md', value: rest }); break; }
+    if (block.start > 0) segs.push({ type: 'md', value: rest.slice(0, block.start) });
+    if (block.partial) {
+      // 模型忘闭合时只吃掉这一行组件，后面的正文继续按 Markdown 排，别整段被一个标签吞掉
+      const src = rest.slice(block.start);
+      const cut = src.search(/\n\s*\n/);
+      const body = cut > 0 ? src.slice(0, cut) : src;
+      if (body.replace(/\s/g, '').length < 40) segs.push({ type: 'pending' });
+      else segs.push({ type: 'ui', body });
+      if (cut > 0) { rest = src.slice(cut); continue; }
+      break;
+    }
+    segs.push({ type: 'ui', body: block.body });
+    rest = rest.slice(block.end);
+  }
+  return segs;
+}
+
+function guParseAttrs(raw) {
+  const out = {};
+  const src = String(raw || '');
+  let i = 0;
+  while (i < src.length) {
+    while (i < src.length && /\s/.test(src[i])) i += 1;
+    if (i >= src.length) break;
+    const name = /^[A-Za-z_][\w:-]*/.exec(src.slice(i));
+    if (!name) { i += 1; continue; }
+    const key = name[0];
+    i += key.length;
+    while (i < src.length && /\s/.test(src[i])) i += 1;
+    if (src[i] !== '=') { out[key] = { kind: 'flag', value: true }; continue; }
+    i += 1;
+    while (i < src.length && /\s/.test(src[i])) i += 1;
+    const quote = src[i];
+    if (quote === '"' || quote === "'") {
+      const read = guReadString(src, i);
+      out[key] = { kind: 'str', value: read.value };
+      i = read.next;
+      continue;
+    }
+    if (quote === '{') {
+      let depth = 1;
+      let k = i + 1;
+      while (k < src.length && depth > 0) {
+        if (src[k] === '{') depth += 1;
+        else if (src[k] === '}') depth -= 1;
+        k += 1;
+      }
+      out[key] = { kind: 'expr', value: src.slice(i + 1, Math.max(i + 1, k - 1)) };
+      i = k;
+      continue;
+    }
+    const bare = /^[^\s>]+/.exec(src.slice(i));
+    out[key] = { kind: 'str', value: bare ? bare[0] : '' };
+    i += bare ? bare[0].length : 1;
+  }
+  return out;
+}
+
+function guPushText(parent, raw) {
+  const text = String(raw || '').replace(/\s+/g, ' ').trim();
+  if (text) parent.children.push({ name: '#text', text });
+}
+
+function guBuildTree(body) {
+  const src = String(body || '');
+  const root = { name: '#root', attrs: {}, children: [] };
+  const stack = [root];
+  const re = new RegExp(GU_TAG_SRC, 'g');
+  let last = 0;
+  let m;
+  while ((m = re.exec(src))) {
+    if (m.index > last) guPushText(stack[stack.length - 1], src.slice(last, m.index));
+    last = re.lastIndex;
+    const tag = guTagName(m[2]);
+    if (m[1]) {
+      for (let k = stack.length - 1; k > 0; k -= 1) if (stack[k].name === tag) { stack.length = k; break; }
+      continue;
+    }
+    const node = { name: tag, attrs: guParseAttrs(m[3]), children: [] };
+    stack[stack.length - 1].children.push(node);
+    if (!m[4]) stack.push(node);
+  }
+  if (last < src.length) guPushText(stack[stack.length - 1], src.slice(last));
+  return root;
+}
+
+function guAttrText(node, name, ctx) {
+  const attr = node.attrs && node.attrs[name];
+  if (!attr) return '';
+  if (attr.kind === 'expr') return guEvalExpr(attr.value, ctx.values);
+  return String(attr.value == null ? '' : attr.value);
+}
+
+function guExprOf(node, name) {
+  const attr = node.attrs && node.attrs[name];
+  return attr && attr.kind === 'expr' ? String(attr.value || '') : '';
+}
+
+function guBindKey(node, ctx) {
+  const bound = guExprOf(node, 'value').trim();
+  if (bound) {
+    if (ctx.decls[bound]) return bound;
+    for (const [key, decl] of Object.entries(ctx.decls)) if (decl.setter === bound) return key;
+    return bound;
+  }
+  const change = guExprOf(node, 'onChange').trim();
+  if (change) for (const [key, decl] of Object.entries(ctx.decls)) if (decl.setter === change) return key;
+  return '';
+}
+
+function guRenderChildren(node, ctx) {
+  return (node.children || []).map((child) => guRenderNode(child, ctx)).join('');
+}
+
+function guRenderNode(node, ctx) {
+  if (!node) return '';
+  if (node.name === '#text') return mdInline(node.text || '');
+  const children = () => guRenderChildren(node, ctx);
+  switch (node.name) {
+    case 'box':
+    case 'card':
+    case 'panel':
+    case 'row':
+    case 'col':
+    case 'stack':
+    case 'group': {
+      const cls = ['gu-box'];
+      if (node.name === 'row') cls.push('is-row');
+      if (node.attrs.border) cls.push('has-border');
+      if (node.attrs.flex) cls.push('is-flex');
+      return `<div class="${cls.join(' ')}">${children()}</div>`;
+    }
+    case 'grid': {
+      const cols = Math.max(1, Math.min(4, Number(guAttrText(node, 'columns', ctx) || guAttrText(node, 'cols', ctx)) || 2));
+      return `<div class="gu-grid" data-cols="${cols}">${children()}</div>`;
+    }
+    case 'grid-item':
+    case 'griditem':
+      return `<div class="gu-grid-item">${children()}</div>`;
+    case 'asyncimagegroup': {
+      const raw = guExprOf(node, 'query') || guExprOf(node, 'queries') || guExprOf(node, 'prompts');
+      let queries = [];
+      try {
+        const parsed = JSON.parse(String(raw || '').trim() || '[]');
+        if (Array.isArray(parsed)) queries = parsed.map((q) => String(q || ''));
+      } catch { /* 不是 JSON 就按引号切 */ }
+      if (!queries.length) queries = (String(raw || '').match(/["'`]([^"'`]+)["'`]/g) || []).map((s) => s.slice(1, -1));
+      if (!queries.length) return '';
+      const ratio = guAttrText(node, 'aspectRatio', ctx) || guAttrText(node, 'aspect_ratio', ctx) || guAttrText(node, 'ratio', ctx);
+      return `<div class="gu-grid gu-ref-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,236px));gap:10px;justify-content:start;max-width:100%">${queries.map((q) => guRefCardHtml(q, ratio)).join('')}</div>`;
+    }
+    case 'text': {
+      const weight = guAttrText(node, 'weight', ctx);
+      const size = guAttrText(node, 'size', ctx);
+      const tone = guAttrText(node, 'color', ctx);
+      const cls = ['gu-text'];
+      if (weight === 'medium' || weight === '500') cls.push('is-medium');
+      if (weight === 'bold' || weight === '600' || weight === '700') cls.push('is-bold');
+      if (size === 'sm' || size === 'small') cls.push('is-sm');
+      if (tone === 'secondary' || tone === 'muted') cls.push('is-muted');
+      // 组件里的文字如果带标题、表格、列表这类块级 markdown，就按正文排版渲染，别挤成一段
+      const raw = (node.children || []).map((child) => (child && child.name === '#text' ? String(child.text || '') : '')).join('');
+      if (/(^|\n)\s*(#{1,6}\s|\||[-*+]\s|\d+[.)]\s|>)/.test(raw) || /^\s*\|/.test(raw)) {
+        return `<div class="${cls.join(' ')} is-block">${askMarkdown(raw)}</div>`;
+      }
+      return `<p class="${cls.join(' ')}">${children()}</p>`;
+    }
+    case 'asyncimage':
+    case 'image':
+    case 'img': {
+      const src = guAttrText(node, 'src', ctx);
+      if (src) return `<img class="gu-image" src="${esc(src)}" alt="${esc(guAttrText(node, 'alt', ctx))}" loading="lazy" />`;
+      const query = guAttrText(node, 'query', ctx) || guAttrText(node, 'prompt', ctx) || guAttrText(node, 'alt', ctx);
+      const ratio = guAttrText(node, 'aspectRatio', ctx) || guAttrText(node, 'aspect_ratio', ctx) || guAttrText(node, 'ratio', ctx);
+      return guRefCardHtml(query, ratio);
+    }
+    case 'divider':
+    case 'hr':
+      return '<hr class="gu-divider">';
+    case 'radio-group':
+    case 'checkbox-group': {
+      const multi = node.name === 'checkbox-group';
+      const key = guBindKey(node, ctx);
+      const current = ctx.values[key];
+      const row = guAttrText(node, 'direction', ctx) === 'row';
+      const options = (node.children || []).map((child) => {
+        if (child.name === '#text') return '';
+        if (!['radio', 'checkbox', 'option', 'choice'].includes(child.name)) return guRenderNode(child, ctx);
+        const value = guAttrText(child, 'value', ctx) || String((child.children || []).map((c) => c.text || '').join('').trim());
+        const on = multi ? (Array.isArray(current) && current.includes(value)) : String(current == null ? '' : current) === value;
+        return `<button type="button" class="gu-option${on ? ' is-on' : ''}" data-act="gu-pick" data-gu-key="${esc(key)}" data-gu-value="${esc(value)}" data-gu-multi="${multi ? 1 : 0}" aria-pressed="${on ? 'true' : 'false'}"><span class="gu-dot"></span><span class="gu-option-label">${guRenderChildren(child, ctx)}</span></button>`;
+      }).join('');
+      return `<div class="gu-options${row ? ' is-row' : ''}"${key ? ` data-gu-group="${esc(key)}"` : ''}>${options}</div>`;
+    }
+    case 'radio':
+    case 'checkbox':
+    case 'option':
+      return children();
+    case 'button': {
+      const expr = guExprOf(node, 'onClick');
+      const copy = /GenUI\.copy\s*\(/.test(expr);
+      const cls = ['gu-action'];
+      if (node.attrs.block) cls.push('is-block');
+      const variant = guAttrText(node, 'variant', ctx);
+      if (variant === 'secondary' || variant === 'outline' || variant === 'ghost') cls.push('is-ghost');
+      const attr = copy ? `data-act="gu-copy" data-gu-expr="${esc(expr)}"` : `data-act="gu-run" data-gu-expr="${esc(expr)}"`;
+      return `<button type="button" class="${cls.join(' ')}" ${attr}${copy ? ' title="复制这段提示词"' : ''}>${children() || (copy ? '复制' : '继续')}</button>`;
+    }
+    case 'input':
+    case 'textarea': {
+      const key = guBindKey(node, ctx);
+      const value = ctx.values[key];
+      const placeholder = guAttrText(node, 'placeholder', ctx);
+      const field = node.name === 'textarea'
+        ? `<textarea class="gu-input" rows="2" placeholder="${esc(placeholder)}"${key ? ` data-gu-key="${esc(key)}"` : ''}>${esc(value == null ? '' : value)}</textarea>`
+        : `<input class="gu-input" type="text" placeholder="${esc(placeholder)}" value="${esc(value == null ? '' : value)}"${key ? ` data-gu-key="${esc(key)}"` : ''} />`;
+      return field;
+    }
+    case 'link':
+    case 'a': {
+      const href = guAttrText(node, 'href', ctx);
+      return href ? `<a class="gu-link" href="${esc(href)}" target="_blank" rel="noreferrer">${children()}</a>` : children();
+    }
+    case 'tag':
+      return `<span class="gu-tag">${children()}</span>`;
+    default: {
+      // 白名单之外的标签：只要它带着画面描述/图片地址，就按参考图落地；否则只取子节点
+      const src = guAttrText(node, 'src', ctx);
+      if (src) return `<img class="gu-image" src="${esc(src)}" alt="${esc(guAttrText(node, 'alt', ctx))}" loading="lazy" />`;
+      const query = guAttrText(node, 'query', ctx) || guAttrText(node, 'prompt', ctx);
+      if (query) {
+        const ratio = guAttrText(node, 'aspectRatio', ctx) || guAttrText(node, 'aspect_ratio', ctx) || guAttrText(node, 'ratio', ctx);
+        return guRefCardHtml(query, ratio);
+      }
+      return children();
+    }
+  }
+}
+
+function guValuesFor(message, decls) {
+  const id = (message && message.id) || 'anon';
+  let record = askGenUiMemory.get(id);
+  if (!record) { record = { values: {} }; askGenUiMemory.set(id, record); }
+  for (const [key, decl] of Object.entries(decls)) if (!(key in record.values)) record.values[key] = decl.value;
+  return record.values;
+}
+
+function guRenderBlock(message, decls, body) {
+  const values = guValuesFor(message, decls);
+  const ctx = { decls, values };
+  const tree = guBuildTree(guStripDecls(body));
+  const inner = guRenderChildren(tree, ctx);
+  // 只有叶子（<text>、<AsyncImage/>…）时贴正文排，不再套一层卡片边框，避免把一段话切成碎块
+  const leafOnly = (tree.children || []).every((child) => child.name === '#text' || !GU_CONTAINER_TAGS.has(child.name));
+  const cls = leafOnly ? 'gu-inline' : 'gu-card';
+  return `<div class="${cls}" data-gu-msg="${esc((message && message.id) || '')}">${inner}</div>`;
+}
+
+function guHtmlFor(text, message, decls) {
+  const segs = guSegments(guFixStrayTags(text));
+  const scopes = decls || guStateDecls(text);
+  return segs.map((seg) => {
+    if (seg.type === 'pending') return '<div class="gu-card gu-card-pending"><span class="gu-spin"></span>正在整理可选项…</div>';
+    if (seg.type === 'ui') return guRenderBlock(message, scopes, seg.body);
+    const md = guScrubLeaks(guStripDecls(seg.value))
+      .replace(/<\/?WritingBlock\b[^>]*>/gi, '')
+      .replace(/```[a-zA-Z0-9]*\s*\n\s*```/g, '')
+      .replace(/\n{3,}/g, '\n\n');
+    if (!md.trim()) return '';
+    return `<div class="ask-message-text">${askMarkdown(md)}</div>`;
+  }).join('');
+}
+
+function guPlainText(text) {
+  const src = guFixStrayTags(text);
+  const segs = guSegments(src);
+  const parts = [];
+  for (const seg of segs) {
+    if (seg.type === 'md') {
+      const prose = guScrubLeaks(guStripDecls(seg.value)).trim();
+      if (prose) parts.push(prose);
+      continue;
+    }
+    if (seg.type !== 'ui') continue;
+    const lines = [];
+    const walk = (node) => {
+      if (!node) return;
+      if (node.name === '#text' && node.text) lines.push(node.text);
+      if (node.name === 'button') return;
+      for (const child of node.children || []) walk(child);
+    };
+    walk(guBuildTree(guStripDecls(seg.body)));
+    if (lines.length) parts.push(lines.join('\n'));
+  }
+  return parts.join('\n\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+/* 画面参考：直接按英文描述出图，不走反推/识别；同一条描述只出一次，结果在内存里复用 */
+const ASK_REF_CACHE = new Map();
+const ASK_REF_INFLIGHT = new Set();
+const ASK_REF_QUEUE = [];
+const ASK_REF_PROMPTS = new Map();
+const ASK_REF_MANUAL = new Set();
+const ASK_REF_LIMIT = 2;
+
+/* 刷新/重开页面后图片不用再走一遍「出图中…」：把「描述 → 图片地址 + 图位比例」记在本机。
+   图片文件本身在服务端 data/ref-images 里长期保留，这里只是记住它的地址。 */
+const ASK_REF_STORE = 'wmd.refImages';
+const ASK_REF_STORE_MAX = 400;
+let askRefStoreTimer = null;
+
+function guRefStoreSave() {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    const rows = [];
+    for (const [key, hit] of ASK_REF_CACHE) {
+      if (!hit || !hit.url) continue;
+      rows.push([key, { url: hit.url, path: hit.path || '', ratio: GU_REF_RATIOS.get(key) || '' }]);
+    }
+    const keep = rows.length > ASK_REF_STORE_MAX ? rows.slice(rows.length - ASK_REF_STORE_MAX) : rows;
+    localStorage.setItem(ASK_REF_STORE, JSON.stringify(Object.fromEntries(keep)));
+  } catch { /* 存不下也不影响当前会话 */ }
+}
+
+function guRefStoreSchedule() {
+  if (typeof setTimeout !== 'function' || askRefStoreTimer) return;
+  askRefStoreTimer = setTimeout(() => { askRefStoreTimer = null; guRefStoreSave(); }, 400);
+}
+
+function guRefStoreHydrate() {
+  if (typeof localStorage === 'undefined') return;
+  let data = {};
+  try {
+    const raw = localStorage.getItem(ASK_REF_STORE);
+    data = raw ? JSON.parse(raw) : {};
+  } catch { data = {}; }
+  if (!data || typeof data !== 'object') return;
+  for (const [key, hit] of Object.entries(data)) {
+    if (!hit || !hit.url) continue;
+    ASK_REF_CACHE.set(key, { url: hit.url, path: hit.path || '' });
+    if (hit.ratio) GU_REF_RATIOS.set(key, hit.ratio);
+  }
+}
+
+function guRefStoreForget() {
+  if (typeof localStorage === 'undefined') return;
+  try { localStorage.removeItem(ASK_REF_STORE); } catch { /* ignore */ }
+}
+
+function guRefStoreForget() {
+  if (typeof localStorage === 'undefined') return;
+  try { localStorage.removeItem(ASK_REF_STORE); } catch { /* ignore */ }
+}
+
+// 注意：还原要等 GU_REF_RATIOS 初始化之后再做，提前调用会因为 const 的暂时性死区直接抛错。
+// 记忆只对本机有效：换项目/换渠道后旧地址失效时，图片加载失败会退回「点一下重试」
+
+// 开关关掉时一张都不出：不排队、不请求，卡片退回可读的描述
+function guRefsEnabled() {
+  if (typeof state === 'undefined' || !state || !state.ask) return true;
+  return state.ask.refImages !== false;
+}
+
+function guRefKey(prompt) {
+  const text = String(prompt || '');
+  let hash = 5381;
+  for (let i = 0; i < text.length; i += 1) hash = ((hash * 33) ^ text.charCodeAt(i)) >>> 0;
+  return hash.toString(36) + '-' + text.length.toString(36);
+}
+
+// 尺寸直接写在标签上：样式表没更新到、或者被别的规则盖掉，也不会撑成一大块
+const GU_REF_BOX = 'position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;width:100%;overflow:hidden;padding:0;border:0;background:color-mix(in oklch, currentColor 7%, transparent);color:inherit;font:inherit;font-size:11px;line-height:1.5;';
+const GU_REF_IMG = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;';
+const GU_REF_ACTIONS = 'position:absolute;top:6px;right:6px;display:flex;gap:4px;z-index:3;';
+const GU_REF_BTN = 'width:22px;height:22px;display:grid;place-items:center;padding:0;border:0;border-radius:6px;background:rgba(12,14,18,.46);color:#fff;font:inherit;font-size:12px;line-height:1;cursor:pointer;backdrop-filter:blur(2px);';
+const GU_REF_FILL = 'max-width:100%;padding:0 26px 0 14px;text-align:center;font-size:10.5px;line-height:1.45;display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden;';
+
+// 参考图按自己的比例占位：9:16 / 16:9 / 1:1 / 3:4 / 4:3 都认，等比放进 236×220 的框里
+const GU_REF_MAX_W = 236;
+const GU_REF_MAX_H = 220;
+const GU_REF_RATIOS = new Map();
+
+// 把本机记住的「描述 → 图片地址/比例」读回内存（必须在 GU_REF_RATIOS 之后执行）
+guRefStoreHydrate();
+
+function guRefRatio(value) {
+  const text = String(value || '').trim().replace(/[：x×*/\s]/gi, ':').replace(/:+/g, ':');
+  const hit = /^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$/.exec(text);
+  if (!hit) return { label: '4:3', w: 4, h: 3 };
+  const w = Number(hit[1]);
+  const h = Number(hit[2]);
+  if (!(w > 0 && h > 0)) return { label: '4:3', w: 4, h: 3 };
+  return { label: `${w}:${h}`, w, h };
+}
+
+// 常见的五种画幅；生成出来的图接近哪一种就按哪一种摆，避免每张都塞同一个框
+const GU_REF_STANDARD = ['9:16', '16:9', '1:1', '3:4', '4:3'];
+
+function guRefSnapRatio(width, height) {
+  if (!(width > 0 && height > 0)) return null;
+  const actual = width / height;
+  let best = null;
+  for (const label of GU_REF_STANDARD) {
+    const ratio = guRefRatio(label);
+    const diff = Math.abs(ratio.w / ratio.h - actual) / actual;
+    if (!best || diff < best.diff) best = { ratio, diff };
+  }
+  if (best && best.diff <= 0.06) return best.ratio;
+  const gcd = (a, b) => (b ? gcd(b, a % b) : a);
+  const g = gcd(Math.round(width), Math.round(height)) || 1;
+  return guRefRatio(`${Math.round(width / g)}:${Math.round(height / g)}`);
+}
+
+function guRefBox(ratio) {
+  const scale = Math.min(GU_REF_MAX_W / ratio.w, GU_REF_MAX_H / ratio.h);
+  return { width: Math.round(ratio.w * scale), height: Math.round(ratio.h * scale) };
+}
+
+// 一个图位就是一张图：没图显示提示词，有图只显示图；右上角三个按钮一直在
+function guRefActionsHtml(prompt, hit) {
+  const text = String(prompt || '');
+  const url = hit && hit.url ? hit.url : '';
+  const loading = Boolean(hit && hit.loading);
+  const error = hit && hit.error ? String(hit.error) : '';
+  const spinTitle = error ? `出图失败：${error}（点一下重试）` : url ? '重新生成这张图' : '生成这张图';
+  return `<div class="gu-ref-actions" style="${GU_REF_ACTIONS}">
+    <button type="button" class="gu-ref-btn${error ? ' is-bad' : ''}" style="${GU_REF_BTN}" data-act="ask-ref-now" data-gu-prompt="${esc(text)}" title="${esc(spinTitle)}" aria-label="生成图片">${loading ? '<span class="gu-ref-spin"></span>' : '↻'}</button>
+    <button type="button" class="gu-ref-btn" style="${GU_REF_BTN}${url ? '' : 'opacity:.4;'}" data-act="gu-ref-download" data-url="${esc(url)}" title="${url ? '下载图片' : '还没有图片'}" aria-label="下载图片"${url ? '' : ' disabled'}>⤓</button>
+    <button type="button" class="gu-ref-btn" style="${GU_REF_BTN}" data-act="gu-copy-text" data-gu-text="${esc(text)}" title="复制提示词" aria-label="复制提示词">⧉</button>
+  </div>`;
+}
+
+function guRefMediaHtml(prompt, hit, ratio) {
+  const text = String(prompt || '');
+  const url = hit && hit.url ? hit.url : '';
+  const loading = Boolean(hit && hit.loading);
+  const error = hit && hit.error ? String(hit.error) : '';
+  const cls = url ? ' is-ready' : loading ? ' is-loading' : error ? ' is-failed' : ' is-empty';
+  const box = guRefBox(ratio);
+  const fill = url
+    ? `<button type="button" class="gu-ref-zoom" style="position:absolute;inset:0;padding:0;border:0;background:transparent;cursor:zoom-in" data-act="ask-open-inline" data-url="${esc(url)}" data-label="${esc(text.slice(0, 40))}"><img src="${esc(url)}" alt="${esc(text)}" loading="lazy" style="${GU_REF_IMG}" /></button><span class="gu-ref-badge">自动生成</span>`
+    : `<span class="gu-ref-prompt" style="${GU_REF_FILL}">${esc(text || '—')}</span>`;
+  return `<div class="gu-ref-media${cls}" style="${GU_REF_BOX}height:${box.height}px;max-height:${box.height}px;">${fill}${guRefActionsHtml(text, hit)}</div>`;
+}
+
+function guRefCardHtml(prompt, ratioHint) {
+  const text = String(prompt || '').trim();
+  const key = guRefKey(text);
+  const ratio = guRefRatio(ratioHint || GU_REF_RATIOS.get(key) || '4:3');
+  GU_REF_RATIOS.set(key, ratio.label);
+  const hit = ASK_REF_CACHE.get(key);
+  const busy = ASK_REF_INFLIGHT.has(key) || askRefRunning.has(key);
+  const state = hit ? (hit.error ? 'error' : 'ready') : (busy ? 'loading' : (guRefsEnabled() ? 'pending' : 'off'));
+  const box = guRefBox(ratio);
+  return `<figure class="gu-ref" style="margin:0;min-width:0;align-self:start;width:${box.width}px;max-width:100%;border:1px solid var(--ask-line, rgba(0,0,0,.12));border-radius:12px;overflow:hidden;" data-gu-ref data-gu-key="${key}" data-gu-prompt="${esc(text)}" data-gu-ratio="${esc(ratio.label)}" data-gu-state="${state}">${guRefMediaHtml(text, hit || (busy ? { loading: true } : null), ratio)}</figure>`;
+}
+
+function guPaintRef(node, hit) {
+  if (!node || !node.isConnected) return;
+  node.dataset.guState = hit && hit.error ? 'error' : hit && hit.loading ? 'loading' : 'ready';
+  node.classList.toggle('is-error', Boolean(hit && hit.error));
+  const media = node.querySelector('.gu-ref-media');
+  if (media) media.outerHTML = guRefMediaHtml(node.dataset.guPrompt || '', hit, guRefRatio(node.dataset.guRatio));
+  guBindRefImg(node);
+}
+
+// 图片加载出来后按图片真实比例把图位调成一样的形状（横的横、竖的竖，不留空也不裁）
+function guRefFitBox(node, width, height) {
+  if (!node || !node.isConnected) return;
+  const ratio = guRefSnapRatio(width, height);
+  if (!ratio) return;
+  node.dataset.guRatio = ratio.label;
+  const key = node.dataset.guKey;
+  if (key) { GU_REF_RATIOS.set(key, ratio.label); guRefStoreSchedule(); }
+  const box = guRefBox(ratio);
+  node.style.width = box.width + 'px';
+  const media = node.querySelector('.gu-ref-media');
+  if (media) {
+    media.style.height = box.height + 'px';
+    media.style.maxHeight = box.height + 'px';
+  }
+}
+
+// 图片加载不出来时不要留一个空白大块，退回「加载失败 + 重试」
+function guBindRefImg(scope) {
+  if (!scope || typeof scope.querySelectorAll !== 'function') return;
+  scope.querySelectorAll('.gu-ref-media.is-ready img').forEach((img) => {
+    if (img.dataset.guBound) return;
+    img.dataset.guBound = '1';
+    const node = img.closest('[data-gu-ref]');
+    img.addEventListener('error', () => {
+      if (node) guPaintRef(node, { error: '图片加载失败' });
+    });
+    const fit = () => guRefFitBox(node, img.naturalWidth, img.naturalHeight);
+    if (img.complete && img.naturalWidth) fit();
+    else img.addEventListener('load', fit);
+  });
+}
+
+function guHydrateRefs(root) {
+  if (!root || typeof root.querySelectorAll !== 'function') return;
+  if (!guRefsEnabled()) { guRefStop(); return; }
+  guBindRefImg(root);
+  root.querySelectorAll('[data-gu-ref][data-gu-state="pending"]').forEach((node) => {
+    const key = node.dataset.guKey;
+    const prompt = node.dataset.guPrompt || '';
+    if (!key || !prompt) return;
+    const hit = ASK_REF_CACHE.get(key);
+    if (hit) { guPaintRef(node, hit); return; }
+    if (ASK_REF_INFLIGHT.has(key)) return;
+    ASK_REF_INFLIGHT.add(key);
+    ASK_REF_PROMPTS.set(key, prompt);
+    ASK_REF_QUEUE.push(key);
+  });
+  guRefPump();
+}
+
+// 关掉开关时把还没排队的清空；已经在请求里的让它自然结束，不会再多花一张
+function guRefStop() {
+  ASK_REF_QUEUE.length = 0;
+  for (const key of ASK_REF_INFLIGHT) {
+    if (!askRefRunning.has(key)) {
+      ASK_REF_INFLIGHT.delete(key);
+      ASK_REF_PROMPTS.delete(key);
+      ASK_REF_MANUAL.delete(key);
+    }
+  }
+}
+
+// 单张手动出图：只生成这一条，不连带别的卡片，也不改全局开关
+function guGenerateRef(prompt, options = {}) {
+  const text = String(prompt || '').trim();
+  if (!text) return;
+  const key = guRefKey(text);
+  const hit = ASK_REF_CACHE.get(key);
+  if (hit && hit.url && !options.force) return;
+  ASK_REF_CACHE.delete(key);
+  ASK_REF_MANUAL.add(key);
+  guPaintEveryRef(key, { loading: true });
+  if (!ASK_REF_INFLIGHT.has(key)) {
+    ASK_REF_INFLIGHT.add(key);
+    ASK_REF_PROMPTS.set(key, text);
+    ASK_REF_QUEUE.push(key);
+  }
+  guRefPump();
+}
+
+function guPaintEveryRef(key, hit) {
+  if (typeof document === 'undefined' || !document.querySelectorAll) return;
+  document.querySelectorAll(`[data-gu-ref][data-gu-key="${key}"]`).forEach((node) => guPaintRef(node, hit));
+}
+
+function guRefPump() {
+  while (ASK_REF_QUEUE.length) {
+    const key = ASK_REF_QUEUE.shift();
+    const prompt = ASK_REF_PROMPTS.get(key) || '';
+    if (!prompt) { ASK_REF_INFLIGHT.delete(key); continue; }
+    // 全局开关关着时，只放行用户手动点的那几张
+    if (!guRefsEnabled() && !ASK_REF_MANUAL.has(key)) {
+      ASK_REF_INFLIGHT.delete(key);
+      ASK_REF_PROMPTS.delete(key);
+      continue;
+    }
+    if (guRefRunning() >= ASK_REF_LIMIT) { ASK_REF_QUEUE.unshift(key); break; }
+    guRefStart(key, prompt);
+  }
+}
+
+const askRefRunning = new Set();
+
+function guRefRunning() {
+  return askRefRunning.size;
+}
+
+function guRefStart(key, prompt) {
+  askRefRunning.add(key);
+  api('/api/chat/ref-image', { method: 'POST', body: { prompt, ratio: GU_REF_RATIOS.get(key) || '' } })
+    .then((result) => {
+      ASK_REF_CACHE.set(key, { url: result.url, path: result.path });
+      guRefStoreSchedule();
+    })
+    .catch((err) => {
+      ASK_REF_CACHE.set(key, { error: err.message || '出图失败' });
+    })
+    .finally(() => {
+      askRefRunning.delete(key);
+      ASK_REF_INFLIGHT.delete(key);
+      ASK_REF_PROMPTS.delete(key);
+      ASK_REF_MANUAL.delete(key);
+      const hit = ASK_REF_CACHE.get(key) || { error: '出图失败' };
+      guPaintEveryRef(key, hit);
+      guRefPump();
+    });
+}
+
+// 单张重试＝只重跑这一张
+function guRetryRef(prompt) {
+  guGenerateRef(prompt);
+}
+
 function askMessagesHtml(chat) {
   const a = askState();
   const messages = (chat && chat.messages) || [];
-  return messages.map((m, index) => {
-    const mine = m.role === 'user';
-    const pending = a.generating && index === messages.length - 1;
-    const usage = m.execution && m.execution.usage;
-    return `<article class="ask-message ${mine ? 'is-user' : 'is-assistant'}">
-      <div class="ask-message-body">
-        ${mine ? '' : askTraceHtml(m, pending)}
-        ${(!mine && m.error && !m.text) ? `<div class="ask-inline-error">⚠ ${esc(m.error)}</div>` : ''}
-        ${(!mine && m.execution && m.execution.resource_context) ? `<div class="ask-resource" title="${esc(m.execution.resource_context.snapshot_hash || '')}">🗂 ${esc(m.execution.resource_context.dataset ? m.execution.resource_context.dataset.name + ' · v' + m.execution.resource_context.dataset.version_num : '未选择数据')}</div>` : ''}
-        ${m.text ? (mine && m.text.length > 1024 ? `<details class="ask-longmsg"><summary><span>📄</span><b>长文本</b><small>${m.text.length} 字 · 点击展开</small></summary><pre>${esc(m.text)}</pre></details>` : `<div class="ask-message-text ${mine ? 'is-plain' : ''}">${mine ? esc(m.text) : askMarkdown(m.text)}</div>`) : (pending ? '<div class="ask-typing"><i></i><i></i><i></i></div>' : '')}
-        ${askFilesHtml(mine ? (m.files || []) : (m.execution && m.execution.artifacts) || [])}
-        ${(!mine && (m.media || []).length) ? `<div class="ask-media-grid">${m.media.map((f, mi) => `<button type="button" class="ask-media" data-act="ask-open-media" data-index="${index}" data-media="${mi}" title="${esc(f.name || '')}">
-          ${f.kind === 'video' ? `<video src="${esc(f.url)}" muted preload="metadata"></video><span class="ask-media-play">▶</span>` : `<img src="${esc(f.url)}" alt="" loading="lazy" />`}
-          <span class="ask-media-name">${esc(f.name || '')}</span>
-        </button>`).join('')}</div>` : ''}
-        ${(!mine && !pending) ? `<div class="ask-reply-actions">
-          ${m.execution && m.execution.checkpoint_available && ['partial', 'failed', 'cancelled', 'budget_exceeded', 'interrupted'].includes(m.execution.outcome || m.execution.status) ? `<button type="button" data-act="ask-resume" data-index="${index}" title="从最近检查点继续，只读恢复">继续任务</button>` : ''}
-          ${(() => {
-            const sk = ASK_SKILLS.find((x) => x.name === m.skill);
-            if (!sk) return ''; 
-            const chain = ASK_CHAIN[sk.id];
-            if (!chain) return '';
-            if (chain.next) return '<button type="button" class="ask-next-step" data-act="ask-chain" data-index="' + index + '" data-skill="' + chain.next + '" data-verb="' + esc(chain.verb) + '" title="把这条产出接到下一步">下一步：' + esc(chain.label) + ' →</button>';
-            return '<button type="button" class="ask-next-step" data-act="ask-to-studio" data-index="' + index + '" title="把提示词写进视频创作台">送到创作台 ↗</button>';
-          })()}
-          <button type="button" data-act="ask-copy" data-index="${index}" title="复制回复"><span>⧉</span>复制</button>
-          <button type="button" data-act="ask-paste" data-index="${index}" title="粘贴到输入框"><span>⌁</span>粘贴</button>
-          <button type="button" class="${a.liked.has(m.id) ? 'is-on' : ''}" data-act="ask-like" data-index="${index}" title="点赞"><span>▲</span>点赞</button>
-          <button type="button" class="${a.disliked.has(m.id) ? 'is-on' : ''}" data-act="ask-dislike" data-index="${index}" title="有问题"><span>▼</span>有问题</button>
-          <button type="button" data-act="ask-regenerate" data-index="${index}" title="重新生成这条回复"><span>↻</span>重生成</button>
-          <span class="ask-usage" title="输入 ${esc(String((usage && usage.input_tokens) ?? '未知'))} / 输出 ${esc(String((usage && usage.output_tokens) ?? '未知'))}">${esc(usage ? '输入 ' + usage.input_tokens + ' / 输出 ' + usage.output_tokens : '')}</span>
-          <span class="ask-time">${esc(askTimeText(m.time))}</span>
-        </div>` : (mine ? `<div class="ask-reply-actions is-user-row"><span class="ask-time">${esc(askTimeText(m.time))}</span></div>` : '')}
-      </div>
-    </article>`;
-  }).join('');
+  return messages.map((m, index) => askMessageHtml(m, index, messages, a)).join('');
+}
+
+// 流式回复按“已显示字数”渲染，字迹匀速推进，不会每来一块就整段跳一下
+function askShownText(m, index, messages, a) {
+  const text = String((m && m.text) || '');
+  const last = index === messages.length - 1;
+  if (!last || !m._streaming || m._reveal == null) return text;
+  const shown = Math.max(0, Math.min(text.length, m._reveal));
+  return shown >= text.length ? text : text.slice(0, shown);
+}
+
+function askMessageHtml(m, index, messages, a) {
+  const mine = m.role === 'user';
+  const pending = a.generating && index === messages.length - 1;
+  const usage = m.execution && m.execution.usage;
+  const shown = askShownText(m, index, messages, a);
+  return `<article class="ask-message ${mine ? 'is-user' : 'is-assistant'}" data-msg-index="${index}" data-msg-id="${esc(m.id || '')}">
+    <div class="ask-message-body">
+      ${mine ? '' : askTraceHtml(m, pending)}
+      ${(!mine && m.error && !m.text) ? `<div class="ask-inline-error">⚠ ${esc(m.error)}</div>` : ''}
+      ${(!mine && m.execution && m.execution.resource_context) ? `<div class="ask-resource" title="${esc(m.execution.resource_context.snapshot_hash || '')}">🗂 ${esc(m.execution.resource_context.dataset ? m.execution.resource_context.dataset.name + ' · v' + m.execution.resource_context.dataset.version_num : '未选择数据')}</div>` : ''}
+      ${shown ? (mine && shown.length > 1024 ? `<details class="ask-longmsg"><summary><span>📄</span><b>长文本</b><small>${shown.length} 字 · 点击展开</small></summary><pre>${esc(shown)}</pre></details>` : (mine ? `<div class="ask-message-text is-plain">${esc(shown)}</div>` : guHtmlFor(shown, m))) : (pending ? '<div class="ask-typing"><i></i><i></i><i></i></div>' : '')}
+      ${askFilesHtml(mine ? (m.files || []) : (m.execution && m.execution.artifacts) || [])}
+      ${(!mine && (m.media || []).length) ? `<div class="ask-media-grid">${m.media.map((f, mi) => `<button type="button" class="ask-media" data-act="ask-open-media" data-index="${index}" data-media="${mi}" title="${esc(f.name || '')}">
+        ${f.kind === 'video' ? `<video src="${esc(f.url)}" muted preload="metadata"></video><span class="ask-media-play">▶</span>` : `<img src="${esc(f.url)}" alt="" loading="lazy" />`}
+        <span class="ask-media-name">${esc(f.name || '')}</span>
+      </button>`).join('')}</div>` : ''}
+      ${(!mine && !pending) ? `<div class="ask-reply-actions">
+        ${m.execution && m.execution.checkpoint_available && ['partial', 'failed', 'cancelled', 'budget_exceeded', 'interrupted'].includes(m.execution.outcome || m.execution.status) ? `<button type="button" data-act="ask-resume" data-index="${index}" title="从最近检查点继续，只读恢复">继续任务</button>` : ''}
+        ${(() => {
+          const sk = ASK_SKILLS.find((x) => x.name === m.skill);
+          if (!sk) return '';
+          const chain = ASK_CHAIN[sk.id];
+          if (!chain) return '';
+          if (chain.next) return '<button type="button" class="ask-next-step" data-act="ask-chain" data-index="' + index + '" data-skill="' + chain.next + '" data-verb="' + esc(chain.verb) + '" title="把这条产出接到下一步">下一步：' + esc(chain.label) + ' →</button>';
+          return '<button type="button" class="ask-next-step" data-act="ask-to-studio" data-index="' + index + '" title="把提示词写进视频创作台">送到创作台 ↗</button>';
+        })()}
+        <button type="button" data-act="ask-copy" data-index="${index}" title="复制回复"><span>⧉</span>复制</button>
+        <button type="button" data-act="ask-paste" data-index="${index}" title="粘贴到输入框"><span>⌁</span>粘贴</button>
+        <button type="button" class="${a.liked.has(m.id) ? 'is-on' : ''}" data-act="ask-like" data-index="${index}" title="点赞"><span>▲</span>点赞</button>
+        <button type="button" class="${a.disliked.has(m.id) ? 'is-on' : ''}" data-act="ask-dislike" data-index="${index}" title="有问题"><span>▼</span>有问题</button>
+        <button type="button" data-act="ask-regenerate" data-index="${index}" title="重新生成这条回复"><span>↻</span>重生成</button>
+        <span class="ask-usage" title="输入 ${esc(String((usage && usage.input_tokens) ?? '未知'))} / 输出 ${esc(String((usage && usage.output_tokens) ?? '未知'))}">${esc(usage ? '输入 ' + usage.input_tokens + ' / 输出 ' + usage.output_tokens : '')}</span>
+        <span class="ask-time">${esc(askTimeText(m.time))}</span>
+      </div>` : (mine ? `<div class="ask-reply-actions is-user-row">
+        <button type="button" class="ask-turn-delete" data-act="ask-delete-turn" data-index="${index}" title="删除这一轮：问题连同它的回复一起删除">🗑 删除这一轮</button>
+        <span class="ask-time">${esc(askTimeText(m.time))}</span>
+      </div>` : '')}
+    </div>
+  </article>`;
 }
 
 function askWelcomeHtml() {
   return `<div class="ask-welcome">
-    <span class="ask-eyebrow">CREATION PIPELINE</span>
+    <span class="ask-eyebrow">WENYUN.M-DESKTOP</span>
     <h2>${esc(agentWelcomeText(state.config?.ui))}</h2>
   </div>`;
 }
@@ -4363,8 +6116,16 @@ function askRenderPopups() {
   const host = $('#ask-popups');
   if (!host) return;
   const cmdOpen = a.command.mode !== null || a.command.query !== null;
-  host.innerHTML = (cmdOpen ? askCommandPopup() : '') + (a.mention ? askMentionPopup() : '');
+  host.innerHTML = (cmdOpen ? askCommandPopup() : '') + (a.mention ? askMentionPopup() : '') + (a.permMenu ? askPermissionPopup() : '');
   host.style.display = host.innerHTML.trim() ? 'block' : 'none';
+}
+
+function askPermissionPopup() {
+  const a = askState();
+  const current = askPermission(a.permission);
+  return `<div class="ask-popup ask-perm-pop"><div class="ask-popup-title">本地权限 · ${esc(current.label)}</div>
+    ${ASK_PERMISSIONS.map((p) => `<button type="button" class="${p.id === current.id ? 'is-hl' : ''}" data-act="ask-perm" data-id="${p.id}"><b>${p.icon} ${esc(p.label)}</b><span>${esc(p.desc)}</span></button>`).join('')}
+    <p class="ask-perm-note">高危命令（格式化 / 分区 / 关机 / 删系统目录 / 编码载荷 / 账户后门）在任何档位都由系统强制阻断，模型改写法也绕不过去。</p></div>`;
 }
 
 function askSessionFiles(chat) {
@@ -4409,24 +6170,29 @@ function askComposerHtml() {
       <span>🗂 ${esc((state.project && state.project.name) || askProjectId())}</span>
       ${state.styleDetail ? `<span>🎨 ${esc(state.styleDetail.name)}</span>` : ''}
       <span>✧ ${esc(skill.name)}${a.skillId ? ' <button type="button" data-act="ask-clear-skill" title="移除技能，返回普通聊天">×</button>' : ''}</span>
-      ${(a.attachments || []).map((f) => `<span class="ask-attach">📎 ${esc(f.name)}<small>${f.status === 'indexed' ? '已索引' : '待处理'}</small><button type="button" data-act="ask-detach" data-id="${esc(f.id)}">×</button></span>`).join('')}
+      ${(a.attachments || []).map((f) => `<span class="ask-attach" data-act="ask-preview" data-id="${esc(f.id)}" title="点击预览">📎 ${esc(f.name)}<small>${askAttachStatusText(f)}</small><button type="button" data-act="ask-detach" data-id="${esc(f.id)}">×</button></span>`).join('')}
     </div>
     <div class="ask-composer">
+      ${askQueueHtml()}
       <div class="ask-popups" id="ask-popups"></div>
-      <textarea id="ask-input" class="ask-input" rows="2" maxlength="3000" placeholder="${a.generating ? '智能体思考中…' : '聊聊你的想法，或输入 @ 选择技能'}">${esc(a.draft)}</textarea>
+      <textarea id="ask-input" class="ask-input" rows="2" maxlength="3000" placeholder="${a.generating ? '当前回复生成中：Enter 加入队列' : '聊聊你的想法，或输入 @ 选择技能'}">${esc(a.draft)}</textarea>
       <div class="ask-composer-bar">
         <button type="button" class="ask-icon-btn" data-act="ask-attach" title="添加附件（最多 5 个，单文件 10MB）">📎</button>
         <button type="button" class="ask-icon-btn" data-act="ask-skill-picker" title="插入 @视角">@</button>
+        <button type="button" class="ask-perm is-${esc(askPermission(a.permission).id)}" data-act="ask-permission" title="本地权限：${esc(askPermission(a.permission).label)}（点击切换）">${askPermission(a.permission).icon} ${esc(askPermission(a.permission).label)}</button>
         <select class="ask-select" id="ask-model" title="模型">
           ${models.map((m) => `<option value="${esc(m.id)}" ${m.id === a.modelId ? 'selected' : ''} title="上下文 ${m.context_tokens ? Math.round(m.context_tokens / 1000) + 'k' : '默认 500k'}">${esc(m.label)}${m.context_tokens ? ' · ' + Math.round(m.context_tokens / 1000) + 'k' : ''}</option>`).join('') || '<option value="">默认模型</option>'}
         </select>
         ${efforts.length ? `<select class="ask-select" id="ask-effort" title="思考强度">${efforts.map((e) => `<option value="${esc(e)}" ${e === a.effort ? 'selected' : ''}>思考 ${esc(ASK_EFFORT_LABELS[e] || e)}</option>`).join('')}</select>` : ''}
         <span class="ask-draft-count">${(a.draft || '').length}/3000</span>
         <span class="grow"></span>
-        ${a.generating ? `<button type="button" class="ask-send is-stop" data-act="ask-stop" title="停止生成">■ 停止</button>` : `<button type="button" class="ask-send" data-act="ask-send" ${a.draft.trim() ? '' : 'disabled'}>发送 ↑</button>`}
+        ${askContextMeterHtml()}
+        ${a.generating
+          ? `<button type="button" class="ask-send ask-send-queue" data-act="ask-send" ${a.draft.trim() ? '' : 'disabled'} title="加入队列，当前回复结束后依次发送">排队 ↑</button><button type="button" class="ask-send is-stop" data-act="ask-stop" title="停止生成">■ 停止</button>`
+          : `<button type="button" class="ask-send" data-act="ask-send" ${a.draft.trim() ? '' : 'disabled'}>发送 ↑</button>`}
       </div>
     </div>
-    <div class="ask-hint">Enter 发送 · Shift+Enter 换行 · / 命令 · @ 视角</div>
+    <div class="ask-hint">Enter 发送 · Shift+Enter 换行 · / 命令 · @ 视角<span class="ask-perm-hint">${esc(askPermission(a.permission).desc)}</span>${a.toolsSupported === false ? '<span class="ask-perm-warn">⚠ 当前模型渠道不支持工具调用，文件与命令操作不会执行：把模型切到 deepseek-flash 或 gemini-3.8-flash</span>' : ''}</div>
   </div>`;
 }
 
@@ -4434,6 +6200,75 @@ function askEfforts() {
   const a = askState();
   const model = (a.models || []).find((m) => m.id === a.modelId);
   return (model && model.reasoning_efforts) || [];
+}
+
+/* ----------------------- 上下文占用（圈 + 已用/总量） ----------------------- */
+const ASK_CTX_R = 6.6;
+const ASK_CTX_C = 2 * Math.PI * ASK_CTX_R;
+
+function askContextStats() {
+  const a = askState();
+  const chat = askActive();
+  const model = (a.models || []).find((m) => m.id === a.modelId) || {};
+  const total = Number(model.context_tokens) || 128000;
+  const messages = (chat && chat.messages) || [];
+  let used = 0;
+  let exact = false;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const usage = messages[i].execution && messages[i].execution.usage;
+    if (usage && usage.input_tokens) {
+      used = Number(usage.input_tokens) + Number(usage.output_tokens || 0);
+      exact = true;
+      for (let j = i + 1; j < messages.length; j += 1) used += Math.ceil(String(messages[j].text || '').length * 0.7);
+      break;
+    }
+  }
+  if (!used) {
+    const chars = messages.reduce((n, m) => n + String(m.text || '').length, 0);
+    used = Math.ceil(chars * 0.7);
+  }
+  used += Math.ceil(String(a.draft || '').length * 0.7);
+  return { used, total, ratio: total ? Math.max(0, Math.min(1, used / total)) : 0, exact };
+}
+
+function askFmtTokens(value) {
+  const n = Math.max(0, Math.round(Number(value) || 0));
+  if (n >= 1000000) return (n / 1000000).toFixed(1).replace(/\.0$/, '') + 'm';
+  if (n >= 1000) return Math.round(n / 1000) + 'k';
+  return String(n);
+}
+
+function askCtxTone(ratio) {
+  if (ratio >= 0.95) return 'is-danger';
+  if (ratio >= 0.8) return 'is-warn';
+  return '';
+}
+
+function askContextMeterHtml() {
+  const s = askContextStats();
+  const len = (ASK_CTX_C * s.ratio).toFixed(1);
+  const title = `上下文占用：${askFmtTokens(s.used)} / ${askFmtTokens(s.total)}（${(s.ratio * 100).toFixed(1)}%）${s.exact ? '' : ' · 估算'}`;
+  return `<span class="ask-ctx ${askCtxTone(s.ratio)}" title="${esc(title)}">
+      <svg class="ask-ctx-ring" viewBox="0 0 18 18" width="16" height="16" aria-hidden="true">
+        <circle class="ask-ctx-track" cx="9" cy="9" r="${ASK_CTX_R}" />
+        <circle class="ask-ctx-fill" cx="9" cy="9" r="${ASK_CTX_R}" stroke-dasharray="${len} ${ASK_CTX_C.toFixed(1)}" transform="rotate(-90 9 9)" />
+      </svg>
+      <span class="ask-ctx-text">${askFmtTokens(s.used)}/${askFmtTokens(s.total)}</span>
+    </span>`;
+}
+
+// 就地刷新圆圈，不重排整个输入区
+function askUpdateContextMeter() {
+  const host = document.querySelector('.ask-ctx');
+  if (!host) return;
+  const s = askContextStats();
+  const fill = host.querySelector('.ask-ctx-fill');
+  if (fill) fill.setAttribute('stroke-dasharray', (ASK_CTX_C * s.ratio).toFixed(1) + ' ' + ASK_CTX_C.toFixed(1));
+  const text = host.querySelector('.ask-ctx-text');
+  if (text) text.textContent = askFmtTokens(s.used) + '/' + askFmtTokens(s.total);
+  host.classList.toggle('is-warn', s.ratio >= 0.8 && s.ratio < 0.95);
+  host.classList.toggle('is-danger', s.ratio >= 0.95);
+  host.title = `上下文占用：${askFmtTokens(s.used)} / ${askFmtTokens(s.total)}（${(s.ratio * 100).toFixed(1)}%）${s.exact ? '' : ' · 估算'}`;
 }
 
 function askCommandItems() {
@@ -4496,42 +6331,12 @@ function askTrajectoryHtml() {
 
 function askCapabilityHtml() {
   const a = askState();
-  const tools = ASK_INTERNAL_TOOLS.filter((t) => t.kind !== 'create');
-  return `<aside class="ask-cap">
-    <div class="ask-cap-head">
-      <div class="ask-cap-tabs" role="tablist">
-        <button type="button" role="tab" class="${a.panelTab === 'analysis' ? 'is-on' : ''}" data-act="ask-panel" data-tab="analysis">分析工作区</button>
-        <button type="button" role="tab" class="${a.panelTab === 'trajectory' ? 'is-on' : ''}" data-act="ask-panel" data-tab="trajectory">运行轨迹</button>
-      </div>
-      <button type="button" class="ask-icon-btn" data-act="ask-close-cap" title="关闭分析工作区">×</button>
-    </div>
-    ${a.panelTab === 'analysis' ? `
-      <div class="ask-project-context">
-        <div class="ask-context-title">本轮项目资源</div>
-        <div class="ask-context-row"><span>项目</span><b>${esc((state.project && state.project.name) || askProjectId())}</b></div>
-        <div class="ask-context-row"><span>数据版本</span><b>未选择</b></div>
-        <div class="ask-context-row"><span>策略包</span><b>未选择</b></div>
-        <p class="ask-context-note">H3 项目没有接信贷数据源，这里只展示对话与素材；需要业务数据时再扩展。</p>
-      </div>
-      <div class="ask-cap-subtabs">
-        <button type="button" class="${a.capTab === 'tools' ? 'is-on' : ''}" data-act="ask-captab" data-tab="tools">🛠 工具 <span>${tools.length}</span></button>
-        <button type="button" class="${a.capTab === 'skills' ? 'is-on' : ''}" data-act="ask-captab" data-tab="skills">📖 技能 <span>${askSkillList().length}</span></button>
-      </div>
-      <div class="ask-cap-content">
-        ${a.capTab === 'tools' ? `<p class="ask-cap-intro">基础工具：规划、读指导、记录步骤、检索附件、生成交付文件。出图 / 出片 / 抽帧已经做成技能，在「技能」或 @ 里选。</p>
-          ${tools.map((t) => `<article class="ask-tool"><b class="ask-tool-internal">${esc(t.name)}</b><p>${esc(t.description)}</p><div class="ask-tool-foot">${t.kind === 'create' ? '创作工具 · 已开放（真实调用）' : '内置任务工具 · 已开放'}</div></article>`).join('')}
-`
-        : `<p class="ask-cap-intro">技能决定这一轮怎么干活：先选一个，模型按它的步骤和格式执行；也可以去插件页新建。</p>
-          <button type="button" class="ask-btn ask-skill-new" data-act="ask-new-skill">＋ 新建技能</button>
-          ${askSkillList().map((s) => `<button type="button" class="ask-skill-row ${s.id === a.skillId ? 'is-on' : ''}" data-act="ask-skill" data-id="${s.id}">
-            <div><span>${askSkillIcon(s.id)}</span><b>${esc(s.name)}</b>${s.id === a.skillId ? '<span class="ask-check">✓</span>' : ''}</div>
-            <p>${esc(s.description)}</p><span>${s.id === a.skillId ? '当前使用' : '点击使用此技能'}</span>
-          </button>`).join('')}
-          <div class="ask-skill-prompts"><b>试试${esc(askSkill(a.skillId).name)}</b>${askSkill(a.skillId).prompts.map((q) => `<button type="button" data-act="ask-fill" data-text="${esc(q)}">${esc(q)} ↗</button>`).join('')}</div>`}
-      </div>
-    ` : `<div class="ask-cap-content is-traj">${askTrajectoryHtml()}</div>`}
-    <div class="ask-cap-foot"><span class="ask-dot"></span>智能体服务<span>已接入模型</span></div>
-  </aside>`;
+  const tab = a.panelTab === 'trajectory' ? 'trajectory' : a.panelTab === 'input' ? 'input' : 'analysis';
+  const files = tab !== 'trajectory' && window.AgentWorkspace ? AgentWorkspace.html({projectId:askProjectId(),sessionId:a.activeId,kind:tab === 'input'?'input':'output',render:askRenderAll}) : '';
+  return `<aside class="ask-cap"><div class="ask-cap-head"><div class="ask-cap-tabs" role="tablist" aria-label="对话工作区">
+    ${[['analysis','产出文件'],['input','输入材料'],['trajectory','执行过程']].map(([id,label])=>`<button type="button" role="tab" aria-selected="${tab===id}" class="${tab===id?'is-on':''}" data-act="ask-panel" data-tab="${id}">${label}</button>`).join('')}
+    </div><button type="button" class="ask-icon-btn" data-act="ask-close-cap" aria-label="关闭工作区">×</button></div>
+    <div class="ask-cap-content">${tab==='trajectory'?askTrajectoryHtml():files}</div></aside>`;
 }
 
 /* 知识库 / 插件管理 */
@@ -4575,7 +6380,7 @@ function askManageHtml() {
   const plugins = (a.plugins || []).filter((p) => (p.kind || 'skill') === tab);
   const labels = { tool: '工具管理', skill: '技能管理', mcp: 'MCP 管理' };
   const newLabels = { tool: '新建工具', skill: '新建技能', mcp: '新建 MCP' };
-  const systemSkills = ASK_SKILLS.map((s) => ({ id: s.id, name: s.name, description: s.description }));
+  const systemSkills = ((a.skills && a.skills.length) ? a.skills.filter((s) => s.source === 'builtin') : ASK_SKILLS.map((s) => ({ id: s.id, name: s.name, description: s.description }))).map((s) => ({ id: s.id, name: s.name, description: s.description }));
   const systemTools = ASK_INTERNAL_TOOLS.filter((t) => t.kind !== 'create').map((t) => ({ id: t.name, name: t.name, description: t.description }));
   const system = tab === 'skill' ? systemSkills : tab === 'tool' ? systemTools : [];
   const customTitle = tab === 'skill' ? '自定义技能' : tab === 'tool' ? '自定义工具' : '自定义 MCP';
@@ -4596,12 +6401,13 @@ function askManageHtml() {
       <div><h2>插件管理</h2><p>系统内置只读；自定义技能 / 工具 / MCP 可以自由添加、编辑、删除。</p></div>
       <div class="ask-manage-actions">
         <button type="button" class="ask-btn" data-act="ask-manage-refresh">刷新</button>
+        ${tab === 'skill' ? '<button type="button" class="ask-btn" data-act="ask-skill-install">安装技能</button>' : ''}
         <button type="button" class="ask-btn is-primary" data-act="ask-manage-new">${newLabels[tab]}</button>
         <button type="button" class="ask-btn" data-act="ask-workspace" data-page="console">返回对话</button>
       </div>
     </header>
     <nav class="ask-manage-tabs">
-      ${['tool', 'skill', 'mcp'].map((k) => `<button type="button" class="${tab === k ? 'is-on' : ''}" data-act="ask-plugin-tab" data-tab="${k}">${labels[k]} <span>${(k === 'skill' ? ASK_SKILLS.length : k === 'tool' ? systemTools.length : 0) + (a.plugins || []).filter((p) => (p.kind || 'skill') === k).length}</span></button>`).join('')}
+      ${['tool', 'skill', 'mcp'].map((k) => `<button type="button" class="${tab === k ? 'is-on' : ''}" data-act="ask-plugin-tab" data-tab="${k}">${labels[k]} <span>${(k === 'skill' ? systemSkills.length : k === 'tool' ? systemTools.length : 0) + (a.plugins || []).filter((p) => (p.kind || 'skill') === k).length}</span></button>`).join('')}
     </nav>
     ${a.manageError ? `<div class="ask-error">${esc(a.manageError)}</div>` : ''}
     <div class="ask-manage-scroll">
@@ -4633,6 +6439,7 @@ function askHistoryHtml() {
       <div class="ask-pane-heading">
         <span class="ask-pane-logo">Y9</span>
         <div><b>智能创作</b><small>剧本 · 分镜 · 提示词</small></div>
+        <button type="button" class="ask-history-hide" data-act="ask-toggle-history" title="隐藏对话列表">‹</button>
       </div>
       <nav class="ask-workspace-nav">
         <button type="button" class="${a.workspacePage === 'console' ? 'is-on' : ''}" data-act="ask-workspace" data-page="console">▤ 控制台</button>
@@ -4644,9 +6451,14 @@ function askHistoryHtml() {
         <button type="button" class="ask-new-chat ask-new-project" data-act="ask-folder-create">＋ 新建项目</button>
         <div class="ask-history-search"><span>⌕</span><input id="ask-search" placeholder="搜索对话历史" value="${esc(a.search)}" /></div>
         <div class="ask-history-list">
-          ${groups.map((g) => ((g.id || g.items.length) ? `<div class="ask-folder-heading"><button type="button" class="ask-folder-toggle" data-act="ask-folder-toggle" data-id="${esc(g.id)}" aria-expanded="${!a.collapsedFolders?.[g.id]}" title="${esc(g.label)}">${a.collapsedFolders?.[g.id] ? '▸' : '▾'} <span>${esc(g.label)}</span><small>${g.items.length}</small></button>${g.id ? `<button type="button" class="ask-folder-action" data-act="ask-folder-new" data-id="${esc(g.id)}" title="在此项目新建对话">＋</button><button type="button" class="ask-folder-action" data-act="ask-folder-rename" data-id="${esc(g.id)}" title="重命名项目">✎</button>` : ''}</div>${(!a.collapsedFolders?.[g.id] || search ? g.items : []).map((c) => `<div class="ask-history-item ${c.id === a.activeId ? 'is-on' : ''}">
+          ${groups.map((g) => ((g.id || g.items.length) ? `<div class="ask-folder-heading"><button type="button" class="ask-folder-toggle" data-act="ask-folder-toggle" data-id="${esc(g.id)}" aria-expanded="${!a.collapsedFolders?.[g.id]}" title="${esc(g.label)}">${a.collapsedFolders?.[g.id] ? '▸' : '▾'} <span>${esc(g.label)}</span><small>${g.items.length}</small></button>${g.id ? `<button type="button" class="ask-folder-action" data-act="ask-folder-new" data-id="${esc(g.id)}" title="在此项目新建对话">＋</button><button type="button" class="ask-folder-action" data-act="ask-folder-rename" data-id="${esc(g.id)}" title="重命名项目">✎</button>` : ''}</div>${(!a.collapsedFolders?.[g.id] || search ? g.items : []).map((c) => `<div class="ask-history-item ${c.id === a.activeId ? 'is-on' : ''} ${askRunOf(c.id) ? 'is-running' : ''}" data-id="${esc(c.id)}">
             <button type="button" class="ask-history-main" data-act="ask-open" data-id="${esc(c.id)}">
-              <span>${c.pinned ? '◆' : '▢'}</span><span><b>${esc(c.title || '新的创作对话')}</b><small>${esc(askPreview(c))}</small></span>
+              ${(() => {
+                const running = !!askRunOf(c.id);
+                const flag = running ? 'is-running' : '';
+                const mark = running ? '' : (c.pinned ? '◆' : '○');
+                return `<span class="ask-history-flag ${flag}" title="${running ? '正在生成回复' : (c.pinned ? '已置顶' : '')}" aria-label="${running ? '正在生成回复' : ''}">${mark}</span>`;
+              })()}<span><b>${esc(c.title || '新的创作对话')}</b><small>${esc(askPreview(c))}</small></span>
             </button>
             <button type="button" class="ask-history-more" data-act="ask-more" data-id="${esc(c.id)}" title="管理对话">⋯</button>
           </div>`).join('')}` : '')).join('')}
@@ -4668,6 +6480,7 @@ function askFilePaneHtml() {
   const kind = media ? media.kind : ((data && data.kind) || 'text');
   const expanded = !!a.previewExpanded;
   const contentUrl = file ? '/api/agent/workspace/files/' + encodeURIComponent(file.id) + '/content' : '';
+  const rawUrl = file ? '/api/agent/workspace/files/' + encodeURIComponent(file.id) + '/raw?project=' + encodeURIComponent(askProjectId()) : '';
   const downloadUrl = media ? media.url : (file ? '/api/agent/workspace/files/' + encodeURIComponent(file.id) + '/download' : '');
   const labels = { image: '图片', video: '视频', audio: '音频', pdf: 'PDF', markdown: 'Markdown', html: 'HTML', spreadsheet: '表格', text: '文本', unsupported: '文件' };
   const kindLabel = media ? (media.kind === 'video' ? '视频' : '图片') : (labels[kind] || '文件');
@@ -4694,13 +6507,13 @@ function askFilePaneHtml() {
       ? `<pre class="ask-pane-text">${esc(data.content || '')}</pre>`
       : `<iframe class="ask-pane-html" sandbox="" referrerpolicy="no-referrer" srcdoc="${esc(data.content || '')}" title="隔离的 HTML 文件预览"></iframe>`;
   } else if (data.kind === 'image') {
-    body = `<div class="ask-pane-image"><img src="${contentUrl}" alt="${esc(name)}" /></div>`;
+    body = `<div class="ask-pane-image"><img src="${rawUrl}" alt="${esc(name)}" /></div>`;
   } else if (data.kind === 'pdf') {
-    body = `<iframe class="ask-pane-html" src="${contentUrl}" title="PDF 文件预览"></iframe>`;
+    body = `<iframe class="ask-pane-html" src="${rawUrl}" title="PDF 文件预览"></iframe>`;
   } else if (data.kind === 'audio') {
-    body = `<div class="ask-pane-media"><b>${esc(name)}</b><audio src="${contentUrl}" controls preload="metadata"></audio><p>音频播放</p></div>`;
+    body = `<div class="ask-pane-media"><b>${esc(name)}</b><audio src="${rawUrl}" controls preload="metadata"></audio><p>音频播放</p></div>`;
   } else if (data.kind === 'video') {
-    body = `<div class="ask-pane-video"><video src="${contentUrl}" controls preload="metadata" playsinline></video></div>`;
+    body = `<div class="ask-pane-video"><video src="${rawUrl}" controls preload="metadata" playsinline></video></div>`;
   } else if (data.kind === 'text') {
     body = `<pre class="ask-pane-text">${esc(data.content || data.text || '（没有可预览的文本）')}</pre>`;
   } else {
@@ -4715,6 +6528,7 @@ function askFilePaneHtml() {
       <span class="ask-file-icon">${kind === 'video' ? '🎬' : kind === 'image' ? '🖼' : '📄'}</span>
       <div><b title="${esc(name)}">${esc(name)}</b><small>${kindLabel}预览${bytes ? ' · ' + fmtBytes(bytes) : ''}</small></div>
       ${downloadUrl ? `<a class="ask-icon-btn" href="${esc(downloadUrl)}" download="${esc(name)}" title="下载原件">⇩</a>` : ''}
+      ${file ? `<button type="button" class="ask-icon-btn" data-act="ask-reveal-pane" data-id="${esc(file.id)}" title="打开文件所在文件夹"><span class="ask-icon-folder">📁</span></button>` : ''}
       <button type="button" class="ask-icon-btn" data-act="ask-expand-preview" title="${expanded ? '缩小预览' : '展开预览'}">${expanded ? '⤡' : '⤢'}</button>
       <button type="button" class="ask-icon-btn" data-act="ask-close-pane" title="关闭预览">×</button>
     </header>
@@ -4733,7 +6547,10 @@ function renderScript() {
     }
     return `<div class="ask-app"><div class="ask-loading">正在连接智能体服务…</div></div>`;
   }
-  if (a.workspacePage !== 'console') return `<div class="ask-app">${askHistoryHtml()}<section class="ask-chat" style="padding:0">${askManageHtml()}</section></div>`;
+  if (a.workspacePage !== 'console') return `<div class="ask-app">${askHistoryHtml()}<section class="ask-chat" style="padding:0">${askManageHtml()}</section>
+    ${a.installSkill ? askInstallSkillHtml() : ''}
+    ${a.folderDialog ? askFolderDialogHtml() : ''}
+  </div>`;
 
   const active = askActive();
   const chat = active || { title: '新的创作对话', messages: [] };
@@ -4758,16 +6575,20 @@ function renderScript() {
           <div><h1>${esc(chat.title || '新的创作对话')}</h1></div>
         </div>
         <div class="ask-head-actions">
+          <button type="button" class="ask-ref-toggle ${a.refImages ? 'is-on' : ''}" data-act="ask-toggle-refs" aria-pressed="${a.refImages ? 'true' : 'false'}" title="${a.refImages ? '参考出图：已开启，点一下关掉（不再调用图像渠道，省钱）' : '参考出图：已关闭，点一下开启（按画面描述直接出图，会走图像渠道计费）'}"><span class="ask-ref-toggle-dot"></span>出图</button>
           <button type="button" class="ask-icon-btn" data-act="ask-export" title="导出当前对话">⇩</button>
-          <button type="button" class="ask-icon-btn ${a.capabilitiesOpen ? 'is-on' : ''}" data-act="ask-toggle-cap" title="工具与技能">▥</button>
+          <button type="button" class="ask-icon-btn ${a.capabilitiesOpen ? 'is-on' : ''}" data-act="ask-toggle-cap" title="对话工作区">▥</button>
         </div>
       </header>
 
-      <div class="ask-messages" id="ask-messages">
-        ${a.error ? `<div class="ask-error">${esc(a.error)}</div>` : ''}
-        ${messages.length ? `<div class="ask-message-list">${askMessagesHtml(chat)}
-          ${a.generating ? `<div class="ask-generation"><span class="ask-pulse"></span><b>模型回复生成中</b><span>整理问题与所选技能…</span><span class="ask-gen-elapsed">0s</span><button type="button" data-act="ask-stop">停止</button></div>` : ''}
-        </div>` : askWelcomeHtml()}
+      <div class="ask-chat-body">
+        <div class="ask-messages" id="ask-messages">
+          ${a.error ? `<div class="ask-error">${esc(a.error)}</div>` : ''}
+          ${messages.length ? `<div class="ask-message-list">${askMessagesHtml(chat)}
+            ${a.generating ? `<div class="ask-generation"><span class="ask-pulse"></span><b>模型回复生成中</b><span>整理问题与所选技能…</span><span class="ask-gen-elapsed">0s</span><button type="button" data-act="ask-stop">停止</button></div>` : ''}
+          </div>` : askWelcomeHtml()}
+        </div>
+        ${askTurnsHtml(chat)}
       </div>
 
       ${askComposerHtml()}
@@ -4776,10 +6597,176 @@ function renderScript() {
     ${(a.previewFile || a.mediaPreview) ? askFilePaneHtml() : (a.capabilitiesOpen ? askCapabilityHtml() : '')}
     ${a.rename.open ? askRenameModalHtml() : ''}
     ${a.folderDialog ? askFolderDialogHtml() : ''}
+    ${a.installSkill ? askInstallSkillHtml() : ''}
     ${a.toolDetail ? askToolModalHtml() : ''}
     ${a.moreMenu ? askMoreMenuHtml() : ''}
     <input type="file" id="ask-file" hidden multiple accept=".txt,.md,.csv,.json,.xlsx,.docx,.pdf,.png,.jpg,.jpeg,.webp,.html,.mp3,.wav,.m4a,.mp4,.webm" />
   </div>`;
+}
+
+// 一轮 = 一条用户提问 + 它后面的所有助手消息（直到下一条提问）
+function askTurnSpan(messages, index) {  const list = messages || [];
+  const target = list[index];
+  if (!target || target.role !== 'user') return null;
+  let end = index + 1;
+  while (end < list.length && list[end].role !== 'user') end += 1;
+  return { start: index, end, count: end - index };
+}
+
+/* --------------------------- 待发送队列（按对话持久化） --------------------------- */
+function askQueueKey(chatId) { return 'wmd.ask.queue.' + chatId; }
+
+function askLoadQueue(chatId) {
+  const a = askState();
+  if (!a.queues) a.queues = {};
+  const id = chatId || a.activeId;
+  if (!id) return [];
+  if (!Array.isArray(a.queues[id])) {
+    let saved = [];
+    try { saved = JSON.parse(localStorage.getItem(askQueueKey(id)) || '[]'); } catch { saved = []; }
+    a.queues[id] = Array.isArray(saved) ? saved.filter((x) => x && x.text) : [];
+  }
+  return a.queues[id];
+}
+
+function askSaveQueue(chatId) {
+  const a = askState();
+  const id = chatId || a.activeId;
+  if (!id) return;
+  try { localStorage.setItem(askQueueKey(id), JSON.stringify((a.queues && a.queues[id]) || [])); } catch { /* ignore */ }
+}
+
+function askEnqueue(raw, chatId) {
+  const a = askState();
+  const id = chatId || a.activeId;
+  const text = String(raw || '').trim();
+  if (!id || !text) return;
+  const list = askLoadQueue(id);
+  list.push({ id: askId(), text, time: Date.now() });
+  askSaveQueue(id);
+  if (id === a.activeId) {
+    a.draft = '';
+    const input = $('#ask-input');
+    if (input) input.value = '';
+    askRenderAll();
+  }
+  toast('已排队第 ' + list.length + ' 条，当前回复结束后依次发送');
+}
+
+async function askWaitRunEnd(chatId, timeoutMs = 20000) {
+  const started = Date.now();
+  while (askRunOf(chatId) && Date.now() - started < timeoutMs) {
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+}
+
+// 一轮结束后只发队首那一条，剩下继续排队
+function askDrainQueue(chatId) {
+  const a = askState();
+  const id = chatId || a.activeId;
+  if (!id || askRunOf(id)) return;
+  const list = askLoadQueue(id);
+  if (!list.length) return;
+  const next = list.shift();
+  askSaveQueue(id);
+  if (a.activeId === id) askRenderAll();
+  setTimeout(() => { askSend(next.text, id).catch(() => {}); }, 150);
+}
+
+function askQueueHtml() {
+  const a = askState();
+  const list = askLoadQueue(a.activeId);
+  if (!list.length) return '';
+  const first = list[0];
+  return `<div class="ask-queue" role="region" aria-label="待发送队列">
+    <div class="ask-queue-head"><span>待发送 <b>${list.length}</b> 条</span><span class="ask-queue-hint">当前回复结束后依次发送</span></div>
+    <div class="ask-queue-item">
+      <span class="ask-queue-idx">1</span>
+      <span class="ask-queue-text" title="${esc(first.text)}">${esc(first.text)}</span>
+      <button type="button" class="ask-queue-btn" data-act="ask-queue-now" data-id="${esc(first.id)}" title="立即补充：中断当前回复并马上发送这条">↑</button>
+      <button type="button" class="ask-queue-btn is-danger" data-act="ask-queue-cancel" data-id="${esc(first.id)}" title="从队列里取消这条">×</button>
+    </div>
+    ${list.length > 1 ? `<div class="ask-queue-rest">后面还有 ${list.length - 1} 条，依次排队</div>` : ''}
+  </div>`;
+}
+
+// 右侧轮次滑条：一轮一个小格，点一下跳到该轮用户提问；右侧面板打开时不显示
+function askTurnsHtml(chat) {
+  const a = askState();
+  if (a.previewFile || a.mediaPreview || a.capabilitiesOpen) return '';
+  const messages = (chat && chat.messages) || [];
+  const turns = messages.map((m, index) => ({ m, index })).filter((x) => x.m.role === 'user');
+  if (turns.length < 2) return '';
+  return `<div class="ask-turns" role="navigation" aria-label="对话轮次">
+    <div class="ask-turn-tip" hidden></div>
+    ${turns.map((t, order) => `<button type="button" data-act="ask-jump" data-index="${t.index}" data-order="${order}" data-tip="第 ${order + 1} 轮：${esc(String(t.m.text || '').replace(/\s+/g, ' ').slice(0, 20))}" title="第 ${order + 1} 轮"><i></i></button>`).join('')}
+  </div>`;
+}
+
+// 悬停滑条时弹出这一轮问题的前 20 个字
+function askBindTurnTips() {
+  const rail = document.querySelector('.ask-turns');
+  if (!rail || rail._tipsBound) return;
+  rail._tipsBound = true;
+  const tip = rail.querySelector('.ask-turn-tip');
+  if (!tip) return;
+  const show = (event) => {
+    const btn = event.target.closest('button[data-tip]');
+    if (!btn) return;
+    tip.textContent = btn.dataset.tip;
+    tip.hidden = false;
+    const body = rail.parentElement.getBoundingClientRect();
+    const rect = btn.getBoundingClientRect();
+    const top = rect.top - body.top + rect.height / 2 - tip.offsetHeight / 2;
+    tip.style.top = Math.round(Math.max(2, Math.min(body.height - tip.offsetHeight - 2, top))) + 'px';
+  };
+  const hide = () => { tip.hidden = true; };
+  rail.addEventListener('mouseover', show);
+  rail.addEventListener('mouseleave', hide);
+  rail.addEventListener('click', hide);
+  rail.addEventListener('scroll', hide, true);
+}
+
+function askSyncTurns() {
+  const host = $('#ask-messages');
+  const rail = document.querySelector('.ask-turns');
+  if (!host || !rail) return;
+  const nodes = [...host.querySelectorAll('.ask-message[data-msg-index]')];
+  if (!nodes.length) return;
+  const top = host.getBoundingClientRect().top + 8;
+  let active = -1;
+  for (const node of nodes) {
+    if (node.getBoundingClientRect().top <= top + 40) {
+      if (node.classList.contains('is-user')) active = Number(node.dataset.msgIndex);
+    }
+  }
+  for (const btn of rail.querySelectorAll('button')) {
+    btn.classList.toggle('is-on', Number(btn.dataset.index) === active);
+  }
+}
+
+function askJumpToTurn(host, node) {
+  if (!host || !node) return;
+  const a = askState();
+  a.pinBottom = false;
+  a.jumpUntil = Date.now() + 1400; // 跳转动画期间别让“贴底”逻辑把位置拉回去
+  const target = () => Math.round(node.getBoundingClientRect().top - host.getBoundingClientRect().top + host.scrollTop - 10);
+  host.scrollTo({ top: Math.max(0, target()), behavior: 'smooth' });
+  // 图片/懒加载会让上面的高度变化，动画结束后再校正几次，确保停在目标轮次
+  if (a._jumpTimer) clearTimeout(a._jumpTimer);
+  let tries = 0;
+  const settle = () => {
+    a._jumpTimer = null;
+    if (!document.body.contains(node)) return;
+    const drift = Math.round(node.getBoundingClientRect().top - host.getBoundingClientRect().top - 10);
+    if (Math.abs(drift) > 8 && tries < 6) {
+      tries += 1;
+      host.scrollTop = Math.max(0, target());
+      a.jumpUntil = Date.now() + 400;
+      a._jumpTimer = setTimeout(settle, 120);
+    }
+  };
+  a._jumpTimer = setTimeout(settle, 430);
 }
 
 function askMediaModalHtml() {
@@ -4846,6 +6833,63 @@ function askToolModalHtml() {
       <div class="ask-modal-foot"><button type="button" class="ask-btn is-primary" data-act="ask-close-tool">关闭</button></div>
     </div>
   </div>`;
+}
+
+function askInstallSkillHtml() {
+  const d = askState().installSkill;
+  return `<div class="ask-modal-backdrop"><div class="ask-modal is-wide" role="dialog" aria-modal="true" aria-label="安装技能">
+    <div class="ask-modal-head"><b>安装技能</b><button type="button" data-act="ask-install-cancel" aria-label="关闭">×</button></div>
+    <div class="ask-modal-body">
+      <label for="ask-install-name">技能名称</label>
+      <input class="ask-input is-line" id="ask-install-name" maxlength="100" placeholder="例如：短剧钩子诊断" value="${esc(d.name || '')}" />
+      <label for="ask-install-desc">一句话说明</label>
+      <input class="ask-input is-line" id="ask-install-desc" maxlength="300" placeholder="这个技能做什么、什么时候用" value="${esc(d.description || '')}" />
+      <label for="ask-install-content">技能内容（SKILL.md 正文）</label>
+      <textarea class="ask-input" id="ask-install-content" rows="10" placeholder="粘贴 SKILL.md 正文，或点下面的按钮选择 .md 文件">${esc(d.content || '')}</textarea>
+      <div class="ask-install-tools">
+        <button type="button" class="ask-btn" data-act="ask-install-file">选择 .md 文件</button>
+        <span class="ask-install-hint">上限 60000 字符；保存到智能体后端的 skills/ 目录，同名技能会被覆盖升级，换项目也能用。</span>
+        <input type="file" id="ask-install-file" accept=".md,.txt,.markdown" hidden />
+      </div>
+      ${d.error ? `<div class="ask-error">${esc(d.error)}</div>` : ''}
+    </div>
+    <div class="ask-modal-foot">
+      <button class="ask-btn" type="button" data-act="ask-install-cancel">取消</button>
+      <button class="ask-btn is-primary" type="button" data-act="ask-install-save" ${d.saving ? 'disabled' : ''}>${d.saving ? '安装中…' : '安装'}</button>
+    </div>
+  </div></div>`;
+}
+
+async function askSaveInstallSkill() {
+  const a = askState();
+  const d = a.installSkill;
+  if (!d || d.saving) return;
+  const name = ($('#ask-install-name') || {}).value || '';
+  const description = ($('#ask-install-desc') || {}).value || '';
+  const content = ($('#ask-install-content') || {}).value || '';
+  d.name = name;
+  d.description = description;
+  d.content = content;
+  if (!name.trim()) { d.error = '请填写技能名称'; askRenderAll(); return; }
+  if (!content.trim()) { d.error = '请粘贴 SKILL.md 正文或选择文件'; askRenderAll(); return; }
+  d.saving = true;
+  d.error = '';
+  askRenderAll();
+  try {
+    const res = await askApi('/skills/install', { method: 'POST', body: JSON.stringify({ name: name.trim(), description: description.trim(), content }) });
+    const data = await res.json().catch(() => ({}));
+    await askLoadSkills();
+    await askLoadManage();
+    a.installSkill = null;
+    a.pluginTab = 'skill';
+    a.workspacePage = 'plugins';
+    if (state.route === 'script') askRenderAll();
+    toast((data && data.reinstalled ? '已覆盖升级技能：' : '已安装技能：') + name.trim());
+  } catch (err) {
+    d.saving = false;
+    d.error = err.message || '安装失败';
+    askRenderAll();
+  }
 }
 
 function askFolderDialogHtml() {
@@ -4946,6 +6990,10 @@ function askRenderAll() {
   const host = $('.route-host', view);
   if (!host) return;
   const historyScroll = $('.ask-history-list', host)?.scrollTop || 0;
+  const chatScroll = askCaptureScroll($('#ask-messages', host));
+  const a = askState();
+  const wantBottom = a.scrollIntent === 'bottom';
+  if (wantBottom) a.scrollIntent = null;
   host.innerHTML = renderScript();
   bindAsk(host);
   askRenderPopups();
@@ -4953,19 +7001,251 @@ function askRenderAll() {
   if (historyList) historyList.scrollTop = historyScroll;
   askPositionMoreMenu();
   const msgs = $('#ask-messages');
-  if (msgs) msgs.scrollTop = msgs.scrollHeight;
+  if (msgs) {
+    askBindScrollPin(msgs);
+    // 删掉末尾一轮时明确要求停在新末尾；其余情况按重绘前的位置复位，别甩回开头
+    if (wantBottom) askHoldScroll(msgs, { atBottom: true });
+    else if (chatScroll) askHoldScroll(msgs, chatScroll);
+    else if (askLastScroll(a)) askHoldScroll(msgs, askLastScroll(a));
+    else if (askFollowBottom()) msgs.scrollTop = msgs.scrollHeight;
+    askReportScrollJump(chatScroll, msgs, 'askRenderAll');
+  }
+  askUpdateContextMeter();
+  askBindTurnTips();
+  guHydrateRefs($('#ask-messages', view));
+}
+
+// 是否跟随到底部：只有用户本来就在底部才跟随，一旦往上翻就停下来
+function askFollowBottom() {
+  const a = askState();
+  return a.pinBottom !== false;
+}
+
+/* --------------------- 重绘后保住聊天区滚动位置 ---------------------
+   整块重绘（开预览、切源码/工作表、删掉一轮、开关面板）会重建 #ask-messages，
+   新的滚动容器 scrollTop 是 0，于是聊天记录被甩回开头，还得重新往下划。
+   这里在重绘前记下“视口顶部压在哪条消息、偏移多少”，重绘后按同一条消息复位；
+   锚点恰好被删掉时按内容高度差补偿，绝不落回开头。 */
+const askScrollHold = { token: 0 };
+
+function askCaptureScroll(host) {
+  if (!host) return null;
+  const top = host.scrollTop;
+  const height = host.scrollHeight;
+  const client = Math.max(0, host.clientHeight);
+  const atBottom = height - top - client < 40;
+  const list = host.querySelector('.ask-message-list');
+  const nodes = list ? [...list.children].filter((n) => n.classList && n.classList.contains('ask-message')) : [];
+  if (!nodes.length) return { index: -1, id: '', offset: 0, top, scrollHeight: height, clientHeight: client, atBottom };
+  const boxTop = host.getBoundingClientRect().top;
+  let index = nodes.length - 1;
+  let offset = 0;
+  for (let i = 0; i < nodes.length; i += 1) {
+    const rect = nodes[i].getBoundingClientRect();
+    if (rect.bottom > boxTop + 1) { index = i; offset = Math.round(rect.top - boxTop); break; }
+  }
+  return { index, id: nodes[index].dataset.msgId || '', offset, top, scrollHeight: height, clientHeight: client, atBottom };
+}
+
+function askRestoreScroll(host, view) {
+  if (!host || !view) return;
+  const maxTop = Math.max(0, host.scrollHeight - host.clientHeight);
+  if (view.atBottom) { host.scrollTop = maxTop; return; }
+  const list = host.querySelector('.ask-message-list');
+  const nodes = list ? [...list.children].filter((n) => n.classList && n.classList.contains('ask-message')) : [];
+  const node = (view.id ? nodes.find((n) => n.dataset.msgId === view.id) : null) || nodes[view.index];
+  if (!node) {
+    // 锚点这一轮被删掉了：按内容缩短的高度往回补，位置跟着上面补齐，不回开头
+    const shrink = Math.max(0, (view.scrollHeight || 0) - host.scrollHeight);
+    host.scrollTop = Math.min(maxTop, Math.max(0, (view.top || 0) - shrink));
+    return;
+  }
+  const drift = Math.round(node.getBoundingClientRect().top - host.getBoundingClientRect().top) - view.offset;
+  host.scrollTop = Math.min(maxTop, Math.max(0, host.scrollTop + drift));
+  // 上面有卡住的高度变化（比如预览面板挤窄了正文）时，别把顶部那一条顶出视野
+  if (host.scrollTop === 0 && view.offset < 0) host.scrollTop = Math.min(maxTop, Math.max(0, -view.offset));
+}
+
+// 图片是异步补进来的，上面高度一变锚点就会漂，所以重绘后连拉几次把它按住；
+// 用户一旦自己滚动（scrollTop 与我们设的不符），立刻交还控制权，不去抢。
+function askHoldScroll(host, view) {
+  if (!host || !view) return;
+  if (view.atBottom) { askRestoreScroll(host, view); return; }
+  askScrollHold.token += 1;
+  const token = askScrollHold.token;
+  const alive = () => token === askScrollHold.token && document.body.contains(host);
+  let expected = 0;
+  const release = () => { if (Math.abs(host.scrollTop - expected) > 2) askScrollHold.token += 1; };
+  const apply = () => {
+    if (!alive()) { host.removeEventListener('scroll', release); return; }
+    askRestoreScroll(host, view);
+    expected = host.scrollTop;
+  };
+  host.addEventListener('scroll', release, { passive: true });
+  apply();
+  requestAnimationFrame(apply);
+  // 懒加载图片、附件条撑高输入区都会晚一点改高度，多按几轮
+  [90, 240, 600, 1200].forEach((ms) => setTimeout(apply, ms));
+  setTimeout(() => host.removeEventListener('scroll', release), 1500);
+}
+
+// 滚动位置随手记在状态里：重绘前没来得及 capture 的路径也能靠它复位
+function askNoteScroll(host) {
+  const a = askState();
+  if (!host || !a) return;
+  const view = askCaptureScroll(host);
+  if (!view) return;
+  view.chatId = a.activeId || '';
+  a.lastScroll = view;
+}
+
+function askLastScroll(a) {
+  const saved = a && a.lastScroll;
+  if (!saved) return null;
+  if (saved.chatId && a.activeId && saved.chatId !== a.activeId) return null; // 换了会话就别套用旧位置
+  return saved;
+}
+
+// 万一还有哪条路径把位置清零，留一笔证据：F12 里 __scrollJumps 直接看调用栈
+function askReportScrollJump(before, host, label) {
+  if (!before || !host) return;
+  if (!before.top || before.top < 40) return;
+  if (host.scrollTop > 40) return;
+  const info = {
+    at: new Date().toISOString(),
+    label,
+    from: before.top,
+    to: host.scrollTop,
+    stack: String((new Error().stack) || '').split('\n').slice(1, 6).join(' | '),
+  };
+  if (typeof window !== 'undefined') {
+    window.__scrollJumps = window.__scrollJumps || [];
+    window.__scrollJumps.push(info);
+  }
+  console.warn('[chat-scroll] 重绘后位置被清零', info);
+}
+
+function askBindScrollPin(host) {
+  if (!host || host._askPinBound) return Promise.resolve();
+  host._askPinBound = true;
+  host.addEventListener('scroll', () => {
+    const a = askState();
+    // 用户自己滚的时候顺手记一笔位置，给来不及 capture 的重绘路径兜底
+    if (host._askSnapTimer) clearTimeout(host._askSnapTimer);
+    host._askSnapTimer = setTimeout(() => { host._askSnapTimer = 0; askNoteScroll(host); }, 60);
+    const atBottom = host.scrollHeight - host.scrollTop - host.clientHeight < 40;
+    if (a.jumpUntil && Date.now() < a.jumpUntil) { a.pinBottom = false; askSyncTurns(); return; }
+    const wasPinned = a.pinBottom !== false;
+    a.pinBottom = atBottom;
+    askSyncTurns();
+    if (!wasPinned && atBottom) { askRenderStreaming(); return; }
+    if (!atBottom) {
+      // 已经往上翻了：停止逐帧重绘，等滚回底部再一次性补齐
+      if (askRevealRaf) { cancelAnimationFrame(askRevealRaf); askRevealRaf = 0; }
+    }
+  }, { passive: true });
+  return Promise.resolve();
 }
 
 let askRenderTimer = null;
+let askRevealRaf = 0;
+
 function askRenderSoon() {
   if (askRenderTimer) return;
   askRenderTimer = setTimeout(() => {
     askRenderTimer = null;
-    askRenderMessages();
-  }, 150);
+    askRenderStreaming();
+  }, 90);
+}
+
+// 只重绘正在流式输出的最后一条消息，历史消息不参与重排，避免整块重绘带来的抖动
+function askRenderStreaming() {
+  const a = askState();
+  const chat = askActive();
+  const host = $('#ask-messages');
+  if (!chat || !host) return askRenderMessages();
+  const messages = chat.messages || [];
+  const list = host.querySelector('.ask-message-list');
+  const nodes = list ? [...list.children].filter((n) => n.classList && n.classList.contains('ask-message')) : [];
+  if (!list || !messages.length || nodes.length !== messages.length) return askRenderMessages();
+  const index = messages.length - 1;
+  const node = nodes[index];
+  const holder = document.createElement('div');
+  holder.innerHTML = askMessageHtml(messages[index], index, messages, a);
+  const next = holder.firstElementChild;
+  if (!next) return;
+  node.replaceWith(next);
+  // 回复还在流式输出时先不出图，等这条回复定稿再按完整描述生成
+  if (!(a.generating && index === messages.length - 1)) guHydrateRefs(next);
+  if (askFollowBottom()) host.scrollTop = host.scrollHeight;
+  askUpdateContextMeter();
+}
+
+// 收到数据就把“待显示字数”往前推，动画匀速走完，看起来像连续打字而不是一跳一跳
+function askRevealKick() {
+  const chat = askActive();
+  const last = chat && (chat.messages || [])[(chat.messages || []).length - 1];
+  if (!last || last.role !== 'assistant' || !last._streaming) { askRenderStreaming(); return; }
+  if (last._reveal == null) last._reveal = 0;
+  if (!askRevealRaf) askRevealRaf = requestAnimationFrame(askRevealStep);
+}
+
+function askRevealStep() {
+  askRevealRaf = 0;
+  const a = askState();
+  const chat = askActive();
+  const messages = (chat && chat.messages) || [];
+  const msg = messages[messages.length - 1];
+  if (!msg || msg.role !== 'assistant') return;
+  const target = String(msg.text || '');
+  let shown = msg._reveal == null ? target.length : msg._reveal;
+  if (shown > target.length) shown = target.length;
+  if (shown >= target.length) {
+    msg._reveal = target.length;
+    if (askFollowBottom()) askRenderStreaming();
+    return;
+  }
+  // 用户往上翻在看历史时不做动画，数据照常累积，滚回底部再一次性补齐
+  if (!askFollowBottom()) {
+    msg._reveal = target.length;
+    return;
+  }
+  const backlog = target.length - shown;
+  const now = performance.now();
+  const dt = Math.min(0.12, Math.max(0, now - (msg._revealAt || now - 16)) / 1000);
+  msg._revealAt = now;
+  const rate = a.generating ? Math.max(32, Math.min(220, backlog * 3.4)) : 4000;
+  msg._acc = (msg._acc || 0) + rate * dt;
+  const step = Math.min(backlog, Math.floor(msg._acc));
+  msg._acc -= step;
+  if (step > 0) {
+    msg._reveal = shown + step;
+    askRenderStreaming();
+  }
+  if (msg._reveal < target.length) askRevealRaf = requestAnimationFrame(askRevealStep);
+}
+
+// 只更新左侧对话列表的“运行中”标记，不重排整页
+function askRefreshHistoryFlags() {
+  const host = document.querySelector('.ask-history-list');
+  if (!host) return;
+  const a = askState();
+  for (const item of host.querySelectorAll('.ask-history-item')) {
+    const id = item.dataset.id;
+    const flag = item.querySelector('.ask-history-flag');
+    if (!flag || !id) continue;
+    const running = !!askRunOf(id);
+    const conv = (a.conversations || []).find((c) => c.id === id);
+    flag.classList.toggle('is-running', running);
+    flag.textContent = running ? '' : (conv && conv.pinned ? '◆' : '○');
+    flag.title = running ? '正在生成回复' : (conv && conv.pinned ? '已置顶' : '');
+    item.classList.toggle('is-running', running);
+  }
 }
 
 function askScrollBottom() {
+  const a = askState();
+  a.pinBottom = true;
   const host = $('#ask-messages');
   if (host) host.scrollTop = host.scrollHeight;
 }
@@ -4976,12 +7256,21 @@ function askRenderMessages() {
   if (!host) return;
   const chat = askActive();
   if (!chat) return;
+  const view = askCaptureScroll(host);
+  const wantBottom = a.scrollIntent === 'bottom';
+  if (wantBottom) a.scrollIntent = null;
   host.closest('.ask-chat').classList.toggle('is-empty', !chat.messages.length);
   if (!chat.messages.length) { host.innerHTML = askWelcomeHtml(); return; }
+  askBindScrollPin(host);
   host.innerHTML = `<div class="ask-message-list">${askMessagesHtml(chat)}
     ${a.generating ? `<div class="ask-generation"><span class="ask-pulse"></span><b>模型回复生成中</b><span>整理问题与所选技能…</span><span class="ask-gen-elapsed">0s</span><button type="button" data-act="ask-stop">停止</button></div>` : ''}
   </div>`;
-  host.scrollTop = host.scrollHeight;
+  guHydrateRefs(host);
+  if (wantBottom) askHoldScroll(host, { atBottom: true });
+  else if (view) askHoldScroll(host, view);
+  else if (askLastScroll(a)) askHoldScroll(host, askLastScroll(a));
+  else if (askFollowBottom()) host.scrollTop = host.scrollHeight;
+  askReportScrollJump(view, host, 'askRenderMessages');
 }
 
 /* ------------------------------- 行为 ------------------------------- */
@@ -5031,6 +7320,9 @@ function askApplyEvent(msg, data) {
       if (file && file.url && !msg.media.some((x) => x.url === file.url)) msg.media.push(file);
     }
   }
+  if (['artifact','workspace_file'].includes(data.type) && data.file) {
+    if (askState().capabilitiesOpen) window.AgentWorkspace?.refresh();
+  }
   if (data.type === 'artifact' && data.file) {
     msg.execution = msg.execution || {};
     msg.execution.artifacts = msg.execution.artifacts || [];
@@ -5038,6 +7330,15 @@ function askApplyEvent(msg, data) {
   }
   if (data.type === 'replace') msg.text = String(data.text || '');
   if (data.type === 'delta') msg.text = (msg.text || '') + String(data.text || '');
+  if (data.type === 'start' && data.execution) {
+    const a = askState();
+    const next = data.execution.tools_supported !== false;
+    if (a.toolsSupported !== next) {
+      a.toolsSupported = next;
+      a.permWarn = next ? '' : '渠道不支持工具调用';
+      askRenderAll();
+    }
+  }
   if (data.type === 'error') {
     msg.error = data.message || '执行失败';
     if (!msg.text) msg.text = '⚠ ' + msg.error;
@@ -5054,17 +7355,20 @@ function askApplyEvent(msg, data) {
 
 async function askQueueReply(chat, question, insertAt, fileIds = [], resumeId = '') {
   const a = askState();
-  a.generating = true;
   const controller = new AbortController();
-  a.controller = controller;
   const requestId = askId();
-  a.request = { sessionId: chat.id, requestId, controller };
+  const run = { chatId: chat.id, requestId, controller, startedAt: Date.now(), msg: null };
+  askRuns(a).set(chat.id, run);
+  askSyncRunState();
+  askRefreshHistoryFlags();
+  if (a.activeId === chat.id) askRenderAll();   // 让输入区切到“排队 / 停止”状态
   const history = chat.messages.slice(0, insertAt === undefined ? chat.messages.length - 1 : insertAt).filter((m) => m.text);
   const msg = { id: askId(), role: 'assistant', text: '', time: Date.now(), skill: askSkillName(a.skillId), _streaming: true };
+  run.msg = msg;
   if (insertAt === undefined) chat.messages.push(msg);
   else chat.messages.splice(insertAt, 0, msg);
   chat.updated = Date.now();
-  askRenderMessages();
+  if (a.activeId === chat.id) askRenderMessages();
   let runId = '';
   let lastSeq = 0;
   const applyEvent = (data) => {
@@ -5099,6 +7403,7 @@ async function askQueueReply(chat, question, insertAt, fileIds = [], resumeId = 
         file_ids: fileIds,
         model_id: a.modelId || undefined,
         reasoning_effort: a.effort || undefined,
+        permission: a.permission || ASK_PERM_DEFAULT,
       }),
     });
     if (!res.ok) {
@@ -5107,6 +7412,11 @@ async function askQueueReply(chat, question, insertAt, fileIds = [], resumeId = 
       throw new Error(typeof error.detail === 'string' ? error.detail : (error.detail && error.detail.message) || '模型连接失败');
     }
     runId = res.headers.get('X-Agent-Run-Id') || '';
+    if (runId) {
+      run.runId = runId;
+      msg._runId = runId;
+      if (a.activeId === chat.id) askSyncRunState();
+    }
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
@@ -5123,7 +7433,10 @@ async function askQueueReply(chat, question, insertAt, fileIds = [], resumeId = 
         try { data = JSON.parse(line.slice(6)); } catch { continue; }
         if (data.type === 'done' || data.type === 'run_finished') done = true;
         applyEvent(data);
-        askRenderSoon();
+        if (a.activeId === chat.id) {
+          if (data.type === 'delta' || data.type === 'replace') askRevealKick();
+          else askRenderSoon();
+        }
       }
       if (part.done) break;
     }
@@ -5162,27 +7475,44 @@ async function askQueueReply(chat, question, insertAt, fileIds = [], resumeId = 
       msg.text += '\n\n[生成已停止]';
     }
   } finally {
-    if (a.request && a.request.controller !== controller) return;
-    a.generating = false;
-    a.startedAt = 0;
-    a.controller = null;
-    if (a.request && a.request.controller === controller) a.request = null;
+    const runs = askRuns(a);
+    if (runs.get(chat.id) === run) runs.delete(chat.id);
+    msg._reveal = null;
+    msg._acc = 0;
+    msg._revealAt = 0;
+    if (a.activeId === chat.id) askSyncRunState();
     chat.updated = Date.now();
     if (askRenderTimer) { clearTimeout(askRenderTimer); askRenderTimer = null; }
-    askRenderMessages();
+    if (askRevealRaf) { cancelAnimationFrame(askRevealRaf); askRevealRaf = 0; }
+    if (a.activeId === chat.id) askRenderMessages();
+    askUpdateContextMeter();
+    askRefreshHistoryFlags();
     askPersist();
+    // 跑完把这次运行的执行过程补上（有计划的走计划视图，不需要）
+    if (msg.execution && msg.execution.id && !(msg.execution.plan && (msg.execution.plan.steps || []).length)) {
+      setTimeout(() => { askLoadMessageTrace(msg, '', chat.id).catch(() => {}); }, 30);
+    }
+    // 队列只发下一条
+    askDrainQueue(chat.id);
   }
 }
 
-async function askSend(text) {
+async function askSend(text, chatId) {
   const a = askState();
+  const target = (chatId && (a.conversations || []).find((c) => c.id === chatId)) || askActive();
   let raw = String(text === undefined ? a.draft : text).trim();
   const originalRaw = raw;
   const cmd = raw.match(/^\/(model|think|compact)$/);
   if (cmd) { askChooseCommand(cmd[1]); return; }
-  if (!raw || a.generating) return;
-  let chat = askActive();
-  if (!chat) { askNewConversation(); chat = askActive(); }
+  if (!raw) return;
+  if (!target) { askNewConversation(); }
+  const chat = target || askActive();
+  if (!chat) return;
+  // 这一轮还在生成：先排队，结束后依次发送，不会丢
+  if (askRunOf(chat.id)) {
+    askEnqueue(raw, chat.id);
+    return;
+  }
   if (raw.length > 1024) {
     try {
       if (!(a.attachments || []).length) {
@@ -5203,6 +7533,7 @@ async function askSend(text) {
     }
   }
   a.startedAt = Date.now();
+  a.pinBottom = true; // 发新消息时重新跟随到底部
   const attached = [...(a.attachments || [])];
   chat.messages.push({ id: askId(), role: 'user', text: raw, files: attached, time: Date.now() });
   if (chat.messages.length === 1) {
@@ -5231,6 +7562,15 @@ async function askStop() {
   if (!request || request.stopping) return;
   request.stopping = true;
   try {
+    if (request.runId) {
+      const res = await fetch('/api/agent/runs/' + encodeURIComponent(request.runId) + '/cancel', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Project-Id': askProjectId() },
+        body: '{}', signal: AbortSignal.timeout(10000),
+      });
+      if (!res.ok) throw new Error('后端尚未确认停止，请稍后重试');
+      toast('已请求停止，正在等待后端结束');
+      return;
+    }
     const res = await fetch('/api/agent/sessions/' + encodeURIComponent(request.sessionId) + '/requests/' + encodeURIComponent(request.requestId) + '/cancel', {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Project-Id': askProjectId() },
       body: '{}', signal: AbortSignal.timeout(10000),
@@ -5321,8 +7661,23 @@ function askChooseMention(id) {
   }
 }
 
-async function askUploadFile(file, chatId) {
-  const form = new FormData();
+function askAttachStatusText(file) {
+  const status = (file && file.status) || '';
+  const image = /\.(png|jpe?g|webp|gif|bmp)$/i.test((file && file.name) || '');
+  const labels = {
+    indexed: image ? '已识别' : '已索引',
+    pending_recognition: '识别中…',
+    recognition_failed: '识别失败',
+    pending_transcription: '转写中…',
+    pending_video_analysis: '解析中…',
+    parse_failed: '解析失败',
+    needs_ocr: '需 OCR',
+    empty: '内容为空',
+  };
+  return labels[status] || '待处理';
+}
+
+async function askUploadFile(file, chatId) {  const form = new FormData();
   form.append('file', file);
   if (chatId) form.append('session_id', chatId);
   const res = await fetch('/api/agent/workspace/files', {
@@ -5349,12 +7704,41 @@ async function askAttachFiles(files) {
     try {
       const saved = await askUploadFile(file, chat.id);
       a.attachments.push(saved);
-      toast(saved.status === 'indexed' ? file.name + ' 已保存并建立索引' : file.name + '：' + (saved.status || '待处理'));
+      if (saved.status === 'pending_recognition') toast(file.name + ' 已上传，正在识别画面…');
+      else toast(saved.status === 'indexed' ? file.name + ' 已保存并建立索引' : file.name + '：' + (saved.status || '待处理'));
+      if (saved.status === 'pending_recognition' || saved.status === 'pending_transcription') askWatchAttachmentStatus(saved.id);
     } catch (err) {
       toast(err.message, true);
     }
   }
   askRenderAll();
+}
+
+// 图片上传后异步识别：轮询状态，识别完成就更新成“已识别”，模型这时就能看到画面
+async function askWatchAttachmentStatus(fileId) {
+  for (let i = 0; i < 90; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    let info = null;
+    try {
+      info = await askApi('/workspace/files/' + encodeURIComponent(fileId)).then((r) => r.json());
+    } catch {
+      return;
+    }
+    const a = askState();
+    const item = (a.attachments || []).find((f) => f.id === fileId);
+    if (!info) return;
+    if (item) { item.status = info.status; item.error = info.error || ''; }
+    if (info.status === 'indexed') {
+      toast('图片已识别，模型现在可以看到画面内容');
+      askRenderAll();
+      return;
+    }
+    if (info.status !== 'pending_recognition' && info.status !== 'pending_transcription') {
+      toast('识别失败：' + (info.error || info.status), true);
+      askRenderAll();
+      return;
+    }
+  }
 }
 
 async function askPreviewFile(id, sheet = 0) {
@@ -5364,7 +7748,7 @@ async function askPreviewFile(id, sheet = 0) {
     for (const f of (m.execution && m.execution.artifacts) || []) all.push(f);
     for (const f of m.files || []) all.push(f);
   }
-  const file = all.find((f) => f.id === id) || { id, name: '文件' };
+  const file = all.find((f) => f.id === id) || window.AgentWorkspace?.file(id) || { id, name: '文件' };
   a.previewFile = file;
   a.previewData = null;
   a.previewError = '';
@@ -5385,7 +7769,7 @@ async function askPreviewFile(id, sheet = 0) {
 async function askExportChat() {
   const chat = askActive();
   if (!chat) return;
-  const text = '# ' + chat.title + '\n\n' + chat.messages.map((m) => `## ${m.role === 'user' ? '你' : 'H3 助手'}\n\n` + (m.execution ? `### 执行记录\n\n- 运行编号：${m.execution.id || ''}\n- 模型：${m.execution.model || ''}\n- 状态：${m.execution.status || ''}\n` + (m.execution.plan ? m.execution.plan.steps.map((s) => `- ${s.title} [${s.status}]：${s.output || s.purpose || ''}`).join('\n') : '') + '\n\n' : '') + m.text + `\n\n时间：${askTimeText(m.time)}`).join('\n\n');
+  const text = '# ' + chat.title + '\n\n' + chat.messages.map((m) => `## ${m.role === 'user' ? '你' : '创作助手'}\n\n` + (m.execution ? `### 执行记录\n\n- 运行编号：${m.execution.id || ''}\n- 模型：${m.execution.model || ''}\n- 状态：${m.execution.status || ''}\n` + (m.execution.plan ? m.execution.plan.steps.map((s) => `- ${s.title} [${s.status}]：${s.output || s.purpose || ''}`).join('\n') : '') + '\n\n' : '') + m.text + `\n\n时间：${askTimeText(m.time)}`).join('\n\n');
   const url = URL.createObjectURL(new Blob([text], { type: 'text/markdown;charset=utf-8' }));
   const link = document.createElement('a');
   link.href = url;
@@ -5438,8 +7822,7 @@ function bindAsk(root) {
 
   const input = $('#ask-input');
   if (input) {
-    input.oninput = () => { a.draft = input.value; askUpdateMention(); const c = $('.ask-draft-count'); if (c) c.textContent = a.draft.length + '/3000'; const send = $('[data-act="ask-send"]'); if (send) send.disabled = !a.draft.trim(); askRenderPopups(); };
-    input.onkeyup = (event) => { if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) askUpdateMention(); };
+    input.oninput = () => { a.draft = input.value; askUpdateMention(); const c = $('.ask-draft-count'); if (c) c.textContent = a.draft.length + '/3000'; const send = $('[data-act="ask-send"]'); if (send) send.disabled = !a.draft.trim(); askRenderPopups(); askUpdateContextMeter(); };    input.onkeyup = (event) => { if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) askUpdateMention(); };
     input.onkeydown = (event) => {
       if (event.isComposing) return;
       const cmdOpen = a.command.mode !== null || a.command.query !== null;
@@ -5490,6 +7873,173 @@ function bindAsk(root) {
     if (!btn) return;
     const act = btn.dataset.act;
     try {
+      if (act === 'ask-queue-cancel') {
+        const list = askLoadQueue(a.activeId);
+        const id = btn.dataset.id;
+        const at = list.findIndex((x) => x.id === id);
+        if (at < 0) return;
+        const [removed] = list.splice(at, 1);
+        askSaveQueue(a.activeId);
+        askRenderAll();
+        toast('已取消队列里的这条：' + String(removed.text || '').slice(0, 16));
+        return;
+      }
+      if (act === 'ask-queue-now') {
+        const chatId = a.activeId;
+        const list = askLoadQueue(chatId);
+        if (!list.length) return;
+        const item = list.find((x) => x.id === btn.dataset.id) || list[0];
+        const idx = list.findIndex((x) => x.id === item.id);
+        if (askRunOf(chatId)) {
+          if (!confirm('当前回复还在生成，立即补充会中断它并马上发送这条，继续？')) return;
+          // 先挪到队首，停止后由队列自然发出队首，避免和“停止后的自动发送”重复
+          if (idx > 0) { list.splice(idx, 1); list.unshift(item); }
+          askSaveQueue(chatId);
+          askRenderAll();
+          await askStop();
+          await askWaitRunEnd(chatId);
+          if (!askRunOf(chatId) && askLoadQueue(chatId)[0]?.id === item.id) askDrainQueue(chatId);
+          return;
+        }
+        if (idx >= 0) list.splice(idx, 1);
+        askSaveQueue(chatId);
+        askRenderAll();
+        await askSend(item.text, chatId);
+        return;
+      }
+      if (act === 'ask-trace-toggle') {
+        const run = btn.dataset.run || '';
+        const chat = askActive();
+        const target = chat && (chat.messages || []).find((m) => m.execution && m.execution.id === run);
+        if (!target) return;
+        target.traceOpen = !target.traceOpen;
+        if (target.traceOpen && !Array.isArray(target.trajectory)) return askLoadMessageTrace(target, run);
+        return askRenderMessages();
+      }
+      if (act === 'ask-load-trace') {
+        const chat = askActive();
+        const run = btn.dataset.run || '';
+        const target = chat && (chat.messages || []).find((m) => m.execution && m.execution.id === run);
+        if (target) await askLoadMessageTrace(target, run);
+        return;
+      }
+      if (act === 'ask-skill-install') {
+        a.installSkill = { name: '', description: '', content: '', saving: false, error: '' };
+        return askRenderAll();
+      }
+      if (act === 'ask-install-cancel') { a.installSkill = null; return askRenderAll(); }
+      if (act === 'ask-install-save') return askSaveInstallSkill();
+      if (act === 'ask-install-file') { const input = $('#ask-install-file'); if (input) input.click(); return; }
+      if (act === 'ask-delete-turn') {
+        const chat = askActive();
+        if (!chat) return;
+        const index = Number(btn.dataset.index);
+        const msg = chat.messages[index];
+        if (!msg || msg.role !== 'user') return;
+        if (a.generating && index >= chat.messages.length - 2) { toast('这一轮还在生成，先停止再删除', true); return; }
+        if (!confirm('删除这一轮？问题和它的回复会一起删掉。')) return;
+        const span = askTurnSpan(chat.messages, index);
+        if (!span) return;
+        const before = chat.messages.length;
+        const host0 = $('#ask-messages');
+        const view0 = host0 ? askCaptureScroll(host0) : null;
+        const removed = chat.messages.splice(span.start, span.count);
+        chat.updated = Date.now();
+        // 删掉的是末尾这一轮 → 内容变短，视口不该因为新容器 scrollTop=0 被甩回第一轮：
+        // 本来就贴底、或正看着这条将被删掉的消息时，落到新的末尾（也就是“返回上一轮”）；
+        // 其余情况保留原来的位置。
+        const atEnd = span.end >= before;
+        const stillThere = view0 && view0.id ? chat.messages.some((m) => m.id === view0.id) : true;
+        const bottom = chat.messages.length === 0 || (view0 ? view0.atBottom : false) || (atEnd && !stillThere);
+        a.pinBottom = bottom;
+        if (bottom) a.scrollIntent = 'bottom';
+        askRenderAll();
+        askPersist();
+        toast('已删除这一轮（' + removed.length + ' 条消息）');
+        return;
+      }
+      if (act === 'ask-jump') {
+        const host = $('#ask-messages');
+        const node = host && host.querySelector('.ask-message[data-msg-index="' + btn.dataset.index + '"]');
+        askJumpToTurn(host, node);
+        return;
+      }
+      if (act === 'gu-pick') {
+        const card = btn.closest('[data-gu-msg]');
+        const record = card && askGenUiMemory.get(card.dataset.guMsg);
+        if (!record) return;
+        const key = btn.dataset.guKey || '';
+        const value = btn.dataset.guValue || '';
+        if (btn.dataset.guMulti === '1') {
+          const list = Array.isArray(record.values[key]) ? [...record.values[key]] : [];
+          const at = list.indexOf(value);
+          if (at >= 0) list.splice(at, 1); else list.push(value);
+          record.values[key] = list;
+        } else {
+          record.values[key] = value;
+        }
+        const group = btn.closest('.gu-options');
+        if (group) {
+          for (const option of group.querySelectorAll('.gu-option')) {
+            const on = btn.dataset.guMulti === '1'
+              ? (Array.isArray(record.values[key]) && record.values[key].includes(option.dataset.guValue))
+              : option.dataset.guValue === record.values[key];
+            option.classList.toggle('is-on', on);
+            option.setAttribute('aria-pressed', on ? 'true' : 'false');
+          }
+        }
+        return;
+      }
+      if (act === 'gu-copy') {
+        const card = btn.closest('[data-gu-msg]');
+        const record = card && askGenUiMemory.get(card.dataset.guMsg);
+        const text = guEvalExpr(btn.dataset.guExpr || '', (record && record.values) || {}).trim();
+        if (!text) { toast('这段内容还没生成好', true); return; }
+        await navigator.clipboard.writeText(text);
+        toast('已复制');
+        return;
+      }
+      if (act === 'gu-copy-text') {
+        const text = btn.dataset.guText || '';
+        if (!text) return;
+        await navigator.clipboard.writeText(text);
+        toast('已复制提示词');
+        return;
+      }
+      if (act === 'ask-toggle-refs') {
+        a.refImages = !a.refImages;
+        try { localStorage.setItem('wmd.askRefImages', a.refImages ? '1' : '0'); } catch { /* 记不住也不影响当前会话 */ }
+        if (!a.refImages) guRefStop();
+        toast(a.refImages ? '已开启参考出图' : '已关闭参考出图，不再调用图像渠道');
+        return askRenderAll();
+      }
+      if (act === 'ask-ref-now') {
+        guGenerateRef(btn.dataset.guPrompt || '', { force: true });
+        return;
+      }
+      if (act === 'gu-ref-download') {
+        const url = btn.dataset.url || '';
+        if (!url) return;
+        const link = document.createElement('a');
+        link.href = url + (url.includes('?') ? '&' : '?') + 'download=1';
+        link.download = '参考图.png';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        return;
+      }
+      if (act === 'gu-ref-retry') {
+        guGenerateRef(btn.dataset.guPrompt || '');
+        return;
+      }
+      if (act === 'gu-run') {
+        if (a.generating) { toast('上一条回复还在生成，稍等一下', true); return; }
+        const card = btn.closest('[data-gu-msg]');
+        const record = card && askGenUiMemory.get(card.dataset.guMsg);
+        const text = guEvalExpr(btn.dataset.guExpr || '', (record && record.values) || {}).trim();
+        if (!text) { toast('这个动作还没有取值，先选一下上面的选项', true); return; }
+        return askSend(text);
+      }
       if (act === 'ask-new') return askNewConversation();
       if (act === 'ask-clear-skill') { a.skillId = ''; return askRenderAll(); }
       if (act === 'ask-folder-create' || act === 'ask-folder-rename') {
@@ -5538,6 +8088,9 @@ function bindAsk(root) {
         await askApi('/sessions/' + encodeURIComponent(id), { method: 'DELETE' }).catch(() => toast('删除会话失败', true));
         a.removed = c;
         a.conversations = (a.conversations || []).filter((x) => x.id !== id);
+        // 删对话时连它的待发送队列一起清掉
+        try { localStorage.removeItem(askQueueKey(id)); } catch { /* ignore */ }
+        if (a.queues) delete a.queues[id];
         if (a.activeId === id) {
           a.activeId = (a.conversations[0] && a.conversations[0].id) || '';
           if (!a.activeId) askNewConversation();
@@ -5557,8 +8110,42 @@ function bindAsk(root) {
       }
       if (act === 'ask-toggle-history') {
         a.historyOpen = !a.historyOpen;
+        try { localStorage.setItem('wmd.askHistoryOpen', a.historyOpen ? '1' : '0'); } catch { /* ignore */ }
         if (!a.historyOpen && a.capabilitiesOpen) a.capabilitiesOpen = false;
         return askRenderAll();
+      }
+      if (act === 'ask-files-pick') {
+        const chat=askActive(),project=askProjectId();
+        if(!chat)return toast('请先新建对话',true);
+        return openLibraryPicker({title:'引用项目素材（保留原位置）',onPick:async item=>{
+          if(project!==askProjectId()||chat.id!==askState().activeId)throw Error('当前项目或对话已切换，请重新选择');
+          await askApi('/sessions/'+encodeURIComponent(chat.id),{method:'PUT',body:JSON.stringify(chat)});
+          const saved=await askApi('/workspace/register',{method:'POST',body:JSON.stringify({session_id:chat.id,path:item.path,origin:'input'})}).then(r=>r.json());
+          a.attachments=a.attachments||[];
+          if(!a.attachments.some(f=>f.id===saved.id))a.attachments.push(saved);
+          closeModal();a.panelTab='input';askRenderAll();
+        }});
+      }
+      if (act === 'ask-files-refresh') return window.AgentWorkspace?.refresh();
+      if (act === 'ask-files-page') return window.AgentWorkspace?.page(Number(btn.dataset.page));
+      if (act === 'ask-file-path') {
+        const file = window.AgentWorkspace?.file(btn.dataset.id);
+        if (file?.path) { try { await navigator.clipboard.writeText(file.path); toast('已复制路径'); } catch { toast('复制失败，请使用文件预览中的路径',true); } }
+        return;
+      }
+      if (act === 'ask-file-versions') {
+        try {
+          const rows = await askApi('/workspace/files/'+encodeURIComponent(btn.dataset.id)+'/versions').then(r=>r.json());
+          openModal('<div class="modal-head"><h2>文件历史版本</h2><button class="btn" data-close="1">关闭</button></div><div class="modal-body">' + (rows.length ? rows.map(row=>`<p>v${row.version} · ${esc(row.relativePath)} <a href="/api/agent/workspace/files/${encodeURIComponent(btn.dataset.id)}/versions/${row.version}" download>下载</a></p>`).join('') : '<p>暂无历史版本</p>')+'</div>');
+        } catch(err) { toast(err.message,true); }
+        return;
+      }
+      if (act === 'ask-file-source') {
+        const chat=askActive();
+        const index=(chat?.messages||[]).findIndex(m=>(m.files||[]).some(f=>f.id===btn.dataset.id)||(m.execution?.artifacts||[]).some(f=>f.id===btn.dataset.id));
+        if(index>=0) { const host=$('#ask-messages'); askJumpToTurn(host,host?.querySelector('.ask-message[data-msg-index="'+index+'"]')); }
+        else toast('当前对话中的工作文件，尚未作为消息交付');
+        return;
       }
       if (act === 'ask-toggle-cap') { a.capabilitiesOpen = !a.capabilitiesOpen; a.previewFile = null; a.previewData = null; a.mediaPreview = null; a.previewExpanded = false; if (a.capabilitiesOpen && a.panelTab === 'trajectory') askLoadTrajectory(); return askRenderAll(); }
       if (act === 'ask-close-cap') { a.capabilitiesOpen = false; return askRenderAll(); }
@@ -5580,6 +8167,13 @@ function bindAsk(root) {
       if (act === 'ask-fill') { a.draft = btn.dataset.text; askRenderAll(); const el = $('#ask-input'); if (el) el.focus(); return; }
       if (act === 'ask-cmd') return askChooseCommand(btn.dataset.id);
       if (act === 'ask-mention') return askChooseMention(btn.dataset.skill);
+      if (act === 'ask-permission') { a.permMenu = !a.permMenu; askRenderPopups(); return; }
+      if (act === 'ask-perm') {
+        askPermissionSet(btn.dataset.id);
+        a.permMenu = false;
+        askRenderAll();
+        return toast('权限已切到「' + askPermission(btn.dataset.id).label + '」');
+      }
       if (act === 'ask-skill-picker') {
         const el = $('#ask-input');
         const caret = el ? el.selectionStart : a.draft.length;
@@ -5625,14 +8219,15 @@ function bindAsk(root) {
       }
       if (act === 'ask-copy') {
         const msg = (askActive() && askActive().messages || [])[Number(btn.dataset.index)];
-        if (msg) { await navigator.clipboard.writeText(msg.text || ''); toast('已复制回复'); }
+        if (msg) { await navigator.clipboard.writeText(guPlainText(msg.text || '')); toast('已复制回复'); }
         return;
       }
       if (act === 'ask-paste') {
         const msg = (askActive() && askActive().messages || [])[Number(btn.dataset.index)];
         if (!msg) return;
-        if ((msg.text || '').length > 3000) { toast('回复超过 3000 字，请复制后挑选', true); return; }
-        a.draft = msg.text;
+        const clean = guPlainText(msg.text || '');
+        if (clean.length > 3000) { toast('回复超过 3000 字，请复制后挑选', true); return; }
+        a.draft = clean;
         askRenderAll();
         const el = $('#ask-input');
         if (el) el.focus();
@@ -5673,6 +8268,14 @@ function bindAsk(root) {
       if (act === 'ask-preview-retry') {
         return askPreviewFile(a.previewFile && a.previewFile.id, a.previewSheet || 0);
       }
+      if (act === 'ask-open-inline') {
+        const url = btn.dataset.url || '';
+        if (!url) return;
+        a.mediaPreview = { url, name: btn.dataset.label || '图片', kind: 'image' };
+        a.previewFile = null;
+        a.previewExpanded = false;
+        return askRenderAll();
+      }
       if (act === 'ask-open-media') {
         const chat = askActive();
         const msg = chat && chat.messages[Number(btn.dataset.index)];
@@ -5691,6 +8294,15 @@ function bindAsk(root) {
       if (act === 'ask-expand-preview') {
         a.previewExpanded = !a.previewExpanded;
         return askRenderAll();
+      }
+      if (act === 'ask-reveal-pane') {
+        const id = btn.dataset.id;
+        if (!id) return;
+        askApi('/workspace/files/' + encodeURIComponent(id) + '/reveal', { method: 'POST' })
+          .then((r) => r.json())
+          .then((data) => toast('已打开所在文件夹：' + (data.folder || data.path || '')))
+          .catch((err) => toast(err.message || '打开所在文件夹失败', true));
+        return;
       }
       if (act === 'ask-close-pane') {
         a.previewFile = null;
@@ -5721,6 +8333,7 @@ function bindAsk(root) {
         const path = a.workspacePage === 'knowledge' ? '/knowledge/' : '/plugins/';
         if (!confirm('删除这条配置？')) return;
         await askApi(path + encodeURIComponent(btn.dataset.id), { method: 'DELETE' }).catch((e) => toast(e.message, true));
+        if (a.workspacePage !== 'knowledge') await askLoadSkills();
         return askLoadManage();
       }
     } catch (err) {
@@ -5729,6 +8342,68 @@ function bindAsk(root) {
   };
   a._askClick = askClick;
   root.addEventListener('click', askClick);
+
+  // 展开“执行过程”时才去拉这次运行的轨迹（历史消息按需加载）
+  if (!root._traceToggle) {
+    root._traceToggle = true;
+  }
+
+  // 交互卡片里的输入框：只记状态，不触发整段重绘
+  if (a._askGuInput) root.removeEventListener('input', a._askGuInput);
+  a._askGuInput = (event) => {
+    const field = event.target.closest('[data-gu-key]');
+    if (!field || !/^(INPUT|TEXTAREA|SELECT)$/.test(field.tagName)) return;
+    const card = field.closest('[data-gu-msg]');
+    const record = card && askGenUiMemory.get(card.dataset.guMsg);
+    if (record) record.values[field.dataset.guKey] = field.value;
+  };
+  root.addEventListener('input', a._askGuInput);
+
+  // 消息里的图片加载失败时退化成一行说明，而不是留个破图标
+  if (a._askImgError) root.removeEventListener('error', a._askImgError, true);
+  a._askImgError = (event) => {
+    const img = event.target;
+    if (!img || img.tagName !== 'IMG' || !img.classList || !img.classList.contains('ask-inline-img')) return;
+    const holder = img.closest('.ask-inline-media');
+    if (holder) holder.classList.add('is-broken');
+  };
+  root.addEventListener('error', a._askImgError, true);
+
+  // 点到 @ 候选框和输入框以外的地方，就收起候选框
+  if (a._askOutside) document.removeEventListener('pointerdown', a._askOutside, true);  a._askOutside = (event) => {
+    const a2 = askState();
+    const open = !!a2.mention || a2.command.mode !== null || a2.command.query !== null || !!a2.permMenu;
+    if (!open) return;
+    const target = event.target;
+    if (!target || !target.closest) return;
+    if (target.closest('#ask-popups')) return;
+    if (target.closest('#ask-input')) return;
+    if (target.closest('[data-act="ask-skill-picker"]')) return;
+    if (target.closest('[data-act="ask-cmd"]')) return;
+    if (target.closest('[data-act="ask-permission"]')) return;
+    a2.mention = null;
+    a2.command = { mode: null, query: null, index: 0 };
+    a2.permMenu = false;
+    askRenderPopups();
+  };
+  document.addEventListener('pointerdown', a._askOutside, true);
+
+  const installFileInput = $('#ask-install-file');
+  if (installFileInput) {
+    installFileInput.onchange = () => {
+      const file = (installFileInput.files || [])[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        const d = askState().installSkill;
+        if (!d) return;
+        d.content = String(reader.result || '');
+        if (!d.name) d.name = file.name.replace(/\.(md|markdown|txt)$/i, '');
+        askRenderAll();
+      };
+      reader.readAsText(file);
+    };
+  }
 
   const fileInput = $('#ask-file');
   if (fileInput) fileInput.onchange = () => { const files = [...(fileInput.files || [])]; fileInput.value = ''; if (files.length) askAttachFiles(files); };
@@ -5776,7 +8451,7 @@ function bindAsk(root) {
     let dragWidth = 0;
     let dragging = false;
     const commit = () => {
-      try { if (a.previewWidth) localStorage.setItem('h3.previewWidth', String(a.previewWidth)); else localStorage.removeItem('h3.previewWidth'); } catch { /* ignore */ }
+      try { if (a.previewWidth) localStorage.setItem('wmd.previewWidth', String(a.previewWidth)); else localStorage.removeItem('wmd.previewWidth'); } catch { /* ignore */ }
     };
     resizer.addEventListener('pointerdown', (event) => {
       if (event.button !== 0) return;
@@ -5842,7 +8517,7 @@ async function askManageDialog(kind, item) {
   const skillMd = esc(cfg.instructions || '');
   const toolConfig = pluginKind === 'skill' ? '' : esc(JSON.stringify(cfg.extra || {}, null, 2));
 
-  openModal(`<div class="modal-head"><h2>${title}</h2><span class="grow"></span><button type="button" class="h3-btn h3-btn-sm h3-btn-ghost" data-close="1">关闭</button></div>
+  openModal(`<div class="modal-head"><h2>${title}</h2><span class="grow"></span><button type="button" class="wmd-btn wmd-btn-sm wmd-btn-ghost" data-close="1">关闭</button></div>
     <div class="modal-body">
       ${isKb ? '' : `<div class="field"><label>类型</label><input class="input" value="${esc(kindLabel)}" disabled /></div>`}
       <div class="field"><label>名称</label><input class="input" id="ask-manage-name" value="${esc(item ? item.name : '')}" placeholder="${isKb ? '例如：项目世界观' : '例如：资产提取（人物/场景/道具）'}" /></div>
@@ -5858,7 +8533,12 @@ async function askManageDialog(kind, item) {
           <div class="field"><label>SKILL.md 内容</label><textarea class="input" id="ask-manage-instructions" rows="10" placeholder="写清触发条件、步骤、输出格式、检查项">${skillMd}</textarea></div>
         </div>
         <div class="ask-mode-pane ${mode === 'bundle' ? '' : 'is-hidden'}" id="ask-mode-bundle">
-          <div class="field"><label>SKILL.md 内容（入口，必填）</label><textarea class="input" id="ask-manage-skillmd" rows="8" placeholder="技能入口说明；脚本和示例放在下面的附加文件里">${skillMd}</textarea></div>
+          <div class="field"><label>技能压缩包（.zip）</label>
+            <input type="file" id="ask-bundle-zip" class="input" accept=".zip,application/zip" />
+            <p class="hint">推荐：把技能目录整体打成一个 zip 上传（根目录或唯一的子目录里要有 SKILL.md），后端会解压到智能体后端的 skills/ 目录。上传压缩包时，下面的 SKILL.md 和附加文件可以留空。</p>
+            <div class="hint" id="ask-bundle-zip-name"></div>
+          </div>
+          <div class="field"><label>SKILL.md 内容（入口，压缩包模式可留空）</label><textarea class="input" id="ask-manage-skillmd" rows="8" placeholder="技能入口说明；脚本和示例放在下面的附加文件里">${skillMd}</textarea></div>
           <div class="field"><label>附加文件（脚本 / 文档 / 示例，文本）</label>
             <input type="file" id="ask-bundle-picker" multiple class="input" accept=".md,.mjs,.js,.py,.txt,.json,.yaml,.yml,.html,.css,.csv" />
             <div class="ask-bundle-list" id="ask-bundle-list"></div>
@@ -5867,7 +8547,7 @@ async function askManageDialog(kind, item) {
         </div>`
       : `<div class="field"><label>配置（JSON，可选）</label><textarea class="input" id="ask-manage-instructions" rows="8" placeholder='例如 {"endpoint":"http://...","headers":{}}'>${toolConfig}</textarea></div>`}
     </div>
-    <div class="modal-foot"><button type="button" class="h3-btn h3-btn-sm h3-btn-ghost" data-close="1">取消</button><button type="button" class="h3-btn h3-btn-sm h3-btn-primary" id="ask-manage-save">保存</button></div>`);
+    <div class="modal-foot"><button type="button" class="wmd-btn wmd-btn-sm wmd-btn-ghost" data-close="1">取消</button><button type="button" class="wmd-btn wmd-btn-sm wmd-btn-primary" id="ask-manage-save">保存</button></div>`);
 
   const renderFiles = () => {
     const box = $('#ask-bundle-list');
@@ -5911,6 +8591,15 @@ async function askManageDialog(kind, item) {
     };
   }
 
+  const zipPicker = $('#ask-bundle-zip');
+  if (zipPicker) {
+    zipPicker.onchange = () => {
+      const file = zipPicker.files && zipPicker.files[0];
+      const label = $('#ask-bundle-zip-name');
+      if (label) label.textContent = file ? ('已选择：' + file.name + ' · ' + Math.round(file.size / 1024) + ' KB') : '';
+    };
+  }
+
   $('#ask-manage-save').onclick = async () => {
     try {
       const name = $('#ask-manage-name').value.trim();
@@ -5921,8 +8610,24 @@ async function askManageDialog(kind, item) {
         payload = { name, description };
       } else if (pluginKind === 'skill') {
         if (mode === 'bundle') {
+          const zipInput = $('#ask-bundle-zip');
+          const zipFile = zipInput && zipInput.files && zipInput.files[0];
+          if (zipFile) {
+            const form = new FormData();
+            form.append('file', zipFile);
+            form.append('name', name);
+            await askUpload('/skills/upload', form);
+            if (item && String(item.id || '').startsWith('dir:') && item.name !== name) {
+              await askApi('/plugins/' + encodeURIComponent(item.id), { method: 'DELETE' });
+            }
+            closeModal();
+            await askLoadSkills();
+            await askLoadManage();
+            toast('已导入技能：' + name);
+            return;
+          }
           const entry = ($('#ask-manage-skillmd') || {}).value || '';
-          if (!entry.trim()) return toast('完整技能需要填写 SKILL.md 入口内容', true);
+          if (!entry.trim()) return toast('完整技能需要填写 SKILL.md 入口内容，或上传技能压缩包', true);
           payload = { kind: 'skill', name, description, enabled: item ? item.enabled !== false : true, config: { mode: 'bundle', instructions: entry, files } };
         } else {
           payload = { kind: 'skill', name, description, enabled: item ? item.enabled !== false : true, config: { mode: 'text', instructions: ($('#ask-manage-instructions') || {}).value || '' } };
@@ -5971,7 +8676,7 @@ function renderBatch(embed = false) {
   <div class="batch-grid">
     <div class="card" style="padding:14px;display:flex;flex-direction:column;gap:10px">
       <div class="row"><span class="muted small">工作流</span><select class="select" id="batch-workflow" style="flex:1">${state.workflows.filter((w) => w.provider !== 'autodl' || !state.workflows.some((x) => x.provider === 'manager')).map((w) => `<option value="${esc(w.id)}" ${w.id === (b.workflowId || state.studio.workflowId) ? 'selected' : ''}>${esc(w.display)}</option>`).join('')}</select></div>
-      <textarea class="textarea mono" id="batch-json" style="min-height:300px" placeholder='{"format":"zealman-h3-batch","version":1,"baseDir":"","defaults":{"duration":10,"repeat":1},"tasks":[...]}'>${esc(b.text || '')}</textarea>
+      <textarea class="textarea mono" id="batch-json" style="min-height:300px" placeholder='{"format":"wmd-batch","version":1,"baseDir":"","defaults":{"duration":10,"repeat":1},"tasks":[...]}'>${esc(b.text || '')}</textarea>
       <div class="row">
         <button class="btn primary" data-act="batch-parse">解析并校验</button>
         <button class="btn" data-act="batch-add" ${result && result.tasks.some((t) => !t.errors.length) ? '' : 'disabled'}>加入队列</button>
@@ -6049,7 +8754,7 @@ function bindBatch(root) {
       }
       if (act === 'batch-template') {
         const template = {
-          format: 'zealman-h3-batch',
+          format: 'wmd-batch',
           version: 1,
           name: '新批次',
           baseDir: '',
@@ -6059,13 +8764,13 @@ function bindBatch(root) {
         const blob = new Blob([JSON.stringify(template, null, 2)], { type: 'application/json' });
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
-        a.download = 'H3-批量任务模板.json';
+        a.download = '批量任务模板.json';
         a.click();
         URL.revokeObjectURL(a.href);
         return;
       }
       if (act === 'batch-spec') {
-        const spec = `请把下面的分镜/素材清单整理成 ZEALMAN-H3 批量任务 JSON（format=zealman-h3-batch, version=1）：
+        const spec = `请把下面的分镜/素材清单整理成批量任务 JSON（format=wmd-batch, version=1；format 是兼容字段，不要改）：
 - tasks[].prompt 必须是六段式：subject_definitions / summary / retention_analysis / detailed_description / overall_soundscape / non_diegetic_music
 - images 每项写 {path, subject}，path 用绝对路径或相对素材库的路径；第 n 张对应 <Picture n>
 - audios 写本地音频路径，第 n 段对应 <Audio n>
@@ -6109,7 +8814,7 @@ function logsPanel(tab) {
 }
 
 function renderLogs() {
-  const tab=state.logTab||localStorage.getItem('h3.logs.tab')||'video';
+  const tab=state.logTab||localStorage.getItem('wmd.logs.tab')||'video';
   return `
   <div class="page-head"><div><h1>任务日志</h1><p>每条任务从提交、轮询到下载的全过程都会记录在这里。</p></div>
     <div class="page-actions"><button class="btn" data-act="go-studio">去创作台</button></div></div>
@@ -6122,10 +8827,10 @@ function renderLogs() {
 }
 
 function bindLogs(root) {
-  root.addEventListener('keydown', event=>{const tab=event.target.closest('[data-log-tab]');if(!tab||!['ArrowLeft','ArrowRight'].includes(event.key))return;event.preventDefault();const next=tab.dataset.logTab==='video'?'image':'video';state.logTab=next;localStorage.setItem('h3.logs.tab',next);render();document.querySelector('[data-log-tab="'+next+'"]').focus();});
+  root.addEventListener('keydown', event=>{const tab=event.target.closest('[data-log-tab]');if(!tab||!['ArrowLeft','ArrowRight'].includes(event.key))return;event.preventDefault();const next=tab.dataset.logTab==='video'?'image':'video';state.logTab=next;localStorage.setItem('wmd.logs.tab',next);render();document.querySelector('[data-log-tab="'+next+'"]').focus();});
   root.addEventListener('click', (event) => {
     const tab=event.target.closest('[data-log-tab]');
-    if(tab){state.logTab=tab.dataset.logTab;localStorage.setItem('h3.logs.tab',state.logTab);render();return;}
+    if(tab){state.logTab=tab.dataset.logTab;localStorage.setItem('wmd.logs.tab',state.logTab);render();return;}
     const target = event.target.closest('[data-act]');
     if (!target) return;
     if (target.dataset.act === 'go-studio') { location.hash = '#studio'; return; }
@@ -6136,8 +8841,8 @@ function bindLogs(root) {
 /* ------------------------------------------------------------------ 任务管理（合并入口） */
 
 const TASK_TABS = [['create','创建任务'],['manage','任务管理'],['schedule','任务调度'],['monitor','任务监控'],['logs','日志']];
-function taskMedia(){return state.taskMedia||localStorage.getItem('h3.tasks.media')||'video';}
-function currentTaskTab(){const value=state.taskTab||localStorage.getItem('h3.tasks.tab')||'create';return TASK_TABS.some(([id])=>id===value)?value:'create';}
+function taskMedia(){return state.taskMedia||localStorage.getItem('wmd.tasks.media')||'video';}
+function currentTaskTab(){const value=state.taskTab||localStorage.getItem('wmd.tasks.tab')||'create';return TASK_TABS.some(([id])=>id===value)?value:'create';}
 function taskPagination(rows,key,meta){
   const size=10,total=meta?.total??rows.length,pages=Math.max(1,Math.ceil(total/size));
   state.taskPages=state.taskPages||{};
@@ -6167,7 +8872,7 @@ async function loadTaskLogs(force=false){
 function bindTasks(root){
   root.addEventListener('click',async event=>{
     const media=event.target.closest('[data-task-media]');
-    if(media){state.taskMedia=media.dataset.taskMedia;localStorage.setItem('h3.tasks.media',state.taskMedia);state.taskEventStatus='';state.taskEventQuery='';state.taskEventMonth='';state.taskEventSort='created_desc';state.taskPages={};state.taskLogPaging=null;state.taskVideoLogs=[];state.taskImageLogs=[];state.events=[];state.eventPaging=null;await Events.load();render();return;}
+    if(media){state.taskMedia=media.dataset.taskMedia;localStorage.setItem('wmd.tasks.media',state.taskMedia);state.taskEventStatus='';state.taskEventQuery='';state.taskEventMonth='';state.taskEventSort='runtime_desc';state.taskPages={};state.taskLogPaging=null;state.taskVideoLogs=[];state.taskImageLogs=[];state.events=[];state.eventPaging=null;await Events.load();render();return;}
     const page=event.target.closest('[data-task-page]');
     if(page&&!page.disabled){state.taskPages={...(state.taskPages||{}),[page.dataset.pageKey]:Number(page.dataset.taskPage)};if(page.dataset.pageKey==='events')await Events.load();else if(currentTaskTab()==='logs')await loadTaskLogs(true);render();return;}
     const refresh=event.target.closest('[data-task-refresh]');
@@ -6177,7 +8882,7 @@ function bindTasks(root){
       return;
     }
     const button=event.target.closest('[data-task-tab]');
-    if(button){state.taskEventStatus='';state.taskEventQuery='';state.taskEventMonth='';state.taskEventSort='created_desc';state.taskPages={...(state.taskPages||{}),events:1};state.taskTab=button.dataset.taskTab;localStorage.setItem('h3.tasks.tab',state.taskTab);await Events.load();render();return;}
+    if(button){state.taskEventStatus='';state.taskEventQuery='';state.taskEventMonth='';state.taskEventSort='runtime_desc';state.taskPages={...(state.taskPages||{}),events:1};state.taskTab=button.dataset.taskTab;localStorage.setItem('wmd.tasks.tab',state.taskTab);await Events.load();render();return;}
   });
   Events.bind(root);
 }
@@ -6211,6 +8916,7 @@ function channelRows(kind) {
       ${ch.active && ch.enabled !== false ? '' : `<button type="button" class="btn sm" data-activate-channel="${esc(ch.id)}" data-kind="${kind}">设为默认</button>`}
       <button type="button" class="btn sm ghost" data-toggle-channel="${esc(ch.id)}" data-kind="${kind}" data-enabled="${ch.enabled === false ? '1' : '0'}">${ch.enabled === false ? '启用' : '停用'}</button>
       <button type="button" class="btn sm ghost" data-edit-channel="${esc(ch.id)}" data-kind="${kind}">编辑</button>
+      <button type="button" class="btn sm ghost" data-copy-channel="${esc(ch.id)}" data-kind="${kind}" title="复制这套配置，再改模型名 / 名称">复制</button>
       <button type="button" class="btn sm ghost" data-del-channel="${esc(ch.id)}" data-kind="${kind}">删除</button>
     </div>`).join('');
 }
@@ -6348,7 +9054,7 @@ function renderSettings() {
         <div class="field"><label>未归档成片目录（旧数据）</label><input class="input mono" id="save-folder" value="${esc(d.saveFolder)}" /></div>
         <div class="field"><label>未归档素材目录（旧数据）</label><input class="input mono" id="asset-folder" value="${esc(d.assetFolder)}" /></div>
         <div class="field"><label>克隆参考音色库（800+ 音色目录）</label><input class="input mono" id="voice-folder" value="${esc(d.voiceLibraryFolder || '')}" placeholder="D:\\notebook\\AIGC\\Comic-drama\\资产文档\\800+音色" /></div>
-        <div class="field" style="width:200px"><label>并发上限</label><input class="input" id="concurrency" type="number" min="1" max="8" value="${d.concurrency}" /></div>
+        <div class="field" style="width:200px"><label>并发上限</label><input class="input" id="concurrency" type="number" min="1" max="10" value="${d.concurrency}" /></div>
         <p class="hint">每个 Key / 每个自定义视频渠道各占 1 个工位；并发上限控制同时执行的任务总数。</p>
         <p class="hint">音色库目录留空时，会自动用 <span class="mono">D:\\notebook\\AIGC\\Comic-drama\\资产文档\\800+音色</span>（如果存在）。</p>
       </div>`;
@@ -6356,9 +9062,9 @@ function renderSettings() {
     pane = `
       <div class="settings-block">
         <h3>关于</h3>
-        <div class="kv"><span>版本</span><span>H3 Studio 0.3.0（源码重建版）</span></div>
+        <div class="kv"><span>版本</span><span>WENYUN.M-DESKTOP 0.3.0（源码重建版）</span></div>
         <div class="kv"><span>数据目录</span><span class="mono">${esc(state.config.dataDir || '')}</span></div>
-        <div class="kv"><span>原版</span><span>ZEALMAN-H3 桌面版 2026.10.23（Tauri）</span></div>
+        <div class="kv"><span>原版</span><span>原版桌面版 2026.10.23（Tauri）</span></div>
         <p class="hint">本工具与原版无授权关系，仅按现有 API 协议与提示词规则重建，便于修改和二次开发。</p>
       </div>`;
   }
@@ -6574,8 +9280,14 @@ function bindSettings() {
       if (ch) openChannelDialog(kind, ch, { returnToSettings: true });
     };
   });
-  $$('#modal-panel [data-del-channel]').forEach((btn) => {
-    btn.onclick = async () => {
+  $$('#modal-panel [data-copy-channel]').forEach((btn) => {
+    btn.onclick = () => {
+      const kind = btn.dataset.kind;
+      const ch = (state.channels[kind] || []).find((c) => c.id === btn.dataset.copyChannel);
+      if (ch) openChannelDialog(kind, ch, { copy: true, returnToSettings: true });
+    };
+  });
+  $$('#modal-panel [data-del-channel]').forEach((btn) => {    btn.onclick = async () => {
       if (!confirm('删除这个渠道？')) return;
       await api(`/api/channels/${btn.dataset.delChannel}?kind=${btn.dataset.kind}`, { method: 'DELETE' }).catch((e) => toast(e.message, true));
       await refreshState();
@@ -6735,9 +9447,23 @@ function guessLimits(model) {
 function openChannelDialog(kind, channel, opts = {}) {
   const types = state.channelTypes[kind] || [];
   if (!types.length) return toast('没有可用的渠道类型', true);
+  const copying = !!opts.copy && !!channel;
+  const editing = !!channel && !copying;
   const kindLabel = kind === 'llm' ? '文本推理' : kind === 'image' ? '图片生成' : '视频生成';
   const draft = channel
-    ? { ...channel, options: { ...(channel.options || {}) }, apiKey: channel.apiKey || '', maxTokens: channel.maxTokens || 0, contextWindow: channel.contextWindow || 0 }
+    ? {
+      ...channel,
+      id: copying ? undefined : channel.id,
+      name: copying ? ((channel.name || channel.model || '模型') + ' 副本') : channel.name,
+      active: copying ? false : channel.active,
+      enabled: copying ? true : channel.enabled,
+      lastTestOk: copying ? undefined : channel.lastTestOk,
+      lastTestMessage: copying ? '' : channel.lastTestMessage,
+      options: { ...(channel.options || {}) },
+      apiKey: channel.apiKey || '',
+      maxTokens: channel.maxTokens || 0,
+      contextWindow: channel.contextWindow || 0,
+    }
     : {
       name: '',
       type: types[0].id,
@@ -6757,7 +9483,7 @@ function openChannelDialog(kind, channel, opts = {}) {
     if (!baseUrl) { if (!silent) toast('先填管理器地址', true); return; }
     try {
       if (!silent) toast('正在读取管理器账号…');
-      const data = await api('/api/channels/manager-accounts', { method: 'POST', body: { baseUrl, apiKey, channelId: channel ? channel.id : '' } });
+      const data = await api('/api/channels/manager-accounts', { method: 'POST', body: { baseUrl, apiKey, channelId: editing ? channel.id : '' } });
       managerAccounts = data.accounts || [];
       collectChannelDraft(kind, draft);
       draw();
@@ -6785,7 +9511,7 @@ function openChannelDialog(kind, channel, opts = {}) {
         return `<div class="field"><label>${esc(f.label)}${f.required ? ' *' : ''}</label>
           <div class="ch-model-row">
             <input class="input mono" id="ch-model" data-ch-key="model" data-ch-scope="top" list="ch-model-options" value="${esc(draft.model || '')}" placeholder="${esc(f.placeholder || '')}" />
-            <button type="button" class="h3-btn h3-btn-sm" id="ch-fetch-models" title="用上面的 Base URL + Key 拉取 /models">获取模型</button>
+            <button type="button" class="wmd-btn wmd-btn-sm" id="ch-fetch-models" title="用上面的 Base URL + Key 拉取 /models">获取模型</button>
           </div>
           <datalist id="ch-model-options">${modelOptions}</datalist>
           <div class="hint" id="ch-model-hint">${modelList.length ? `已获取 ${modelList.length} 个模型，点输入框下拉选择` : '不知道填什么？点「获取模型」自动拉列表'}</div></div>`;
@@ -6796,7 +9522,7 @@ function openChannelDialog(kind, channel, opts = {}) {
           + '<div class="ch-model-row">'
           + '<select class="select" data-ch-key="accountId" data-ch-scope="options" id="ch-manager-account">'
           + '<option value="">自动（该平台第一个可用账号）</option>' + opts + '</select>'
-          + '<button type="button" class="h3-btn h3-btn-sm" id="ch-manager-load">读取账号</button></div>'
+          + '<button type="button" class="wmd-btn wmd-btn-sm" id="ch-manager-load">读取账号</button></div>'
           + '<div class="hint">' + (managerAccounts.length ? '已读取 ' + managerAccounts.length + ' 个账号' : '先填地址和凭据，再点「读取账号」') + '</div></div>';
       }
       const top = ['baseUrl', 'apiKey', 'model'].includes(f.key);
@@ -6833,7 +9559,7 @@ function openChannelDialog(kind, channel, opts = {}) {
 
     openModal(`
       <div class="modal-head">
-        <h2>${channel ? '编辑' : '新增'}${kindLabel}渠道</h2>
+        <h2>${copying ? '复制' : channel ? '编辑' : '新增'}${copying ? kindLabel + '模型配置' : kindLabel + '渠道'}</h2>
         <span class="grow"></span>
         <button type="button" class="btn ghost sm" data-close="1">关闭</button>
       </div>
@@ -6882,7 +9608,7 @@ function openChannelDialog(kind, channel, opts = {}) {
         try {
           const data = await api('/api/channels/models', {
             method: 'POST',
-            body: { kind, type: draft.type, baseUrl: baseUrl.trim(), apiKey, channelId: channel ? channel.id : '' },
+            body: { kind, type: draft.type, baseUrl: baseUrl.trim(), apiKey, channelId: editing ? channel.id : '' },
           });
           modelList = data.models || [];
           collectChannelDraft(kind, draft);
@@ -6918,7 +9644,7 @@ function openChannelDialog(kind, channel, opts = {}) {
       payload.kind = kind;
       try {
         let saved;
-        if (channel) saved = await api(`/api/channels/${channel.id}`, { method: 'PUT', body: payload });
+        if (editing) saved = await api(`/api/channels/${channel.id}`, { method: 'PUT', body: payload });
         else saved = await api('/api/channels', { method: 'POST', body: payload });
         await refreshState();
         if (kind === 'image' && saved) state.image.channelId = saved.id;
@@ -6932,7 +9658,7 @@ function openChannelDialog(kind, channel, opts = {}) {
         if (state.route === 'image') render();
         if (state.route === 'studio') render();
         if (state.route === 'script') render();
-        toast('渠道已保存');
+        toast(copying ? '已复制成新的模型配置' : '渠道已保存');
       } catch (err) {
         toast(err.message, true);
       }
@@ -7019,7 +9745,7 @@ async function toggleService(name, el) {
   if (!el || el.classList.contains('is-busy')) return;
   const action = el.classList.contains('is-ok') ? 'stop' : 'start';
   const label = name === 'agent' ? '智能体' : '管理器';
-  const act = el.querySelector('.h3-svc-act, .h3-svc-power');
+  const act = el.querySelector('.wmd-svc-act, .wmd-svc-power');
   el.classList.add('is-busy');
   if (act) act.textContent = action === 'start' ? '启动中' : '停止中';
   try {
@@ -7043,13 +9769,13 @@ async function refreshServices() {
   }
   const list = (data && data.data) || {};
   for (const name of ['agent', 'manager']) {
-    const el = document.querySelector('.h3-svc-item[data-svc="' + name + '"]');
+    const el = document.querySelector('.wmd-svc-item[data-svc="' + name + '"]');
     if (!el) continue;
     const info = list[name] || { ok: false };
     el.classList.toggle('is-ok', !!info.ok);
     el.classList.toggle('is-bad', !info.ok);
     const label = name === 'agent' ? '智能体' : '管理器';
-    const act = el.querySelector('.h3-svc-act, .h3-svc-power');
+    const act = el.querySelector('.wmd-svc-act, .wmd-svc-power');
     if (act && !el.classList.contains('is-busy')) act.textContent = info.ok ? '停止' : '启动';
     el.title = info.ok
       ? label + '在线' + (info.model ? ' · ' + info.model : '') + (info.accounts != null ? ' · 账号 ' + info.accounts : '')
@@ -7073,14 +9799,14 @@ function renderLoginScreen() {
   document.body.innerHTML = `
     <div class="auth-screen">
       <form class="auth-card" id="auth-form">
-        <div class="auth-brand"><span class="h3-brand-mark">Y9</span><div><b>H3 Studio</b><small>AI 视频创作工作台</small></div></div>
+        <div class="auth-brand"><span class="wmd-brand-mark">Y9</span><div><b>WENYUN.M-DESKTOP</b><small>AI 视频创作工作台</small></div></div>
         <h1>${enabled ? '登录' : '创建账号'}</h1>
         <p class="hint">${enabled ? '本机账号，登录后才能进入项目。' : '第一次使用，先创建本机账号（密码至少 6 位）。'}</p>
         <input class="input" id="auth-user" placeholder="用户名" autocomplete="username" />
         <input class="input" id="auth-pass" type="password" placeholder="密码" autocomplete="${enabled ? 'current-password' : 'new-password'}" />
         ${enabled ? '' : '<input class="input" id="auth-pass2" type="password" placeholder="再输一次密码" autocomplete="new-password" />'}
         <div class="auth-error" id="auth-error"></div>
-        <button class="h3-btn h3-btn-primary" type="submit" id="auth-submit">${enabled ? '登录' : '创建并登录'}</button>
+        <button class="wmd-btn wmd-btn-primary" type="submit" id="auth-submit">${enabled ? '登录' : '创建并登录'}</button>
         <div class="auth-switch">${enabled ? '只能本机登录；忘记密码删掉 data/users.json 重新创建' : '本机明文数据，仅个人使用'}</div>
       </form>
     </div>`;
@@ -7140,7 +9866,7 @@ async function setActiveProject(id, opts = {}) {
   if (previousId && previousId !== id) { await WB.flushAll(); studioFlush(previousId); }
   state.projectId = id;
   state.project = project;
-  try { localStorage.setItem('h3.projectId', id); } catch { /* ignore */ }
+  try { localStorage.setItem('wmd.projectId', id); } catch { /* ignore */ }
   state.styleDetail = await api('/api/styles/' + encodeURIComponent(project.styleId)).catch(() => null);
   // 必须先等服务端记住当前项目，再重新读素材/媒体/任务，否则会读到上一个项目的数据。
   await fetch('/api/auth/project', {
@@ -7153,6 +9879,7 @@ async function setActiveProject(id, opts = {}) {
   askResetForProject();
   state.assets = await api('/api/assets').catch(() => state.assets);
   state.media = await api('/api/media').catch(() => state.media);
+  await reloadMediaEpisodes();
   const jobData = await api('/api/jobs').catch(() => null);
   if (jobData && Array.isArray(jobData.jobs)) state.jobs = jobData.jobs;
   await studioLoadForProject(id);
@@ -7179,8 +9906,8 @@ function renderProjects() {
       <div><h1>项目</h1><p>项目可以绑定一套风格（自动注入风格前置），也可以选「探索模式」自由生成。</p></div>
       <span class="grow"></span>
       ${user ? `<span class="hint">${esc(user.username)}</span>` : ''}
-      ${state.auth && state.auth.enabled ? '<button type="button" class="h3-btn h3-btn-sm h3-btn-ghost" data-act="logout">退出登录</button>' : ''}
-      <button type="button" class="h3-btn h3-btn-sm h3-btn-primary" data-act="new-project">＋ 新建项目</button>
+      ${state.auth && state.auth.enabled ? '<button type="button" class="wmd-btn wmd-btn-sm wmd-btn-ghost" data-act="logout">退出登录</button>' : ''}
+      <button type="button" class="wmd-btn wmd-btn-sm wmd-btn-primary" data-act="new-project">＋ 新建项目</button>
     </div>
     ${list.length ? `<div class="projects-grid">${list.map((p) => `<div class="project-card ${p.id === state.projectId ? 'is-on' : ''}">
       ${p.style && p.style.image ? `<img class="project-cover" src="${styleImageUrl({ id: p.styleId, image: p.style && p.style.image })}" alt="" />` : '<div class="project-cover project-cover-explore">🧭</div>'}
@@ -7190,9 +9917,9 @@ function renderProjects() {
         ${p.dir ? `<small class="mono project-dir" title="${esc(p.dir)}">📁 ${esc(p.dir)}</small>` : ''}
         ${p.description ? `<small>${esc(p.description)}</small>` : ''}
         <div class="row">
-          <button type="button" class="h3-btn h3-btn-sm ${p.id === state.projectId ? 'h3-btn-ghost' : 'h3-btn-primary'}" data-act="open-project" data-id="${esc(p.id)}">${p.id === state.projectId ? '当前项目' : '进入'}</button>
-          <button type="button" class="h3-btn h3-btn-sm h3-btn-ghost" data-act="edit-project" data-id="${esc(p.id)}">编辑</button>
-          <button type="button" class="h3-btn h3-btn-sm h3-btn-ghost" data-act="delete-project" data-id="${esc(p.id)}">删除</button>
+          <button type="button" class="wmd-btn wmd-btn-sm ${p.id === state.projectId ? 'wmd-btn-ghost' : 'wmd-btn-primary'}" data-act="open-project" data-id="${esc(p.id)}">${p.id === state.projectId ? '当前项目' : '进入'}</button>
+          <button type="button" class="wmd-btn wmd-btn-sm wmd-btn-ghost" data-act="edit-project" data-id="${esc(p.id)}">编辑</button>
+          <button type="button" class="wmd-btn wmd-btn-sm wmd-btn-ghost" data-act="delete-project" data-id="${esc(p.id)}">删除</button>
         </div>
       </div>
     </div>`).join('')}</div>` : '<div class="ask-cap-empty">还没有项目，先新建一个并选风格。</div>'}
@@ -7225,7 +9952,7 @@ function bindProjects(root) {
           state.projectId = '';
           state.project = null;
           state.styleDetail = null;
-          localStorage.removeItem('h3.projectId');
+          localStorage.removeItem('wmd.projectId');
           applyProjectChip();
         }
         return render();
@@ -7246,7 +9973,7 @@ function openProjectDialog(project) {
   let selected = project ? project.styleId || '' : '';
   const isEdit = !!project;
   openModal(`
-    <div class="modal-head"><h2>${isEdit ? '编辑项目' : '新建项目'}</h2><span class="grow"></span><button type="button" class="h3-btn h3-btn-sm h3-btn-ghost" data-close="1">关闭</button></div>
+    <div class="modal-head"><h2>${isEdit ? '编辑项目' : '新建项目'}</h2><span class="grow"></span><button type="button" class="wmd-btn wmd-btn-sm wmd-btn-ghost" data-close="1">关闭</button></div>
     <div class="modal-body ch-dialog">
       <div class="field full"><label>项目名称</label><input class="input" id="project-name-input" maxlength="60" value="${esc(project ? project.name : '')}" placeholder="例如：雪山寺庙 · 第 1 集" /></div>
       <div class="field full"><label>备注（可选）</label><textarea class="input" id="project-desc-input" rows="2" placeholder="题材、受众、时长…">${esc(project ? project.description || '' : '')}</textarea></div>
@@ -7265,8 +9992,8 @@ function openProjectDialog(project) {
     </div>
     <div class="modal-foot">
       <span class="hint grow">风格前置保存在 data/styles.json，可随时替换</span>
-      <button type="button" class="h3-btn h3-btn-sm h3-btn-ghost" data-close="1">取消</button>
-      <button type="button" class="h3-btn h3-btn-sm h3-btn-primary" id="project-save">${isEdit ? '保存' : '创建'}</button>
+      <button type="button" class="wmd-btn wmd-btn-sm wmd-btn-ghost" data-close="1">取消</button>
+      <button type="button" class="wmd-btn wmd-btn-sm wmd-btn-primary" id="project-save">${isEdit ? '保存' : '创建'}</button>
     </div>`);
   $('#modal-panel').classList.add('modal-channel');
   $$('#style-grid .style-card').forEach((card) => {
@@ -7303,7 +10030,7 @@ function openImageSaveDialog(all) {
   const items = all ? results : [imageCurrent()].filter(Boolean);
   if (!items.length) return toast('还没有可保存的图片', true);
   openModal(`
-    <div class="modal-head"><h2>保存图片</h2><span class="grow"></span><button type="button" class="h3-btn h3-btn-sm h3-btn-ghost" data-close="1">关闭</button></div>
+    <div class="modal-head"><h2>保存图片</h2><span class="grow"></span><button type="button" class="wmd-btn wmd-btn-sm wmd-btn-ghost" data-close="1">关闭</button></div>
     <div class="modal-body">
       <div class="row wrap">
         <div class="field" style="min-width:220px;flex:1"><label>文件名</label><input class="input" id="img-save-name" value="${esc(items[0].name || 'image.png')}" /></div>
@@ -7320,8 +10047,8 @@ function openImageSaveDialog(all) {
       <div class="hint">${all ? `将保存 ${items.length} 张（文件名会自动加序号避免覆盖）` : esc(items[0].name)}${items[0].path ? ' · ' + esc(items[0].path) : ''}</div>
     </div>
     <div class="modal-foot">
-      <button type="button" class="h3-btn h3-btn-sm h3-btn-ghost" data-close="1">取消</button>
-      <button type="button" class="h3-btn h3-btn-sm h3-btn-primary" id="img-save-go">保存</button>
+      <button type="button" class="wmd-btn wmd-btn-sm wmd-btn-ghost" data-close="1">取消</button>
+      <button type="button" class="wmd-btn wmd-btn-sm wmd-btn-primary" id="img-save-go">保存</button>
     </div>`);
   $('#img-save-target').onchange = (e) => { $('#img-save-dir-wrap').hidden = e.target.value !== 'custom'; };
   $('#img-save-go').onclick = async () => {
@@ -7367,8 +10094,8 @@ async function init() {
     const imageList = state.channels.image.filter((c) => c.enabled !== false);
     const activeImage = imageList.find((c) => c.active) || imageList[0];
     state.image.channelId = activeImage ? activeImage.id : '';
-    const stored = localStorage.getItem('h3.workflowId');
-    const storedWidth = Number(localStorage.getItem('h3.panelWidth')) || 0;
+    const stored = localStorage.getItem('wmd.workflowId');
+    const storedWidth = Number(localStorage.getItem('wmd.panelWidth')) || 0;
     if (storedWidth) state.studio.panelWidth = storedWidth;
     // 默认渠道以「设置 → 视频生成」里标的默认为准，其次是上次选择；有管理器渠道时不再回落到官网 API。
     const videoChannels = (state.channels.video || []).filter((c) => c.enabled !== false);
@@ -7389,7 +10116,7 @@ async function init() {
     state.studio.duration = Math.min(15, wf.durationDefault || 10);
     await loadProjects();
     let storedProject = '';
-    try { storedProject = localStorage.getItem('h3.projectId') || ''; } catch { storedProject = ''; }
+    try { storedProject = localStorage.getItem('wmd.projectId') || ''; } catch { storedProject = ''; }
     const activeProject = (state.projects || []).find((p) => p.id === storedProject) || (state.projects || [])[0] || null;
     if (activeProject) await setActiveProject(activeProject.id, { silent: true });
     else { await studioLoadForProject('default'); await WB.load('default'); }
@@ -7397,6 +10124,7 @@ async function init() {
     setRoute();
     state.assets = await api('/api/assets');
     state.media = await api('/api/media');
+    await reloadMediaEpisodes();
     state.imageHistory = await api('/api/images/history').then((d) => d.items || []).catch(() => []);
     if (!WB.current('image') && (state.image.results || []).length === 0 && state.imageHistory[0] && state.imageHistory[0].items) {
       state.image.results = state.imageHistory[0].items;
@@ -7404,7 +10132,7 @@ async function init() {
       if (state.imageHistory[0].prompt) state.image.prompt = state.imageHistory[0].prompt;
     }
     try {
-      const storedJob = localStorage.getItem('h3.lastJobId') || '';
+      const storedJob = localStorage.getItem('wmd.lastJobId') || '';
       if (storedJob && state.jobs.some((j) => j.id === storedJob)) state.lastJobId = storedJob;
       else {
         const latest = state.jobs.slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).find((j) => (j.outputs || []).length);
@@ -7419,18 +10147,18 @@ async function init() {
     const projectBtn = $('#project-btn');
     if (projectBtn) projectBtn.onclick = () => { location.hash = '#projects'; };
     applyProjectChip();
-    const agentItem = document.querySelector('.h3-svc-item[data-svc="agent"]');
+    const agentItem = document.querySelector('.wmd-svc-item[data-svc="agent"]');
     if (agentItem) agentItem.onclick = () => toggleService('agent', agentItem);
-    const managerItem = document.querySelector('.h3-svc-item[data-svc="manager"]');
+    const managerItem = document.querySelector('.wmd-svc-item[data-svc="manager"]');
     if (managerItem) {
-      const power = managerItem.querySelector('.h3-svc-power');
+      const power = managerItem.querySelector('.wmd-svc-power');
       if (power) power.onclick = (event) => { event.stopPropagation(); toggleService('manager', managerItem); };
-      const label = managerItem.querySelector('.h3-svc-label');
+      const label = managerItem.querySelector('.wmd-svc-label');
       if (label) label.onclick = () => openManagerPage(managerItem);
     }
   } catch (err) {
     if (/请先登录/.test(err.message)) return renderLoginScreen();
-    document.body.innerHTML = `<div class="empty" style="height:100vh;justify-content:center"><strong>无法连接 H3 Studio 服务</strong><p>${esc(err.message)}</p></div>`;
+    document.body.innerHTML = `<div class="empty" style="height:100vh;justify-content:center"><strong>无法连接 WENYUN.M-DESKTOP 服务</strong><p>${esc(err.message)}</p></div>`;
   }
 }
 
@@ -7448,8 +10176,43 @@ function bindRoute(root) {
   else if (state.route === 'projects') bindProjects(root);
 }
 
-init();
+/* 页面开着很久时，服务端可能已经换了新前端资源：发现指纹变了就提示刷新一次，
+   免得一直对着旧样式看（静态资源是 no-store，刷新即生效）。 */
+let askWebVersionStamp = '';
+let askWebVersionTimer = null;
 
+async function checkWebVersion() {
+  try {
+    const res = await fetch('/api/web-version', { cache: 'no-store' });
+    const payload = await res.json().catch(() => null);
+    const version = payload && payload.ok && payload.data && payload.data.version;
+    if (!version) return;
+    if (!askWebVersionStamp) { askWebVersionStamp = version; return; }
+    if (version !== askWebVersionStamp) showOutdatedBadge();
+  } catch { /* 服务重启中或离线，下次再查 */ }
+}
+
+function showOutdatedBadge() {
+  if (document.getElementById('web-outdated')) return;
+  const btn = document.createElement('button');
+  btn.id = 'web-outdated';
+  btn.type = 'button';
+  btn.textContent = '界面已更新 · 点此刷新';
+  btn.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:9999;height:32px;padding:0 14px;border:1px solid rgba(0,0,0,.16);border-radius:16px;background:#fff;color:#111;font:12px/1 system-ui,sans-serif;box-shadow:0 8px 24px rgba(0,0,0,.16);cursor:pointer;';
+  btn.onclick = () => location.reload();
+  document.body.appendChild(btn);
+}
+
+function startWebVersionWatch() {
+  checkWebVersion();
+  clearInterval(askWebVersionTimer);
+  askWebVersionTimer = setInterval(checkWebVersion, 60000);
+  window.addEventListener('focus', checkWebVersion);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkWebVersion(); });
+}
+
+init();
+startWebVersionWatch();
 
 
 
@@ -7580,4 +10343,8 @@ async function openRasterEditor() {
   };
   refresh();
 }
+
+
+
+
 

@@ -7,10 +7,10 @@ const path = require('node:path');
 const http = require('node:http');
 const { execFile, execFileSync } = require('node:child_process');
 
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'h3-review-regressions-'));
-process.env.H3_DATA_DIR = path.join(tmp, 'data');
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wmd-review-regressions-'));
+process.env.WMD_DATA_DIR = path.join(tmp, 'data');
 process.env.APPDATA = path.join(tmp, 'no-legacy');
-delete process.env.H3_INTERNAL_TOKEN;
+delete process.env.WMD_INTERNAL_TOKEN;
 const config = require('../src/config');
 config.load();
 config.save({ channels: { llm: [], image: [], video: [] }, autodlKeys: [] });
@@ -34,7 +34,7 @@ const mock = http.createServer(async (req, res) => {
 async function request(url, body, credential = internal.token()) {
   return fetch(base + url, {
     method: body === undefined ? 'GET' : 'POST',
-    headers: { 'Content-Type': 'application/json', ...(credential ? { 'X-H3-Internal': credential } : {}) },
+    headers: { 'Content-Type': 'application/json', ...(credential ? { 'X-WMD-Internal': credential } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 }
@@ -69,7 +69,7 @@ test('登录保护拒绝旧内部标头和伪造凭据，接受共享凭据与�
 test('调整音量和静音保留主题收藏、音频，并能从新进程恢复', async () => {
   const saved = { theme: 'user-wp-test', wallpapers: [{ id: 'user-wp-test', path: 'test.mp4', kind: 'video' }], musicPath: 'song.mp3', musicVolume: 23, wallpaperSidebarDim: .7, conversationFolders: [{ id: 'folder-test', name: '校园短剧' }], conversationFolderMap: { sample: 'folder-test' }, agentWelcomeText: '让灵感成为作品。', agentFont: 'song', agentFontSize: 20, agentLineHeight: 2, agentTitleSize: 52, agentFontWeight: 500 };
   const put = async (ui) => {
-    const response = await fetch(base + '/api/config', { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-H3-Internal': internal.token() }, body: JSON.stringify({ ui }) });
+    const response = await fetch(base + '/api/config', { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-WMD-Internal': internal.token() }, body: JSON.stringify({ ui }) });
     assert.equal(response.status, 200);
     return (await response.json()).data.ui;
   };
@@ -100,7 +100,7 @@ test('视频流式上传支持超过 60MB，拒绝超过 600MB', async () => {
   const { Readable } = require('node:stream');
   const size = 61 * 1024 * 1024;
   const response = await fetch(base + '/api/upload/raw?name=large.mp4', {
-    method: 'POST', headers: { 'X-H3-Internal': internal.token() }, duplex: 'half',
+    method: 'POST', headers: { 'X-WMD-Internal': internal.token() }, duplex: 'half',
     body: Readable.from((async function* () {
       for (let i = 0; i < 61; i++) yield Buffer.alloc(1024 * 1024, i);
     })()),
@@ -112,7 +112,7 @@ test('视频流式上传支持超过 60MB，拒绝超过 600MB', async () => {
   fs.unlinkSync(saved.path);
   const status = await new Promise((resolve, reject) => {
     const req = http.request(base + '/api/upload/raw?name=too-large.mp4', {
-      method: 'POST', headers: { 'X-H3-Internal': internal.token(), 'Content-Length': 600 * 1024 * 1024 + 1 },
+      method: 'POST', headers: { 'X-WMD-Internal': internal.token(), 'Content-Length': 600 * 1024 * 1024 + 1 },
     }, (res) => { res.resume(); resolve(res.statusCode); req.destroy(); });
     req.on('error', reject);
     req.flushHeaders();
@@ -129,12 +129,12 @@ test('内置真人动态照片支持视频 Range 请求', async () => {
 });
 
 test('Python 创作工具使用同一数据目录的凭据访问 Node 服务', async (t) => {
-  const python = process.env.H3_PYTHON || 'D:/notebook/AIGC/ml-engineer/backend/.venv/Scripts/python.exe';
+  const python = process.env.WMD_PYTHON || 'D:/notebook/AIGC/ml-engineer/backend/.venv/Scripts/python.exe';
   if (!fs.existsSync(python)) return t.skip('未配置智能体 Python');
   const stdout = await new Promise((resolve, reject) => {
     execFile(python, ['-B', '-c', "from app.create_tools import _http; print(_http('GET', '/api/jobs')['stats']['total'])"], {
       cwd: path.join(__dirname, '..', 'agent_backend'),
-      env: { ...process.env, H3_BASE_URL: base, PYTHONDONTWRITEBYTECODE: '1' },
+      env: { ...process.env, WMD_BASE_URL: base, PYTHONDONTWRITEBYTECODE: '1' },
       windowsHide: true,
       timeout: 30000,
     }, (err, out, stderr) => err ? reject(new Error(stderr || err.message)) : resolve(out));
@@ -143,8 +143,8 @@ test('Python 创作工具使用同一数据目录的凭据访问 Node 服务', a
 });
 
 test('实际抽帧生成的预览 URL 可访问', async (t) => {
-  const ffmpeg = process.env.H3_FFMPEG || 'D:/notebook/software/ffmpeg/bin/ffmpeg.exe';
-  const ffprobe = process.env.H3_FFPROBE || 'D:/notebook/software/ffmpeg/bin/ffprobe.exe';
+  const ffmpeg = process.env.WMD_FFMPEG || 'D:/notebook/software/ffmpeg/bin/ffmpeg.exe';
+  const ffprobe = process.env.WMD_FFPROBE || 'D:/notebook/software/ffmpeg/bin/ffprobe.exe';
   if (!fs.existsSync(ffmpeg) || !fs.existsSync(ffprobe)) return t.skip('未配置 FFmpeg');
   const video = path.join(tmp, 'sample.mp4');
   execFileSync(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=blue:s=320x240:d=1', '-c:v', 'mpeg4', video], { windowsHide: true });

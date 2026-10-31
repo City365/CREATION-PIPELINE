@@ -25,11 +25,11 @@ async function waitFor(fn, timeoutMs = 40000, interval = 300) {
 }
 
 test('官网 API 全流程：base64 提交 → 轮询 → 下载', { timeout: 90000 }, async () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'h3-autodl-'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wmd-autodl-'));
   const mock = await startMockCloud();
   const child = spawn(process.execPath, [path.join(ROOT, 'src', 'server.js')], {
     cwd: ROOT,
-    env: { ...process.env, APPDATA: path.join(tmp, 'appdata'), H3_PORT: String(PORT), H3_DATA_DIR: path.join(tmp, 'data'), H3_AUTODL_BASE: mock.url },
+    env: { ...process.env, APPDATA: path.join(tmp, 'appdata'), WMD_PORT: String(PORT), WMD_DATA_DIR: path.join(tmp, 'data'), WMD_AUTODL_BASE: mock.url },
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   });

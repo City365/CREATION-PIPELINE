@@ -1,17 +1,20 @@
 ﻿{
-  "name": "h3-studio",
+  "name": "wenyun-m-desktop",
   "version": "0.2.0",
   "private": true,
   "type": "commonjs",
-  "description": "Source-first rebuild of ZEALMAN-H3 desktop studio: MiniMax H3 six-section prompts, AutoDL / custom video channels, media library.",
+  "description": "WENYUN.M-DESKTOP：本地创作台（图像/视频生成、任务调度与创作智能体）。",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "test": "node --test tests/events.test.js tests/task-import.test.js tests/project-isolation-api.test.js tests/agent-project-migration.test.js tests/asset-storyboard.test.js tests/asset-layout.test.js tests/events-scheduler.test.js tests/task-lifecycle-api.test.js tests/generation-params.test.js tests/image-tasks.test.js tests/workbench.test.js tests/workbench-e2e.test.js tests/creative.test.js tests/studio-mentions.test.js tests/agent-lifecycle.test.js tests/prompt.test.js tests/batch.test.js tests/channels.test.js tests/autodl-e2e.test.js tests/optimize-e2e.test.js tests/image-e2e.test.js tests/image-tools-e2e.test.js tests/generic-video-e2e.test.js tests/tts.test.js tests/voice-library.test.js tests/channel-models.test.js tests/manager-video.test.js tests/review-regressions.test.js tests/wallpapers.test.js",
+    "test": "node --test tests/events.test.js tests/task-import.test.js tests/task-overview.test.js tests/task-drawer.test.js tests/agent-proxy.test.js tests/project-isolation-api.test.js tests/asset-storyboard.test.js tests/asset-layout.test.js tests/media-episodes.test.js tests/media-import.test.js tests/media-task-menu.test.js tests/media-jianying-selection.test.js tests/jianying.test.js tests/job-output.test.js tests/task-manifest.test.js tests/extract-proxy.test.js tests/events-scheduler.test.js tests/events-undo.test.js tests/task-lifecycle-api.test.js tests/generation-params.test.js tests/image-tasks.test.js tests/workbench.test.js tests/workbench-e2e.test.js tests/creative.test.js tests/studio-mentions.test.js tests/agent-lifecycle.test.js tests/chat-genui.test.js tests/chat-refs.test.js tests/chat-ref-images.test.js tests/chat-images.test.js tests/chat-streaming.test.js tests/chat-background.test.js tests/chat-scroll.test.js tests/chat-context.test.js tests/chat-turn-delete.test.js tests/chat-skills.test.js tests/chat-trace.test.js tests/chat-queue.test.js tests/chat-attachments.test.js tests/scene-describe.test.js tests/prompt.test.js tests/batch.test.js tests/channels.test.js tests/autodl-e2e.test.js tests/seedance.test.js tests/optimize-e2e.test.js tests/image-e2e.test.js tests/image-tools-e2e.test.js tests/generic-video-e2e.test.js tests/tts.test.js tests/voice-library.test.js tests/channel-models.test.js tests/manager-failure-analysis.test.js tests/manager-video.test.js tests/review-regressions.test.js tests/wallpapers.test.js",
     "test:creative": "node --test tests/creative.test.js",
     "test:workbench-browser": "node tests/workbench-browser.js",
-    "test:image-tasks-browser": "node tests/image-tasks-browser.js"
+    "test:image-tasks-browser": "node tests/image-tasks-browser.js",
+    "test:media-browser": "node tests/media-episodes-browser.js",
+    "test:refs-browser": "node tests/chat-refs-browser.js",
+    "test:undo-browser": "node tests/events-undo-browser.js"
   },
   "engines": {
     "node": ">=22"

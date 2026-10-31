@@ -12,7 +12,14 @@ async function prepareReferenceDraft(pool,account,input){
    const context=await pool.context(account);const page=context.pages().filter(p=>!p.isClosed()).at(-1);
    const screenshot=require('node:path').join(pool.store.directory,'doubao-tag-draft.png');await page.screenshot({path:screenshot});
    return {...result,screenshot};
-  }catch(error){return {sent:false,mode:'executor-before-send',error:error.message,uploadDiagnostics:error.uploadDiagnostics};}
+  }catch(error){
+   let screenshot=null;
+   try{
+    const context=await pool.context(account);const page=context.pages().filter(p=>!p.isClosed()).at(-1);
+    if(page){screenshot=require('node:path').join(pool.store.directory,'doubao-tag-draft-failed.png');await page.screenshot({path:screenshot});}
+   }catch{/* 页面可能已关闭，失败截图不是必需 */}
+   return {sent:false,mode:'executor-before-send',error:error.message,uploadDiagnostics:error.uploadDiagnostics,screenshot};
+  }
  }
  const page=await pool.taskPage(account);
  const {waitForGeminiReady,ensureVideoMode,uploadGeminiReferences,ensureChatMode,UI}=require('./automation-gemini');

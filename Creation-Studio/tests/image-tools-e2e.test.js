@@ -21,11 +21,11 @@ async function waitFor(fn, timeoutMs = 20000) {
 }
 
 test('图像反推 / 提示词优化走当前语言渠道', { timeout: 60000 }, async () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'h3-imgtools-'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wmd-imgtools-'));
   const mock = await startMockCloud();
   const child = spawn(process.execPath, [path.join(ROOT, 'src', 'server.js')], {
     cwd: ROOT,
-    env: { ...process.env, APPDATA: path.join(tmp, 'appdata'), H3_PORT: String(PORT), H3_DATA_DIR: path.join(tmp, 'data') },
+    env: { ...process.env, APPDATA: path.join(tmp, 'appdata'), WMD_PORT: String(PORT), WMD_DATA_DIR: path.join(tmp, 'data') },
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   });

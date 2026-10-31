@@ -84,6 +84,26 @@ function startMockCloud() {
         let content;
         if (system.includes('Reverse-engineer')) content = 'A cinematic photo of a warrior monk by a summer lake, soft daylight, 35mm --ar 9:16';
         else if (system.includes('image prompt engineer')) content = 'A detailed cinematic portrait of a warrior monk, golden hour, shallow depth of field';
+        else if (system.includes('Seedance 2.0 · 分镜节拍稿')) content = '好的，下面是优化结果：\n```\n*::~OUTPUT_START::~*\n' + [
+          '禁止生成字幕，禁止生成背景音乐',
+          '场景：旧街理发店｜内｜傍晚',
+          '角色：谢七、胡四',
+          '时间：傍晚',
+          '时长：15秒',
+          '物品：砍骨刀、木凳',
+          '音色锁定：谢七：青年男性，中低音区，音质干净清朗，咬字清晰利落，气息平稳。',
+          '',
+          '人物锚点：谢七坐在矮木凳上，面向街面，右手空置。',
+          '场景锚点：【空间基准・破风酒肆檐下｜外｜日】檐下摆着矮木凳与磨刀摊，清晨屋檐断续滴水。',
+          '剧情承接：开场：清晨谢七在檐下候活，胡四砸下砍骨刀，截至谢七舀水浇石。',
+          '',
+          'SHOT 1: Wide shot, cut to Medium shot：谢七静坐矮木凳；随后胡四阔步跨入视线，把砍骨刀拍在凳沿。',
+          '胡四（现场对白・偏快语速 / 粗豪使唤语气 / 句号后短停）：谢七，这把是剁骨头的。',
+          '',
+          'SHOT 2: Close-up, static：谢七在裤腿上蹭去指腹油脂，舀半瓢清水泼在磨石上。',
+          '谢七（现场对白・正常语速 / 冷淡笃定语气 / 逗号短停）：卷了三处，都在前三分。',
+          '*::~OUTPUT_END::~*',
+        ].join('\n') + '\n```\n以上。';
         else content = JSON.stringify({
           subject_definitions: ['<Subject 1> is the warrior monk from <Picture 1>, with a beard.'],
           summary: '[reference generation] A ten-second test scene with two characters.',

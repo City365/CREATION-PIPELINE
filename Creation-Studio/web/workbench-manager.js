@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 /* Shared directory for image/video workbenches. Runtime objects retain in-flight ownership. */
 const WB = (() => {
   const books={image:null,video:null}, defaults={}, timers={}, queues=new Map();
@@ -16,7 +16,7 @@ const WB = (() => {
     if(k==='video'){state.studio=obj;state.lastJobId=(state.jobs||[]).find(j=>j.itemId===item.id)?.id||null;}
     else state.image=obj;
   }
-  const cacheKey=(p,k,id)=>'h3.workbench.'+p+'.'+k+'.'+id;
+  const cacheKey=(p,k,id)=>'wmd.workbench.'+p+'.'+k+'.'+id;
   async function flush(k) {
     clearTimeout(timers[k]);const b=books[k],item=current(k);if(!b||!item)return;
     const draft=snapshot(k,item.runtime||runtime(k));
@@ -60,14 +60,14 @@ const WB = (() => {
       const b={...data[idx],projectId:p};books[k]=b;
       if(!b.items.length) {
         // Import the single legacy client draft only once. Later empty lists stay empty.
-        const marker='h3.workbench.initialized.'+p+'.'+k;
+        const marker='wmd.workbench.initialized.'+p+'.'+k;
         if(!b.initialized) {
           const legacy=k==='video'?snapshot(k):{};
           const item=await api('/api/workbench/items',{method:'POST',body:{projectId:p,kind:k,draft:legacy}});
           b.items=[item];b.activeId=item.id;
           localStorage.setItem(marker,'1');
         }
-      } else localStorage.setItem('h3.workbench.initialized.'+p+'.'+k,'1');
+      } else localStorage.setItem('wmd.workbench.initialized.'+p+'.'+k,'1');
       if(epoch!==loadEpoch)return;
       for(const item of b.items){
         item.saved=JSON.stringify(item.draft);
@@ -86,7 +86,7 @@ const WB = (() => {
   }
   function layout(k,html) {
     const b=books[k];if(!b)return html;
-    const i=current(k),collapsed=localStorage.getItem('h3.workbench.collapsed.'+k)==='1';
+    const i=current(k),collapsed=localStorage.getItem('wmd.workbench.collapsed.'+k)==='1';
     const rows=b.items.map((item,n)=>{
       const d=item.id===b.activeId?snapshot(k):item.draft;
       const thumb=k==='image'?(d.results||[])[0]:(d.images||[]).find(Boolean);
@@ -121,23 +121,44 @@ const WB = (() => {
     await api('/api/workbench/items/reorder',{method:'POST',body:{projectId:b.projectId,kind:k,ids,version:b.version}});
     await refresh(k);render();
   }
-  async function menu(k,id) {
+  async function menu(k,id,anchor) {
     const item=books[k].items.find(i=>i.id===id);if(!item)return;
-    openModal('<div class="modal-head"><h2>管理 '+esc(item.title)+'</h2><button class="btn" data-close="1">关闭</button></div><div class="modal-body wb-menu"><label>名称<input class="input" id="wb-title" value="'+esc(item.title)+'"></label><button class="btn" data-wb-action="rename">保存名称</button><button class="btn" data-wb-action="copy">复制分镜</button><button class="btn" data-wb-action="up">上移</button><button class="btn" data-wb-action="down">下移</button><button class="btn" data-wb-action="history">生成记录</button>'+(item.localRecovery?'<button class="btn" data-wb-action="local">恢复本地草稿为新条目</button>':'')+'<button class="btn danger" data-wb-action="delete">移入回收站</button></div>');
-    document.querySelectorAll('[data-wb-action]').forEach(el=>el.onclick=async()=>{
+    document.querySelectorAll('.wb-pop').forEach(el=>el.remove());
+    const pop=document.createElement('div');
+    pop.className='wb-pop';
+    pop.innerHTML='<label>名称<input class="input" id="wb-pop-title" value="'+esc(item.title)+'"></label>'+
+      '<button type="button" data-wb-action="rename">保存名称</button>'+
+      '<button type="button" data-wb-action="copy">复制分镜</button>'+
+      '<button type="button" data-wb-action="up">上移</button>'+
+      '<button type="button" data-wb-action="down">下移</button>'+
+      '<button type="button" data-wb-action="history">生成记录</button>'+
+      (item.localRecovery?'<button type="button" data-wb-action="local">恢复本地草稿</button>':'')+
+      '<button type="button" class="danger" data-wb-action="delete">移入回收站</button>';
+    document.body.appendChild(pop);
+    const rect=anchor?anchor.getBoundingClientRect():{left:20,right:20,bottom:20};
+    const width=pop.offsetWidth||220, height=pop.offsetHeight||260;
+    pop.style.left=Math.max(8,Math.min(rect.right-width,innerWidth-width-8))+'px';
+    pop.style.top=Math.max(8,Math.min(rect.bottom+6,innerHeight-height-8))+'px';
+    const close=()=>pop.remove();
+    pop.querySelectorAll('[data-wb-action]').forEach(el=>el.onclick=async()=>{
       try{
         await flush(k);const b=books[k],action=el.dataset.wbAction;
         if(action==='copy')await newItem(k,item.id===b.activeId?snapshot(k):item.draft,item.title+' 副本');
         else if(action==='local')await newItem(k,item.localRecovery,item.title+' 本地恢复');
         else if(action==='up'||action==='down')await move(k,id,b.items.indexOf(item)+(action==='up'?-1:1));
-        else if(action==='history'){await history(k,id);return;}
+        else if(action==='history'){close();await history(k,id);return;}
         else {
-          const saved=await api('/api/workbench/items/'+id+(action==='delete'?'/delete':''),{method:action==='delete'?'POST':'PATCH',body:{projectId:b.projectId,kind:k,revision:item.revision,title:action==='rename'?document.querySelector('#wb-title').value:undefined}});
+          const saved=await api('/api/workbench/items/'+id+(action==='delete'?'/delete':''),{method:action==='delete'?'POST':'PATCH',body:{projectId:b.projectId,kind:k,revision:item.revision,title:action==='rename'?pop.querySelector('#wb-pop-title').value:undefined}});
           Object.assign(item,saved);await refresh(k);const active=current(k);if(active)adopt(k,active);render();
         }
-        closeModal();render();
+        close();render();
       }catch(e){toast(e.message,true);}
     });
+    setTimeout(()=>{
+      const off=(event)=>{if(!pop.contains(event.target)){pop.remove();document.removeEventListener('pointerdown',off);}};
+      document.addEventListener('pointerdown',off);
+      pop.addEventListener('keydown',(event)=>{if(event.key==='Escape')pop.remove();});
+    },0);
   }
   async function history(k,id){
     const b=books[k],runs=await api('/api/workbench/items/'+id+'/runs?projectId='+enc(b.projectId)+'&kind='+k);
@@ -163,11 +184,11 @@ const WB = (() => {
         const action=btn.dataset.wb;
         if(action==='new')await newItem(k);
         if(action==='select')await selectItem(k,btn.dataset.id);
-        if(action==='menu')await menu(k,btn.dataset.id);
+        if(action==='menu')await menu(k,btn.dataset.id,btn);
         if(action==='trash')await trash(k);
 
         if(action==='save'){await flush(k);await refresh(k);render();toast('已保存');}
-        if(action==='collapse'){localStorage.setItem('h3.workbench.collapsed.'+k,localStorage.getItem('h3.workbench.collapsed.'+k)==='1'?'0':'1');render();}
+        if(action==='collapse'){localStorage.setItem('wmd.workbench.collapsed.'+k,localStorage.getItem('wmd.workbench.collapsed.'+k)==='1'?'0':'1');render();}
       }catch(error){toast(error.message,true);}finally{locked=false;if(content?.isConnected)content.inert=false;}
     });
     let dragged=null;
@@ -203,7 +224,7 @@ const WB = (() => {
     try{
       const d=await api('/api/media/details?path='+enc(item.path));if(!host.isConnected)return;
       const s=d.snapshot||{},refs=s.images||s.refs||[];
-      host.innerHTML=(d.missingReferences?.length?'<p class="badge warn">缺失参考素材：'+esc(d.missingReferences.join('、'))+'</p>':'')+'<h3>生成资料</h3><p>'+esc(d.title||'')+'</p><label>用户提示词</label><pre class="wb-prompt">'+esc(s.userPrompt??s.prompt??'未记录生成提示词')+'</pre>'+(s.prompt&&s.userPrompt!==undefined&&s.prompt!==s.userPrompt?'<details><summary>提交提示词（包含风格）</summary><pre class="wb-prompt">'+esc(s.prompt)+'</pre></details>':'')+(s.submittedPrompt?'<details><summary>实际发送文本</summary><pre class="wb-prompt">'+esc(s.submittedPrompt)+'</pre></details>':'')+'<div class="wb-params">'+[['渠道',s.channelName||s.channelId],['模型',s.model||s.workflowId],['尺寸 / 比例',s.imageRatio&&s.imageRatio!=='auto'?s.imageRatio:s.size||s.aspectRatio],['图片样式',GenerationParams.layout(s.imageLayoutId)?.name],['分辨率',s.resolution],['时长',s.duration?String(s.duration)+' 秒':''],['种子',s.seed],['生成时间',d.createdAt?new Date(d.createdAt).toLocaleString():'']].filter(v=>v[1]!==undefined&&v[1]!==null&&v[1]!=='').map(v=>'<span>'+v[0]+'：'+esc(v[1])+'</span>').join('')+'</div><div class="wb-ref-list">'+refs.map((ref,n)=>'<figure><img alt="图'+(n+1)+'" src="/api/file?path='+enc(ref.path)+'"><figcaption>图'+(n+1)+' '+esc(ref.name||'')+'</figcaption></figure>').join('')+'</div><div class="wb-tools">'+((s.userPrompt??s.prompt)?'<button class="btn" id="wb-copy-prompt">复制提示词</button><button class="btn" id="wb-from-record">用此记录新建</button>':'')+(d.itemId&&!d.deleted?'<button class="btn" id="wb-open-origin">在创作台打开</button>':'')+'</div>';
+      host.innerHTML=(d.missingReferences?.length?'<p class="badge warn">缺失参考素材：'+esc(d.missingReferences.join('、'))+'</p>':'')+'<h3>生成资料</h3><p>'+esc(d.title||'')+'</p><label>用户提示词</label><pre class="wb-prompt">'+esc(s.userPrompt??s.prompt??'未记录生成提示词')+'</pre>'+(s.prompt&&s.userPrompt!==undefined&&s.prompt!==s.userPrompt?'<details><summary>提交提示词（包含风格）</summary><pre class="wb-prompt">'+esc(s.prompt)+'</pre></details>':'')+(s.submittedPrompt?'<details><summary>实际发送文本</summary><pre class="wb-prompt">'+esc(s.submittedPrompt)+'</pre></details>':'')+'<div class="wb-params">'+[['模型',s.model||s.channelName||s.channelId||s.workflowId],['尺寸 / 比例',s.imageRatio&&s.imageRatio!=='auto'?s.imageRatio:s.size||s.aspectRatio],['图片样式',GenerationParams.layout(s.imageLayoutId)?.name],['分辨率',s.resolution],['时长',s.duration?String(s.duration)+' 秒':''],['种子',s.seed],['生成时间',d.createdAt?new Date(d.createdAt).toLocaleString():'']].filter(v=>v[1]!==undefined&&v[1]!==null&&v[1]!=='').map(v=>'<span>'+v[0]+'：'+esc(v[1])+'</span>').join('')+'</div><div class="wb-ref-list">'+refs.map((ref,n)=>'<figure><img alt="图'+(n+1)+'" src="/api/file?path='+enc(ref.path)+'"><figcaption>图'+(n+1)+' '+esc(ref.name||'')+'</figcaption></figure>').join('')+'</div><div class="wb-tools">'+((s.userPrompt??s.prompt)?'<button class="btn" id="wb-copy-prompt">复制提示词</button><button class="btn" id="wb-from-record">用此记录新建</button>':'')+(d.itemId&&!d.deleted?'<button class="btn" id="wb-open-origin">在创作台打开</button>':'')+'</div>';
       const copy=host.querySelector('#wb-copy-prompt');if(copy)copy.onclick=()=>navigator.clipboard.writeText(s.userPrompt??s.prompt).then(()=>toast('已复制提示词')).catch(e=>toast(e.message,true));
       const restore=host.querySelector('#wb-from-record');if(restore)restore.onclick=()=>newItem(d.kind||'image',draftFrom(s,d.kind),'生成记录副本').then(()=>{closeModal();location.hash=d.kind==='video'?'#studio':'#image';}).catch(e=>toast(e.message,true));
       const origin=host.querySelector('#wb-open-origin');if(origin)origin.onclick=async()=>{try{await flushAll();if(d.projectId!==studioProjectId()){await setActiveProject(d.projectId,{silent:true});if(d.projectId!==studioProjectId())throw Error('原项目不存在');}await selectItem(d.kind,d.itemId);closeModal();location.hash=d.kind==='video'?'#studio':'#image';}catch(e){toast(e.message,true);}};
@@ -211,3 +232,4 @@ const WB = (() => {
   }
   return {reconcileImageTask,layout,bind,load,flush,flushAll,schedule,context,complete,mediaDetails,current,snapshot};
 })();
+

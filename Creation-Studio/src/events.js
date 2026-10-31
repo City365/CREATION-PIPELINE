@@ -161,7 +161,7 @@ function create(input = {}) {
       })),
     },
     policy: {
-      concurrency: Math.max(1, Math.min(4, Number(input.policy?.concurrency) || 1)),
+      concurrency: Math.max(1, Math.min(10, Number(input.policy?.concurrency) || 1)),
       onItemFail: input.policy?.onItemFail === 'stop' ? 'stop' : 'continue',
       retries: Math.max(0, Math.min(3, Number(input.policy?.retries) || 0)),
     },
@@ -299,6 +299,7 @@ function itemLog(eventId, itemId) {
 let tickTimer = null;
 let unsubscribeImage=null,jobListener=null;
 const TERMINAL_ITEM = new Set(['success', 'failed', 'canceled', 'skipped', 'unknown']);
+const FAILURE_LABELS = { login: '登录失效', captcha: '验证码', entry: '进入创作页', upload: '参考图上传', platform_refusal: '平台拒绝', quota: '额度不足', network: '网络错误', download: '下载失败', timeout: '生成超时', unknown: '未知原因' };
 
 function rawEvent(id){load();const raw=state.events.find(e=>e.id===id);if(!raw)throw Object.assign(new Error('事件不存在'),{status:404});return raw;}
 
@@ -455,8 +456,8 @@ function reviseItem(id, itemId, patch = {}) {
   if (!item) { const error = new Error('条目不存在'); error.status = 404; throw error; }
   const map = jobMapNow();
   const status = itemStatusOf(item, map);
-  if (!['failed', 'canceled', 'skipped'].includes(status)) {
-    throw Object.assign(new Error('只能修改已失败、已取消或已跳过的分镜；运行中的任务请先取消'), { status: 409 });
+  if (!['failed', 'canceled', 'skipped', 'success'].includes(status)) {
+    throw Object.assign(new Error('已结束的分镜才能改提示词；运行中的任务请先取消'), { status: 409 });
   }
   const input = { ...(item.input || {}) };
   const currentPrefix = String(input.prefixPrompt || '').trim();
@@ -541,7 +542,10 @@ function skipItem(id, itemId) {
   return get(id);
 }
 
-/** 从任务里移除一条已结束的分镜；只删记录，不删成片和素材。 */
+/**
+ * 从任务里移除一条已结束的分镜；只删记录，不删成片和素材。
+ * 移除的条目会留在 event.removedItems 里，可以用 restoreItem 原地放回去。
+ */
 function removeItem(id, itemId) {
   const event = rawEvent(id);
   const item = (event.items || []).find((row) => row.id === itemId);
@@ -550,9 +554,42 @@ function removeItem(id, itemId) {
   if (!['success', 'failed', 'canceled', 'skipped', 'unknown'].includes(status)) {
     throw Object.assign(new Error('只能删除已结束的分镜；运行中或排队中的分镜请先取消'), { status: 409 });
   }
+  const index = event.items.indexOf(item);
   event.items = event.items.filter((row) => row.id !== itemId);
+  event.removedItems = Array.isArray(event.removedItems) ? event.removedItems : [];
+  event.removedItems.push({ item, index, removedAt: Date.now() });
+  if (event.removedItems.length > 50) event.removedItems.splice(0, event.removedItems.length - 50);
   event.legacy = false;
-  audit(event, 'remove-item', `移除分镜 ${item.title || item.id}`);
+  audit(event, 'remove-item', `移除分镜 ${item.title || item.id}（可撤销）`);
+  save();
+  return get(id);
+}
+
+/** 把最近一次移除的分镜放回原来的位置；传 itemId 时恢复指定那条。 */
+function restoreItem(id, itemId) {
+  const event = rawEvent(id);
+  const removed = Array.isArray(event.removedItems) ? event.removedItems : [];
+  if (!removed.length) throw Object.assign(new Error('没有可恢复的分镜'), { status: 404 });
+  let entry = null;
+  if (itemId) {
+    const at = removed.findIndex((row) => row && row.item && row.item.id === itemId);
+    if (at < 0) throw Object.assign(new Error('这条分镜不在可恢复列表里'), { status: 404 });
+    entry = removed.splice(at, 1)[0];
+  } else {
+    entry = removed.pop();
+  }
+  const item = entry.item;
+  event.items = Array.isArray(event.items) ? event.items : [];
+  if (event.items.some((row) => row.id === item.id)) {
+    event.removedItems = removed;
+    save();
+    return get(id);
+  }
+  const at = Math.max(0, Math.min(event.items.length, Number(entry.index) || 0));
+  event.items.splice(at, 0, item);
+  event.removedItems = removed;
+  event.legacy = false;
+  audit(event, 'restore-item', `恢复分镜 ${item.title || item.id}`);
   save();
   return get(id);
 }
@@ -571,7 +608,7 @@ function scheduleEvent(id, input={}) {
   if(input.startAt && !Number.isFinite(Date.parse(input.startAt))) {const err=new Error('执行时间无效');err.status=400;throw err;}
   for(const item of event.items||[]){const status=itemStatusOf(item,jobMapNow());if(['queued','paused'].includes(status)&&item.refId)hold(item,true);}
   event.schedule={...event.schedule,order:Number(input.order)||0,startAt:input.startAt||null};
-  event.policy={...event.policy,concurrency:Math.max(1,Math.min(4,Number(input.concurrency)||1)),onItemFail:input.onItemFail==='stop'?'stop':'continue'};
+  event.policy={...event.policy,concurrency:Math.max(1,Math.min(10,Number(input.concurrency)||1)),onItemFail:input.onItemFail==='stop'?'stop':'continue'};
   event.pendingSchedule=false;event.draft=false;event.paused=false;event.finishedAt=null;
   const future=!!event.schedule.startAt&&Date.parse(event.schedule.startAt)>Date.now();
   if(future){
@@ -594,16 +631,64 @@ function updateDraft(id,inputs,meta={}){const event=rawEvent(id);inputs=prepareI
 function queueEvent(id) {const event=rawEvent(id);event.draft=false;event.pendingSchedule=false;event.paused=false;const future=event.schedule?.startAt&&Date.parse(event.schedule.startAt)>Date.now();if(future){event.status='scheduled';audit(event,'queue','按计划时间等待执行');save();return get(id);}event.status='queued';audit(event,'queue','加入队列');save();materialize(event);save();setTimeout(safeTick,50);return get(id);}
 /** 保存任务但先不调度：出现在调度页的「未分配」里。 */
 function prepareEvent(id) {const event=rawEvent(id);const status=get(id).status;if(['running','completed','failed','partial','canceled','interrupted'].includes(status))throw Object.assign(new Error('任务已开始或已结束，不能重新调度'),{status:409});event.draft=false;event.pendingSchedule=true;event.status='unscheduled';event.paused=false;event.canceled=false;event.finishedAt=null;audit(event,'prepare','保存任务，等待调度');save();return get(id);}
-/** 删除尚未开始或已取消的任务；执行中的任务必须先取消。 */
+/** 删除尚未开始或已取消的任务；执行中的任务必须先取消。删掉的任务进回收站，可恢复。 */
+function trashFile() {
+  return path.join(config.DATA, 'events-trash.json');
+}
+
+function readTrash() {
+  const { readJson } = require('./util');
+  const raw = readJson(trashFile(), null);
+  const rows = raw && Array.isArray(raw.items) ? raw.items : [];
+  return rows.filter((row) => row && row.event && row.event.id);
+}
+
+function writeTrash(rows) {
+  const { writeJson } = require('./util');
+  writeJson(trashFile(), { version: 1, items: rows.slice(0, 100) });
+}
+
 function removeEvent(id){
-  const event=rawEvent(id);
+  const event = rawEvent(id);
   const status=get(id).status;
   if(!['draft','unscheduled','canceled','completed','failed','partial','interrupted'].includes(status))throw Object.assign(new Error('运行中或排队中的任务不能删除，请先取消'),{status:409});
+  const removed = readTrash().filter((row) => row.event.id !== id);
+  removed.unshift({ event, removedAt: Date.now(), items: (event.items || []).length });
+  writeTrash(removed);
   load();
   state.events=state.events.filter((item)=>item.id!==id);
   save();
   repository.remove(id);
-  return {ok:true,id,title:event.title||''};
+  return {ok:true,id,title:event.title||'',trash:removed.length};
+}
+
+/** 回收站列表（不带完整 payload，避免列表太重）。 */
+function listTrash() {
+  return readTrash().map((row) => ({
+    id: row.event.id,
+    title: row.event.title || '',
+    kind: row.event.kind || 'video',
+    status: row.event.status || '',
+    projectId: (row.event.spec && row.event.spec.projectId) || '',
+    items: Number(row.items) || (row.event.items || []).length,
+    removedAt: Number(row.removedAt) || 0,
+  }));
+}
+
+/** 从回收站恢复任务（按 id，或最近一条）。 */
+function restoreEvent(id) {
+  const rows = readTrash();
+  if (!rows.length) throw Object.assign(new Error('回收站是空的'), { status: 404 });
+  const at = id ? rows.findIndex((row) => row.event.id === id) : 0;
+  if (at < 0) throw Object.assign(new Error('回收站里没有这个任务'), { status: 404 });
+  const [entry] = rows.splice(at, 1);
+  const event = entry.event;
+  load();
+  state.events = state.events.filter((row) => row.id !== event.id);
+  state.events.push(event);
+  save();
+  writeTrash(rows);
+  return get(event.id);
 }
 
 function percentile(values, ratio) {
@@ -619,18 +704,26 @@ function report(id, context = {}) {
   const jobMap = context.jobMap instanceof Map ? context.jobMap : new Map(jobs.list().map((j) => [j.id, j]));
   const rows = (event.items || []).map((item) => {
     const job = item.refType === 'job' ? jobMap.get(item.refId) : null;
+    let worker = null;
+    if (!job && item.refType === 'imageTask') { try { worker = imageTasks()?.get(item.refId) || null; } catch { worker = null; } }
     const startedAt = (job && job.startedAt) || item.startedAt || null;
     const finishedAt = (job && job.finishedAt) || item.finishedAt || null;
+    const analysis = (job && job.failureAnalysis) || (worker && worker.failureAnalysis) || null;
+    const error = String((job && job.error) || (worker && worker.error) || item.error || '').slice(0, 300);
+    const fallbackReason = error.split('\n').map((line) => line.trim()).find(Boolean) || '未知错误';
     return {
       itemId: item.id,
       title: item.title || item.refId,
       refType: item.refType,
       refId: item.refId,
-      status: item.override || (job ? itemStatus(job.status) : item.status),
-      provider: (job && job.provider) || '',
+      status: item.override || (job ? itemStatus(job.status) : (worker ? itemStatus(worker.status) : item.status)),
+      provider: (job && job.provider) || (worker && worker.provider) || '',
       platform: (job && job.platform) || '',
       channelId: (job && job.channelId) || '',
-      error: String((job && job.error) || item.error || '').slice(0, 300),
+      category: (analysis && analysis.category) || 'unknown',
+      reason: String((analysis && analysis.reason) || fallbackReason).slice(0, 120),
+      advice: String((analysis && analysis.advice) || '').slice(0, 100),
+      error,
       attempts: Number(item.attempts) || 0,
       startedAt,
       finishedAt,
@@ -647,12 +740,18 @@ function report(id, context = {}) {
   const denominator = success + failed;
   const durations = rows.map((row) => row.durationMs).filter((value) => Number.isFinite(value)).sort((a, b) => a - b);
   const failures = new Map();
+  const reasons = new Map();
   for (const row of rows) {
     if (row.status !== 'failed') continue;
     const key = [row.provider || 'unknown', row.channelId || '-', row.error.split('\n')[0].slice(0, 80) || '未知错误'].join(' | ');
     const bucket = failures.get(key) || { provider: row.provider, channelId: row.channelId, error: row.error, count: 0 };
     bucket.count += 1;
     failures.set(key, bucket);
+    const reasonKey = row.category + ' | ' + row.reason;
+    const reason = reasons.get(reasonKey) || { category: row.category, label: FAILURE_LABELS[row.category] || row.category, reason: row.reason, advice: row.advice, count: 0 };
+    reason.count += 1;
+    if (!reason.advice && row.advice) reason.advice = row.advice;
+    reasons.set(reasonKey, reason);
   }
   return {
     eventId: event.id,
@@ -676,16 +775,17 @@ function report(id, context = {}) {
       max: durations.length ? durations[durations.length - 1] : null,
     },
     failures: [...failures.values()].sort((a, b) => b.count - a.count),
+    reasons: [...reasons.values()].sort((a, b) => b.count - a.count),
     items: rows,
   };
 }
 
 function reportCsv(id, context = {}) {
   const data = report(id, context);
-  const header = ['itemId', 'title', 'status', 'provider', 'channelId', 'durationMs', 'error'];
+  const header = ['itemId', 'title', 'status', 'provider', 'channelId', 'failureCategory', 'failureReason', 'failureAdvice', 'durationMs', 'error'];
   const lines = [header.join(',')];
   for (const row of data.items) {
-    lines.push([row.itemId, row.title, row.status, row.provider, row.channelId, row.durationMs == null ? '' : row.durationMs, row.error]
+    lines.push([row.itemId, row.title, row.status, row.provider, row.channelId, row.category, row.reason, row.advice, row.durationMs == null ? '' : row.durationMs, row.error]
       .map((value) => '"' + String(value == null ? '' : value).replace(/"/g, '""') + '"').join(','));
   }
   return { filename: data.eventId + '-report.csv', body: lines.join('\n') };
@@ -747,4 +847,4 @@ function adoptLegacy(projectId) {
   return changed;
 }
 
-module.exports = { repository, materialize, importHistory, lookupRef, capture, scheduleEvent, queueEvent, prepareEvent, removeEvent, updateDraft, resumeOriginal, moveItem, adoptLegacy, load, save, list, get, create, createFromJobInputs, recordJobs, recordSingleJob, recordSingleImage, itemLog, hydrate, tick, start, stop, pauseEvent, resumeEvent, cancelEvent, reviseItem, removeItem, retryItem, skipItem, retryFailed, report, reportCsv, reportRange, state };
+module.exports = { repository, materialize, importHistory, lookupRef, capture, scheduleEvent, queueEvent, prepareEvent, removeEvent, restoreEvent, listTrash, updateDraft, resumeOriginal, moveItem, adoptLegacy, load, save, list, get, create, createFromJobInputs, recordJobs, recordSingleJob, recordSingleImage, itemLog, hydrate, tick, start, stop, pauseEvent, resumeEvent, cancelEvent, reviseItem, removeItem, restoreItem, retryItem, skipItem, retryFailed, report, reportCsv, reportRange, state };

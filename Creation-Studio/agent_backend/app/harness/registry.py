@@ -1,7 +1,8 @@
 """Approved capabilities and immutable Skill instructions. CRUD is not execution authority."""
 import hashlib,json
 from .runtime import RunStopped
-CAPABILITIES={name:('workspace_write' if name=='create_workspace_artifact' else 'read_or_plan') for name in ('create_task_plan','read_analysis_guidance','record_step_result','search_workspace_documents','read_workspace_document','create_workspace_artifact','read_dataset_schema','read_strategy_rules')}
+from app.skill_library import LIMIT as SKILL_LIMIT
+CAPABILITIES={name:('workspace_write' if name=='create_workspace_artifact' else 'read_or_plan') for name in ('create_task_plan','read_analysis_guidance','record_step_result','search_workspace_documents','read_workspace_document','create_workspace_artifact')}
 CAPABILITIES.update({
     'list_creation_models': 'read_or_plan',
     'generate_image': 'media_write',
@@ -13,13 +14,33 @@ CAPABILITIES.update({
     'describe_image': 'read_or_plan',
 })
 
+# 本地文件与命令类能力：只读档只能读，写档和命令档由 permissions.py 按用户选择的档位二次裁决。
+CAPABILITIES.update({
+    'read_permission': 'read_or_plan',
+    'list_dir': 'read_or_plan',
+    'read_file': 'read_or_plan',
+    'write_file': 'fs_write',
+    'make_dir': 'fs_write',
+    'move_file': 'fs_write',
+    'copy_file': 'fs_write',
+    'delete_file': 'fs_write',
+    'run_command': 'shell',
+    # 把磁盘上已有的文件登记为交付文件（脚本产物的出卡片通道）
+    'publish_artifact': 'workspace_write',
+})
+
 # Match the underlying HTTP operations, including video polling's caller budget.
 TOOL_TIMEOUTS = {'generate_image': 310, 'submit_video_job': 70, 'probe_video': 70,
-                 'extract_frames': 250, 'describe_image': 190}
+                 'extract_frames': 250, 'describe_image': 190,
+                 'read_permission': 20, 'list_dir': 60, 'read_file': 60, 'write_file': 120,
+                 'make_dir': 30, 'move_file': 300, 'copy_file': 300, 'delete_file': 120,
+                 'publish_artifact': 120}
 
 def tool_timeout(name, args, default):
     if name == 'wait_video_job':
         return max(30, min(1800, int(args.get('timeout_seconds') or 600))) + 70
+    if name == 'run_command':
+        return max(5, min(600, int(args.get('timeout_seconds') or 60))) + 30
     return TOOL_TIMEOUTS.get(name, default)
 def skill_version(item):
     return hashlib.sha256(json.dumps({'id':item['id'],'name':item['name'],'instructions':str(item.get('config',{}).get('instructions',''))},sort_keys=True,ensure_ascii=False).encode()).hexdigest()
@@ -29,7 +50,7 @@ def freeze(ctx):
     for item in plugins(ctx.project,'skill'):
         text=str(item.get('config',{}).get('instructions',''))
         if item['enabled'] and text.strip():
-            if len(text)>16000:continue
+            if len(text)>SKILL_LIMIT:continue
             snapshots.append({'id':item['id'],'name':item['name'],'version':skill_version(item),'instructions':text})
     previous=(getattr(ctx,'resume_checkpoint',None) or {}).get('skill_manifest',[])
     current={s['id']:s for s in snapshots}
@@ -58,7 +79,7 @@ def describe_plugin(item):
     result=dict(item)
     if item['kind']=='skill':
         text=str(item.get('config',{}).get('instructions',''))
-        available=item.get('enabled') and bool(text.strip()) and len(text)<=16000
+        available=item.get('enabled') and bool(text.strip()) and len(text)<=SKILL_LIMIT
         result.update(runtime_status='available' if available else 'configured',version=skill_version(item),runtime_reason='以冻结版本读取指导内容，不授予工具权限' if available else '未启用或指导内容为空/过长')
     else:result.update(runtime_status='configured',runtime_reason='未注册经批准的执行适配器，配置不会作为代码或远程连接运行')
     return result

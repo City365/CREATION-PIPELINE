@@ -4,8 +4,8 @@ const path=require('node:path');
 const {ProxyAgent}=require('undici');
 const {readJSON,saveJSON}=require('./store');
 class Settings {
- constructor(directory){this.directory=path.resolve(directory);this.file=path.join(this.directory,'settings.json');this.value={proxy:{enabled:false,server:'',username:'',password:'',bypass:'localhost,127.0.0.1'},downloadDirectory:'',...readJSON(this.file,{})};this.agent=null;}
- public(){const {password,...proxy}=this.value.proxy;return {proxy:{...proxy,passwordConfigured:Boolean(password)},downloadDirectory:this.value.downloadDirectory||'',downloadsPath:this.downloadsDirectory()};}
+ constructor(directory){this.directory=path.resolve(directory);this.file=path.join(this.directory,'settings.json');const stored=readJSON(this.file,{});this.value={proxy:{enabled:false,server:'',username:'',password:'',bypass:'localhost,127.0.0.1'},downloadDirectory:'',...stored,interpreter:{enabled:false,protocol:'openai',baseUrl:'',apiKey:'',model:'',timeoutMs:8000,...(stored.interpreter||{})},warmup:{enabled:true,rounds:2,timeoutMs:45000,...(stored.warmup||{})},scheduler:{mode:'web',clientExe:'',pollMs:8000,...(stored.scheduler||{})}};this.agent=null;}
+ public(){const {password,...proxy}=this.value.proxy;const {apiKey,...interpreter}=this.value.interpreter||{};const warmup=this.value.warmup||{};const scheduler=this.value.scheduler||{};return {proxy:{...proxy,passwordConfigured:Boolean(password)},downloadDirectory:this.value.downloadDirectory||'',downloadsPath:this.downloadsDirectory(),interpreter:{...interpreter,apiKeyConfigured:Boolean(apiKey)},warmup:{enabled:Boolean(warmup.enabled),rounds:Number(warmup.rounds)||2,timeoutMs:Number(warmup.timeoutMs)||45000},scheduler:{mode:scheduler.mode==='client'?'client':'web',clientExe:String(scheduler.clientExe||''),pollMs:Number(scheduler.pollMs)||8000}};}
  // 未配置时用数据目录下的 downloads；配置后返回解析过的绝对路径。
  downloadsDirectory(){const raw=String(this.value.downloadDirectory||'').trim();return raw?path.resolve(raw):path.join(this.directory,'downloads');}
  proxyChanged(next){const before=this.value.proxy,after=next?.proxy||{};return ['enabled','server','username','password','bypass'].some(k=>String(before[k]??'')!==String(after[k]??''));}
@@ -32,7 +32,37 @@ class Settings {
     }
     downloadDirectory=value;
   }
-  return {proxy:p,downloadDirectory};
+  const oldInterpreter=this.value.interpreter||{};
+  const source=input.interpreter||{};
+  const i={...oldInterpreter,...source};
+  i.enabled=Boolean(i.enabled);
+  i.protocol=i.protocol==='anthropic'?'anthropic':'openai';
+  i.baseUrl=String(i.baseUrl||'').trim().replace(/\/+$/,'');
+  i.model=String(i.model||'').trim();
+  i.timeoutMs=Math.max(1000,Math.min(30000,Number(i.timeoutMs)||8000));
+  if(source.clearApiKey)i.apiKey='';
+  else if(source.apiKey===undefined||source.apiKey==='')i.apiKey=oldInterpreter.apiKey||'';
+  else i.apiKey=String(source.apiKey).trim();
+  delete i.clearApiKey;
+  if(i.baseUrl){
+    let u;try{u=new URL(i.baseUrl);}catch{throw new Error('AI 回复理解的 Base URL 格式无效');}
+    if(!['http:','https:'].includes(u.protocol))throw new Error('AI 回复理解只支持 HTTP/HTTPS 地址');
+  }
+  if(i.enabled&&(!i.baseUrl||!i.model||!i.apiKey))throw new Error('启用 AI 回复理解前请填写 Base URL、模型和 API Key');
+  const oldWarmup=this.value.warmup||{};
+  const sourceWarmup=input.warmup||{};
+  const w={...oldWarmup,...sourceWarmup};
+  w.enabled=sourceWarmup.enabled===undefined?oldWarmup.enabled!==false:Boolean(sourceWarmup.enabled);
+  w.rounds=Math.max(1,Math.min(3,Math.round(Number(w.rounds)||2)));
+  w.timeoutMs=Math.max(5000,Math.min(120000,Number(w.timeoutMs)||45000));
+  const oldScheduler=this.value.scheduler||{};
+  const sourceScheduler=input.scheduler||{};
+  const sc={...oldScheduler,...sourceScheduler};
+  sc.mode=sourceScheduler.mode==='client'?'client':'web';
+  sc.clientExe=String(sc.clientExe||'').trim();
+  if(sc.clientExe&&!path.isAbsolute(sc.clientExe))throw new Error('客户端程序路径必须是绝对路径');
+  sc.pollMs=Math.max(3000,Math.min(120000,Number(sc.pollMs)||8000));
+  return {proxy:p,downloadDirectory,interpreter:i,warmup:w,scheduler:sc};
  }
  async save(value){const old=this.agent;saveJSON(this.file,value);this.value=value;this.agent=null;await old?.close();return this.public();}
  browserProxy(){const p=this.value.proxy;return p.enabled?{server:p.server,bypass:p.bypass,username:p.username||undefined,password:p.password||undefined}:undefined;}

@@ -1,0 +1,13 @@
+import { Device } from './src/device.mjs';
+const d = new Device({ log: (m) => console.log('[dev] ' + m) });
+const accts = await d.listAccounts();
+console.log('ACCOUNTS', JSON.stringify(accts));
+const t0 = Date.now();
+const res = await d.switchAccount('用户490936');
+console.log('SWITCH ->', JSON.stringify(res), 'took', Date.now() - t0, 'ms');
+const after = await d.listAccounts();
+console.log('AFTER', JSON.stringify(after));
+const menus = await d.menus();
+console.log('LEFT nav:', menus.left.nav.map((n) => n.label).join(' / '));
+console.log('BOTTOM model/mode:', menus.bottom.model, '/', menus.bottom.mode, 'skills:', menus.bottom.skills.length);
+d.client && d.client.close();

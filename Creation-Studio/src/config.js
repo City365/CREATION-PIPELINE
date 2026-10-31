@@ -5,24 +5,26 @@ const os = require('node:os');
 const { ensureDir, readJson, writeJson, uid } = require('./util');
 
 const ROOT = path.resolve(__dirname, '..');
-const DATA = process.env.H3_DATA_DIR ? path.resolve(process.env.H3_DATA_DIR) : path.join(ROOT, 'data');
+const DATA = process.env.WMD_DATA_DIR ? path.resolve(process.env.WMD_DATA_DIR) : path.join(ROOT, 'data');
 const CONFIG_FILE = path.join(DATA, 'config.json');
 
 function defaultProjectRoot() {
-  if (process.env.H3_PROJECT_ROOT) return path.resolve(process.env.H3_PROJECT_ROOT);
-  if (process.env.H3_DATA_DIR) return path.join(DATA, 'projects');
+  if (process.env.WMD_PROJECT_ROOT) return path.resolve(process.env.WMD_PROJECT_ROOT);
+  if (process.env.WMD_DATA_DIR) return path.join(DATA, 'projects');
   // 默认放在工程仓库旁边（同一个盘、空间充足），而不是仓库内部。
-  return path.join(path.dirname(path.dirname(ROOT)), 'H3-Projects');
+  return path.join(path.dirname(path.dirname(ROOT)), 'WENYUN.M-DESKTOP-Projects');
 }
 
 const DEFAULTS = {
-  port: Number(process.env.H3_PORT || 17821),
+  port: Number(process.env.WMD_PORT || 17821),
   concurrency: 3,
   projectRoot: defaultProjectRoot(),
   saveFolder: path.join(DATA, 'media'),
   assetFolder: path.join(DATA, 'assets'),
   uploadFolder: path.join(DATA, 'uploads'),
   voiceLibraryFolder: '',
+  // 剪映草稿根目录；留空则从剪映自己的草稿索引里读
+  jianyingDraftRoot: '',
   autodlKeys: [],
   llm: {
     enabled: false,
@@ -42,33 +44,6 @@ const DEFAULTS = {
 };
 
 let cache = null;
-
-function legacyConfigDir() {
-  const appdata = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
-  return path.join(appdata, 'com.zealman.h3desktop');
-}
-
-function importLegacy() {
-  // 隔离测试/自定义数据目录：不读取本机旧版应用的配置，避免测试把真实目录当作数据目录。
-  if (process.env.H3_DATA_DIR) return null;
-  const dir = legacyConfigDir();
-  const legacy = readJson(path.join(dir, 'config.json'), null);
-  if (!legacy) return null;
-  const settings = readJson(path.join(dir, 'zealman-ai-settings.json'), {}) || {};
-  const keys = [];
-  const seen = new Set();
-  for (const item of legacy.autodlKeys || []) {
-    const token = String(item && (item.token || item.key) || '').trim();
-    if (!token || seen.has(token)) continue;
-    seen.add(token);
-    keys.push({ id: item.id || uid('key-'), name: item.name || `Key ${keys.length + 1}`, token, enabled: item.enabled !== false });
-  }
-  const single = String(legacy.autodlToken || settings.autodlApiKey || '').trim();
-  if (single && !seen.has(single)) {
-    keys.push({ id: uid('key-'), name: 'Key 1', token: single, enabled: true });
-  }
-  return { keys, saveFolder: legacy.saveFolder, assetFolder: legacy.assetFolder, llmKey: String(settings.autodlApiKey || legacy.autodlToken || '').trim() };
-}
 
 function seedChannels(cfg) {
   if (cfg.channels && Array.isArray(cfg.channels.llm)) return;
@@ -99,15 +74,6 @@ function load() {
   let cfg = readJson(CONFIG_FILE, null);
   if (!cfg) {
     cfg = structuredClone(DEFAULTS);
-    const legacy = importLegacy();
-    if (legacy) {
-      cfg.autodlKeys = legacy.keys;
-      if (legacy.llmKey) {
-        cfg.llm = { ...cfg.llm, enabled: true, apiKey: legacy.llmKey };
-      }
-      if (legacy.saveFolder && fs.existsSync(legacy.saveFolder)) cfg.saveFolder = legacy.saveFolder;
-      if (legacy.assetFolder && fs.existsSync(legacy.assetFolder)) cfg.assetFolder = legacy.assetFolder;
-    }
     seedChannels(cfg);
     writeJson(CONFIG_FILE, cfg);
   } else if (!(cfg.channels && typeof cfg.channels === 'object')) {
@@ -124,7 +90,7 @@ function normalize(input) {
   delete cfg.cloudHosts;
   cfg.dataDir = DATA;
   cfg.port = Number(cfg.port) || DEFAULTS.port;
-  cfg.concurrency = Math.max(1, Math.min(8, Number(cfg.concurrency) || 3));
+  cfg.concurrency = Math.max(1, Math.min(10, Number(cfg.concurrency) || 3));
   cfg.projectRoot = String(cfg.projectRoot || DEFAULTS.projectRoot).trim() || DEFAULTS.projectRoot;
   cfg.saveFolder = String(cfg.saveFolder || DEFAULTS.saveFolder);
   cfg.assetFolder = String(cfg.assetFolder || DEFAULTS.assetFolder);
@@ -281,7 +247,6 @@ module.exports = {
   publicView,
   llmConfig,
   keyById,
-  importLegacy,
 };
 
 

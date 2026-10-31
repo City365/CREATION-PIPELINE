@@ -22,11 +22,11 @@ async function waitFor(fn, timeoutMs = 20000) {
 }
 
 test('渠道模型列表 + 最大输出/上下文限制', { timeout: 60000 }, async () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'h3-models-'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wmd-models-'));
   const mock = await startMockCloud();
   const child = spawn(process.execPath, [path.join(ROOT, 'src', 'server.js')], {
     cwd: ROOT,
-    env: { ...process.env, APPDATA: path.join(tmp, 'appdata'), H3_PORT: String(PORT), H3_DATA_DIR: path.join(tmp, 'data') },
+    env: { ...process.env, APPDATA: path.join(tmp, 'appdata'), WMD_PORT: String(PORT), WMD_DATA_DIR: path.join(tmp, 'data') },
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   });

@@ -21,7 +21,7 @@ fake.retry = (id) => { const job = fake.jobs.find((j) => j.id === id); if (job) 
 fake.readLog = () => [];
 require.cache[jobsPath] = { id: jobsPath, filename: jobsPath, loaded: true, exports: fake };
 
-process.env.H3_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'h3-events-sched-'));
+process.env.WMD_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'wmd-events-sched-'));
 const events = require('../src/events');
 
 function input(n) {
@@ -97,6 +97,27 @@ test('重试失败条目会重新排队并保持调度', async () => {
   assert.equal(fake.jobs[0].status, 'queued');
   await delay(80);
   assert.equal(unheld().length, 1);
+});
+
+test('调度并发上限为 10', () => {
+  fake.jobs.length = 0;
+  const event = events.createFromJobInputs(input(2), { title: 'conc-10', source: 'batch', policy: { concurrency: 20 } });
+  assert.equal(events.get(event.id).policy.concurrency, 10, '创建时并发上限为 10');
+  const scheduled = events.scheduleEvent(event.id, { concurrency: 12 });
+  assert.equal(scheduled.policy.concurrency, 10, '调度时并发上限为 10');
+});
+
+test('重试失败项只重排失败分镜，成功分镜保持原样', async () => {
+  fake.jobs.length = 0;
+  const event = events.createFromJobInputs(input(2), { title: 'retry-mixed', source: 'batch' });
+  await delay(120);
+  fake.jobs[0].status = 'success';
+  fake.jobs[1].status = 'failed';
+  events.tick();
+  const result = events.retryFailed(event.id);
+  assert.equal(result.retried, 1, '只重试一条失败分镜');
+  assert.equal(fake.jobs[0].status, 'success', '成功的分镜不能被重发');
+  assert.equal(fake.jobs[1].status, 'queued', '失败的分镜重新排队');
 });
 
 test('20条视频按事件次序完整处理',()=>{fake.jobs.length=0;const event=events.createFromJobInputs(input(20),{title:'twenty',source:'batch'});for(let n=0;n<20;n++){events.tick();const next=fake.jobs.find(j=>j.status==='queued'&&!j.held);assert.ok(next,'每次只放行一个条目');next.status='running';events.tick();next.status='success';}events.tick();const result=events.get(event.id);assert.equal(result.status,'completed');assert.equal(result.stats.done,20);});

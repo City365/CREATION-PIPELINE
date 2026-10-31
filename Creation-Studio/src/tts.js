@@ -102,7 +102,7 @@ async function speak({ text, voice, rate = 0 } = {}) {
   const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
   const safe = content.replace(/[\r\n]+/g, ' ').slice(0, 18).replace(/[\\/:*?"<>|\s]+/g, '_') || 'line';
   const file = path.join(dir, `tts-${stamp}-${safe}.wav`);
-  const textFile = path.join(os.tmpdir(), `h3-tts-${Date.now()}.txt`);
+  const textFile = path.join(os.tmpdir(), `wmd-tts-${Date.now()}.txt`);
   fs.writeFileSync(textFile, content, 'utf8');
 
   const script = `

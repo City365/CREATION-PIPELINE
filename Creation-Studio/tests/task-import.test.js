@@ -9,7 +9,7 @@ const taskImport = require('../src/task-import');
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
 const tempDirs = [];
 function tempImage(name) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'h3-import-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wmd-import-'));
   tempDirs.push(dir);
   const file = path.join(dir, name);
   fs.writeFileSync(file, PNG);

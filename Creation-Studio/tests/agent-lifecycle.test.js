@@ -18,11 +18,11 @@ test('error event preserves stream until terminal receipt',()=>{
 });
 test('stop failure keeps generation active and reports failure',async()=>{
  const state={generating:true,request:{sessionId:'s',requestId:'r'},controller:{abort(){throw Error('must not abort');}}};
- const notices=[];const c=load('askStop','async function askChooseCommand',{askState:()=>state,ASK_PROJECT:'h3-studio',AbortSignal,fetch:async()=>({ok:false}),toast:(...v)=>notices.push(v)});
+ const notices=[];const c=load('askStop','async function askChooseCommand',{askState:()=>state,ASK_PROJECT:'wenyun-m-desktop',AbortSignal,fetch:async()=>({ok:false}),toast:(...v)=>notices.push(v)});
  await c.askStop();assert.equal(state.generating,true);assert.equal(state.request.stopping,false);assert.equal(notices[0][1],true);
 });
 test('stop accepted waits for backend terminal receipt',async()=>{
  const state={generating:true,request:{sessionId:'s',requestId:'r'}};
- const c=load('askStop','async function askChooseCommand',{askState:()=>state,ASK_PROJECT:'h3-studio',AbortSignal,fetch:async()=>({ok:true}),toast:()=>{}});
+ const c=load('askStop','async function askChooseCommand',{askState:()=>state,ASK_PROJECT:'wenyun-m-desktop',AbortSignal,fetch:async()=>({ok:true}),toast:()=>{}});
  await c.askStop();assert.equal(state.generating,true);assert.ok(state.request);
 });

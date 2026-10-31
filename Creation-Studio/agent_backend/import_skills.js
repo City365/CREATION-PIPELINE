@@ -1,25 +1,27 @@
 'use strict';
 /**
- * 把 A9 技能目录（SKILL.md + references）导入 H3 智能体后端，作为 kind=skill 的插件。
+ * 把技能目录（SKILL.md + references）导入智能体后端，作为 kind=skill 的插件。
  *
- *   node agent_backend/import_skills.js [技能目录] [--dry]
+ *   node agent_backend/import_skills.js <技能目录> [--dry]
  *
- * 默认导入 01_小说拆集、02_分集转剧本、04_剧本转分镜；同名技能会原地更新。
- * 目标后端：H3_AGENT_URL（默认 http://127.0.0.1:17820），项目：H3_PROJECT（默认 h3-studio）。
+ * 技能目录必须显式传入（不再默认指向某个人的桌面目录）；同名技能会原地更新。
+ * 目标后端：WMD_AGENT_URL（默认 http://127.0.0.1:17820），项目：WMD_PROJECT（默认 wmd-local）。
  */
 const fs = require('node:fs');
 const path = require('node:path');
 
-const SKILLS_ROOT = process.argv[2] && !process.argv[2].startsWith('--')
-  ? process.argv[2]
-  : 'C:/Users/Mr.luo/Desktop/相关提示词/A9版本全流程/skills';
+const SKILLS_ROOT = process.argv[2] && !process.argv[2].startsWith('--') ? process.argv[2] : '';
 const DRY = process.argv.includes('--dry');
-const AGENT = (process.env.H3_AGENT_URL || 'http://127.0.0.1:17820').replace(/\/+$/, '');
-const PROJECT = process.env.H3_PROJECT || 'h3-studio';
+if (!SKILLS_ROOT) {
+  console.error('用法：node agent_backend/import_skills.js <技能目录> [--dry]');
+  process.exit(2);
+}
+const AGENT = (process.env.WMD_AGENT_URL || 'http://127.0.0.1:17820').replace(/\/+$/, '');
+const PROJECT = process.env.WMD_PROJECT || 'wmd-local';
 
 const ADAPTER = [
   '【本机适配】',
-  '你运行在 H3 Studio 创作台的对话里：没有项目文件夹、没有 split.mjs / check.mjs 等脚本，也没有外部命令权限。',
+  '你运行在 WENYUN.M-DESKTOP 创作台的对话里：没有项目文件夹、没有 split.mjs / check.mjs 等脚本，也没有外部命令权限。',
   '请直接输出文本结果（需要文件时用交付文件工具生成），SKILL.md 里的校验清单当作自检项逐条核对，不要声称执行了脚本。',
   '上游内容由用户粘贴或作为附件提供；下游产物直接输出在对话里，供下一步继续。',
 ].join('\n');

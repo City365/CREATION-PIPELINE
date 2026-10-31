@@ -10,7 +10,15 @@ class RunStopped(RuntimeError):
     def __init__(self,reason):super().__init__(reason);self.reason=reason
 
 def enabled(project):
-    return os.getenv('HARNESS_RUNTIME_ENABLED','true').lower() in ('1','true') and project in os.getenv('HARNESS_PROJECT_ALLOWLIST','h3-studio').split(',')
+    """Harness 引擎是显式开启的：默认不启用，只有 allowlist 里点名的项目才走它。
+
+    之前的默认值 `wenyun-m-desktop` 是别的产品的项目名，本产品的项目 id 永远匹配不上，
+    等于这段更好的实现从未被执行（见 docs/agent-backend-review.md）。
+    """
+    if os.getenv('HARNESS_RUNTIME_ENABLED', 'true').lower() not in ('1', 'true'):
+        return False
+    allowed = [item.strip() for item in os.getenv('HARNESS_PROJECT_ALLOWLIST', '').split(',') if item.strip()]
+    return project in allowed
 
 def encode(event):return 'data: '+json.dumps(event,ensure_ascii=False)+'\n\n'
 

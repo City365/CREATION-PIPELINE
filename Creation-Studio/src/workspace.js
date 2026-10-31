@@ -9,7 +9,7 @@ const path = require('node:path');
 const config = require('./config');
 const { ensureDir, safeSegment } = require('./util');
 
-const SUBDIRS = ['assets', 'media', 'uploads', 'exports'];
+const SUBDIRS = ['assets', 'media', 'uploads', 'exports', '智能体工作区'];
 
 function root() {
   return ensureDir(path.resolve(config.load().projectRoot));

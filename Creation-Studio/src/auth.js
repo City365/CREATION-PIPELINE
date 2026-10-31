@@ -119,8 +119,8 @@ function setActiveProject(userId, projectId) {
 
 function tokenFromRequest(req) {
   const cookie = String(req.headers.cookie || '');
-  const hit = cookie.split(';').map((s) => s.trim()).find((s) => s.startsWith('h3_session='));
-  if (hit) return decodeURIComponent(hit.slice('h3_session='.length));
+  const hit = cookie.split(';').map((s) => s.trim()).find((s) => s.startsWith('wmd_session='));
+  if (hit) return decodeURIComponent(hit.slice('wmd_session='.length));
   const auth = String(req.headers.authorization || '');
   const m = /^Bearer\s+(.+)$/i.exec(auth);
   return m ? m[1] : '';

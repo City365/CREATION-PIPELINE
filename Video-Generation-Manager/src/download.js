@@ -23,16 +23,19 @@ async function validateMP4(file, ffprobe) {
   } finally { await handle.close(); }
   return probeFile(file, ffprobe);
 }
-async function downloadVideo({ url, page, destination, signal, ffprobe, allowLocal = false, getDispatcher }) {
+async function downloadVideo({ url, page, destination, signal, ffprobe, allowLocal = false, getDispatcher, headers: presetHeaders = null }) {
   const temp = destination + '.part'; let current = new URL(url); let response;
   fs.mkdirSync(path.dirname(destination), { recursive: true });
   try {
     for (let i=0;i<6;i++) {
       signal?.throwIfAborted();
       if (current.protocol !== 'https:' && !(allowLocal && current.protocol === 'http:' && current.hostname === '127.0.0.1')) throw new Error('视频下载地址必须使用HTTPS');
-      const cookies = await page.context().cookies(current.href);
-      const headers = { Referer: page.url(), 'User-Agent': await page.evaluate(() => navigator.userAgent) };
-      if (cookies.length) headers.Cookie = cookies.map(c => c.name+'='+c.value).join('; ');
+      // 页面已经被回收时用调用方缓存的 Cookie/Referer，不再为了几个请求把浏览器留着。
+      const headers = presetHeaders ? { ...presetHeaders } : { Referer: page.url(), 'User-Agent': await page.evaluate(() => navigator.userAgent) };
+      if (!presetHeaders) {
+        const cookies = await page.context().cookies(current.href);
+        if (cookies.length) headers.Cookie = cookies.map(c => c.name+'='+c.value).join('; ');
+      }
       response = await fetch(current, { headers, dispatcher:getDispatcher?.(current.href), redirect:'manual', signal: AbortSignal.any([signal || new AbortController().signal, AbortSignal.timeout(300000)]) });
       if ([301,302,303,307,308].includes(response.status)) {
         const location=response.headers.get('location');await response.body?.cancel();

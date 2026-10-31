@@ -40,7 +40,7 @@ def test_role_trajectory_and_process_are_separate(client,monkeypatch):
  assert any(e['type']=='process' for e in events)
  receipt=events[-1]['execution']
  assert receipt['plan']['steps'][0]['output']=='需要统一首尾状态；还缺实际成片。'
- assert receipt['tool_count']==3 and receipt['business_tool_count']==0
+ assert receipt['tool_count']==3 and receipt['workspace_tool_count']==0
  sessions=client.get('/agent/sessions',headers=headers()).json()
  assert 'trajectory' not in json.dumps(sessions)
  trajectory=client.get('/agent/sessions/c1/trajectory',headers=headers()).json()

@@ -1,26 +1,33 @@
 """每个模型的上下文窗口（token）与输入预算（保守字节估算）。
 
-用户约定：
-- 默认 500k
-- GPT-5: 20k
-- Gemini / DeepSeek: 1024k
+口径（2026-10-30 按本机渠道校准）：
+- deepseek / gemini：1024k（= 1M，与本机渠道配置一致）
+- gpt-*：256k
+- 其它未知模型：256k 兜底
 
-注意：这里的数字是"上下文 token 预算"，不是模型厂商实际支持的上限；
-如果实际 API 的窗口更小（例如 DeepSeek 常见 128k），历史超过后仍会被上游拒绝，
-到时把对应数字调小即可。
+这里的数字必须与 `data/config.json` 里各渠道的 `contextWindow` 保持一致，否则前端进度条
+和后端折叠/裁剪阈值会各说各话。
 """
 import os
 
-DEFAULT_CONTEXT_TOKENS = 500_000
+DEFAULT_CONTEXT_TOKENS = 256_000
 
-MODEL_CONTEXT_TOKENS = {
-    'gpt-5': 20_000,
-    'gemini': 1_024_000,
-    'deepseek': 1_024_000,
-}
+# 按模型名做子串匹配，先命中先用；顺序有意义（gpt-5 必须放在 gpt 之前）。
+CONTEXT_RULES = (
+    ('gemini', 1_024_000),
+    ('deepseek', 1_024_000),
+    ('claude', 200_000),
+    ('minimax', 192_000),
+    ('qwen', 128_000),
+    ('gpt-5', 20_000),
+    ('gpt', 256_000),
+    ('o1', 200_000),
+    ('o3', 200_000),
+    ('o4', 200_000),
+)
 
-# 输入预算用 UTF-8 字节做保守估算：中文约 3 字节/字，1 token ≈ 1.5 字 ≈ 4.5 字节；
-# 取 2 字节/token 是偏保守的下限，宁早压缩也不把上游撑爆。
+# 输入预算用 UTF-8 字节做保守估算：中文约 3 字节/字、约 1.5 token/字，
+# 折算约 2 字节/token；取 2 是偏保守的下限（英文/JSON 会被算得更宽，只会更早触发）。
 BYTES_PER_TOKEN = 2
 
 
@@ -36,7 +43,7 @@ def model_name(model) -> str:
 
 def context_tokens(model=None) -> int:
     name = model_name(model).lower()
-    for key, value in MODEL_CONTEXT_TOKENS.items():
+    for key, value in CONTEXT_RULES:
         if key in name:
             return value
     return DEFAULT_CONTEXT_TOKENS
@@ -47,3 +54,10 @@ def input_budget_bytes(model=None) -> int:
     if override:
         return max(8000, int(override))
     return max(8000, int(context_tokens(model) * BYTES_PER_TOKEN))
+
+
+def describe(model=None) -> dict:
+    """给回执和前端看的预算说明。"""
+    return {'model': model_name(model), 'context_tokens': context_tokens(model),
+            'input_budget_bytes': input_budget_bytes(model), 'bytes_per_token': BYTES_PER_TOKEN,
+            'estimator': 'utf8_bytes_conservative'}

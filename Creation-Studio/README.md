@@ -1,6 +1,6 @@
-# H3 Studio · 源码重建版
+# WENYUN.M-DESKTOP · 源码重建版
 
-把打包的 **ZEALMAN-H3 桌面版**（Tauri + WebView2 + 混淆 JS）按源码方式重建：Node 本地服务 + 网页界面，没有 Electron/WebView2 壳，改一行样式就能看到，方便长期修改和优化。
+把打包的 **WENYUN.M-DESKTOP 桌面版**（Tauri + WebView2 + 混淆 JS）按源码方式重建：Node 本地服务 + 网页界面，没有 Electron/WebView2 壳，改一行样式就能看到，方便长期修改和优化。
 
 核心流程与原版一致：
 
@@ -27,7 +27,7 @@ start.cmd
 node src/server.js
 ```
 
-然后打开 <http://127.0.0.1:17821>。端口可用环境变量 `H3_PORT` 改。
+然后打开 <http://127.0.0.1:17821>。端口可用环境变量 `WMD_PORT` 改。
 
 剧本创作台需要一个智能体后端（端口 17820），开两个窗口：
 
@@ -40,7 +40,7 @@ start.cmd         :: 再起 Web 17821
 
 Git Bash 也可单独启动智能体：`bash agent_backend/start.sh`，默认端口 17820。脚本从 `agent_backend` 加载本项目的 `app.main`。
 
-Node 与智能体之间使用自动生成的 `data/internal-token.json` 作为内部调用凭据，不再接受固定的 `X-H3-Internal: 1`。先启动 Node 后，智能体会自动读取同一文件；更换 Node 数据目录时，两端应使用相同的 `H3_DATA_DIR`。也可为两端设置相同的 `H3_INTERNAL_TOKEN`。凭据不会返回给网页，不应提交到仓库。
+Node 与智能体之间使用自动生成的 `data/internal-token.json` 作为内部调用凭据，不再接受固定的 `X-WMD-Internal: 1`。先启动 Node 后，智能体会自动读取同一文件；更换 Node 数据目录时，两端应使用相同的 `WMD_DATA_DIR`。也可为两端设置相同的 `WMD_INTERNAL_TOKEN`。凭据不会返回给网页，不应提交到仓库。
 
 要用豆包 / Gemini 出视频，还要把管理器服务启起来（不弹它自己的窗口）：
 
@@ -49,14 +49,12 @@ cd /d D:\notebook\software\管理器7.8.7\rebuild
 node src/server.js
 ```
 
-H3 的「设置 → 视频生成」里已有渠道「本机管理器 · 豆包/Gemini」，默认连 `127.0.0.1:17778`，凭据取自该项目的 `data/connection.json`。
-
-首次启动会自动从原版读取 `%APPDATA%\com.zealman.h3desktop\config.json`，导入已有的 **AutoDL Key**，并把原语言模型配置留成一条「停用」渠道：补上可用的地址/Key/模型后点「设为当前」即可。所有设置也可在界面右上角 ⚙ 里改。
+创作台的「设置 → 视频生成」里已有渠道「本机管理器 · 豆包/Gemini」，默认连 `127.0.0.1:17778`，凭据取自该项目的 `data/connection.json`。
 
 ## 已实现
 
 - **视频创作台**：9 张参考图、3 段音频（**内置音色 / 本地音频**两个入口）、参考图命名主体、`<Picture N>` / `<Subject N>` / `<Audio N>` 标签插入、六段式骨架、示例、字数统计、实时校验提示。
-  - 左上只选**渠道**（官网 API / 自定义渠道 / 外接管理器），底部参数条第一位选**视频模型**：官网 API 出 6 条 H3 工作流，管理器渠道出「豆包 / Gemini」，自定义渠道出它自己的模型；切模型会带出对应画幅与时长（Gemini 固定 10 秒）。
+  - 左上只选**渠道**（官网 API / 自定义渠道 / 外接管理器），底部参数条第一位选**视频模型**：官网 API 出 6 条视频工作流，管理器渠道出「豆包 / Gemini」，自定义渠道出它自己的模型；切模型会带出对应画幅与时长（Gemini 固定 10 秒）。
   - **外接管理器（豆包 / Gemini）**：调用 `管理器7.8.7/rebuild` 的本地服务（默认 `127.0.0.1:17778`，Bearer 用 `rebuild/data/connection.json` 的 apiToken），用真实 Chrome 账号跑豆包或 Gemini 网页生成；一个管理器渠道派生豆包 / Gemini 两个视频模型、按平台各占一个工位，成片下载后统一进媒体库。
 - **内置音色**：音频槽点「内置音色」→ 两个页签：
   - **音色库**：直接接你盘里的 `800+音色` 目录（默认 `D:\notebook\AIGC\Comic-drama\资产文档\800+音色`，可在设置里改）。扫出 918 条克隆参考音色，按「音色名 / 分组 / 样本台词 / 时长」列出，可搜索（音色名、台词关键词）、按分组过滤、**逐条试听原声**；点「使用」把样本复制进 `data/uploads/voice/` 并放进音频槽，提示词里 `<Audio N>` 就能引用这个音色。
@@ -66,29 +64,34 @@ H3 的「设置 → 视频生成」里已有渠道「本机管理器 · 豆包/G
 - **对比页**：左右 A/B 各放一段成片或图片（`媒体库` 选 / `本地文件` 选），`对比模式 / 叠加对比`（叠加时带不透明度滑块）、`交换 A/B`、`清空`、`导出并排合成`（把当前两帧拼成一张 PNG 存进素材库）；播放、逐帧、进度条、循环、倍速同步，空格 / ← → 有快捷键。
 - **创作台（智能体，ask 页复刻）**：不是"只写剧本"的工具，而是一条创作链路：**小说创作 → 小说转剧本 → 剧本转分镜 → 分镜转视频提示词 → 提示词生成视频**。前四步在这里对话完成，最后一步「送到创作台」把提示词写进视频创作台；每步产出都可以点「下一步：转成剧本 / 拆成分镜 / 生成视频提示词」接着往下走，附带上一步的交付文件。页面按 ml-engineer 的 `frontend/src/pages/strategy` 源码搬过来：
   - 左：品牌区 + 工作区切换（控制台 / 知识库 / 插件管理）+ 新建对话 + 搜索 + 置顶 / 最近分组 + 「⋯」置顶 / 重命名 / 删除 / 撤销；五个创作阶段：小说创作 / 小说转剧本 / 剧本转分镜 / 分镜转提示词 / 提示词审核；
-  - 中：对话头部（导出 / 工具与技能开关）、欢迎页 4 张 H3 技能卡、执行轨迹（计划步骤、每步产出、依据材料、用时）、资源上下文、Markdown 正文、附件与交付文件卡片、回复操作（继续任务 / 复制 / 粘贴 / 点赞 / 有问题 / 重生成 / token 用量）、生成中条与停止；
+  - 中：对话头部（导出 / 工具与技能开关）、欢迎页 4 张技能卡、执行轨迹（计划步骤、每步产出、依据材料、用时）、资源上下文、Markdown 正文、附件与交付文件卡片、回复操作（继续任务 / 复制 / 粘贴 / 点赞 / 有问题 / 重生成 / token 用量）、生成中条与停止；
   - 输入：项目 / 技能 / 附件 chips、`/` 命令（换模型、换思考强度、压缩上下文）、`@` 视角选择、模型与思考强度下拉、附件上传（10MB×5，索引状态）、字数、Enter 发送；
   - 右：分析工作区 / 运行轨迹两个 tab、本轮项目资源、工具与技能（内置工具 + 待接入工具详情）、技能试例；运行轨迹读 `/agent/sessions/{id}/trajectory`；
   - 知识库 / 插件管理：列表 + 新建 / 编辑 / 删除（`/agent/knowledge`、`/agent/plugins`）；
+  - 画面参考：模型给出的英文画面描述（`<AsyncImageGroup>` / `<AsyncImage>`）直接调图像渠道出图贴回原位，不做反推、不做识别；一个图位就是一张图——**没图时图位里显示提示词，有图时只显示图片**，右上角固定三个按钮：`↻` 生成/重新生成这一张、`⤓` 下载、`⧉` 复制提示词；同一条描述按「提示词+模型+尺寸」缓存在 `data/ref-images/`，只出一次，点图可放大（`POST /api/chat/ref-image`）；
+  - 出图开关：对话顶栏的「出图」胶囊控制是否自动出图（关掉就完全不调用图像渠道，不花钱），状态记在 `localStorage.wmd.askRefImages`；关掉时参考卡只留描述 + 「启动出图」入口，点一下即恢复；
   - 文件预览：附件 / 交付文件卡片 → `/agent/workspace/files/{id}/preview`，图片直显、文本可滚动、可下载；
   - 会话：首条消息生成标题、localStorage 记住当前会话、防抖保存（生成中不写避免 409）、停止时 abort + cancel、断流后用 `/agent/runs/{id}/events` 恢复、导出对话为 Markdown。
   - 指导文档按阶段放在 `agent_backend/app/creation_guidance.py`，可用 `agent_backend/data/guidance.json` 覆盖（键：scope / novel / script / storyboard / prompt / review；示例见 `guidance.example.json`），后续补提示词不用改代码。
-  - 走独立智能体后端（FastAPI + LangChain，端口 **17820**，源码在 `agent_backend/`），H3 服务用 `/api/agent/*` 透传（SSE 不缓冲）；模型配置在 `agent_backend/data/agent_settings.json`（默认 DeepSeek，protocol=`anthropic`）。
+  - 走独立智能体后端（FastAPI + LangChain，端口 **17820**，源码在 `agent_backend/`），创作台服务用 `/api/agent/*` 透传（SSE 不缓冲）；模型配置在 `agent_backend/data/agent_settings.json`（默认 DeepSeek，protocol=`anthropic`）。
 - **素材库**：文件夹（角色/场景/道具…）、搜索、命名主体、重命名、移动、上传；创作台直接取用。
 - **媒体库**：按日期/job 扫描成片和图像生成结果，视频用**系统默认播放器**打开；支持 HTTP Range 播放。
+- **媒体库分集**：在项目下建「第N集」，把成片卡片拖到分集上即归入（只记归属，不搬文件）；可以按集筛选、整组归入。
+- **导入剪映**：按镜头顺序把某一集（或全部集）写成剪映草稿，草稿名是 `项目名-第N集`，打开剪映就在「本地草稿」里，直接接着剪辑。预览弹窗里还可以只把当前这一条成片单独导成草稿。导入前要先关掉剪映，否则它退出时会用内存里的列表覆盖草稿索引。默认读 `%LOCALAPPDATA%\JianyingPro\...\root_meta_info.json` 里记录的草稿根目录，也可以在设置里用 `jianyingDraftRoot` 指定。
+- **剪辑位置**：媒体库只做预览、分集和导出剪映草稿，内置剪辑工程已下线（时间线、字幕、混音、MP4 导出都交给剪映）。
 - **任务日志**：每条任务写入 `data/logs/<job>.log`，界面可查看。
 - **外观**：默认白昼动漫界面，提供「静态图片 / 动态壁纸 / 我的收藏」分类。内置晴空海岸、春日花房两张原创插画及花瓣、光尘场景动画；保留原版亮色和薄荷奶绿，已移除旧暗色皮肤。
 
 ## 界面（用原版设计系统，不是仿制）
 
-- `web/h3.css` 是从**原版运行中的 WebView2 里直接取出的** `index-DTSkrVN7.css`（185 KB，原封不动），包含 `h3-*`（外壳 / 表单 / 按钮 / 槽位 / 提示词芯片）、`zs-*`（图像创作台参数面板）、`zd-*`（图像画布工具条）三套类名和全部 CSS 变量。
-- `web/index.html`、`web/app.js` 的结构按原版真实 DOM 复刻：顶栏 `h3-topbar`（品牌块 + 页签 + 队列/设置/版本）、状态栏 `h3-statusbar`、左侧 `h3-panel`、分隔条 `h3-splitter`、右侧 `h3-stage`。
+- `web/wmd.css` 是从**原版运行中的 WebView2 里直接取出的** `index-DTSkrVN7.css`（185 KB，原封不动），包含 `wmd-*`（外壳 / 表单 / 按钮 / 槽位 / 提示词芯片）、`zs-*`（图像创作台参数面板）、`zd-*`（图像画布工具条）三套类名和全部 CSS 变量。
+- `web/index.html`、`web/app.js` 的结构按原版真实 DOM 复刻：顶栏 `wmd-topbar`（品牌块 + 页签 + 队列/设置/版本）、状态栏 `wmd-statusbar`、左侧 `wmd-panel`、分隔条 `wmd-splitter`、右侧 `wmd-stage`。
 - `web/styles.css` 只做两件事：把本项目还在用的通用类（`.btn` / `.input` / `.card` / `table` …）映射到同一套 token；补原版没有的局部（舞台播放器、最近任务、图像查看器）。
-- 想改配色只动 `:root` 里的 `--h3-*` 变量即可，不用碰结构。
+- 想改配色只动 `:root` 里的 `--wmd-*` 变量即可，不用碰结构。
 
 ### 两个创作台的布局
 
-- **视频创作台**：`渠道下拉（官网 API / 自定义渠道，标默认）+ 模型下拉（H3 工作流）+ 渠道类型标签 + Key 状态` 一行（原来的「工作流」行已去掉）；`图像参考 4/9 · 音频参考 0/3` + 9 图槽 + 3 音频槽同一行（有图的槽自动加宽、`S1` 主体色标）；提示词区 `字数 / 标签·代码 / Skill 优化 / 插入骨架 / 示例 / 复制 / 清空`，标签视图把 `<Picture N>` `<Subject N>` `<Audio N>` `<d>` `[Shot N]` 渲染成带缩略图的芯片（点一下进编辑）；底部 `分辨率 · 时长 · 数量 · 种子 + 生成视频`；右侧「舞台」显示成片/进度 + 最近任务。
+- **视频创作台**：`渠道下拉（官网 API / 自定义渠道，标默认）+ 模型下拉（视频工作流）+ 渠道类型标签 + Key 状态` 一行（原来的「工作流」行已去掉）；`图像参考 4/9 · 音频参考 0/3` + 9 图槽 + 3 音频槽同一行（有图的槽自动加宽、`S1` 主体色标）；提示词区 `字数 / 标签·代码 / Skill 优化 / 插入骨架 / 示例 / 复制 / 清空`，标签视图把 `<Picture N>` `<Subject N>` `<Audio N>` `<d>` `[Shot N]` 渲染成带缩略图的芯片（点一下进编辑）；底部 `分辨率 · 时长 · 数量 · 种子 + 生成视频`；右侧「舞台」显示成片/进度 + 最近任务。
 - **图像创作台**：`图像编辑 / 图像生成 / 图像反推` 页签；左侧 440px 参数面板（生图模型 + 渠道状态、提示词带字数与「优化提示词」、比例/分辨率、底部生成按钮）；右侧 `zd-*` 工具栏 + 结果标签页 + 棋盘格画布 + 状态栏；左右分隔条可拖动。
 - **素材库 / 媒体库**：顶部搜索与操作，下面卡片网格；媒体库按视频/图像分页。
 - **任务 / 批量 / 日志**：表格 + 状态筛选，保持紧凑。
@@ -189,10 +192,10 @@ npm test
 
 ## 二次开发
 
-- 换提示词规则：改 `prompts/h3-system.txt`、`prompts/h3-extra.txt`（界面里 Skill 优化立即生效）。
+- 换提示词规则：改 `prompts/wmd-system.txt`、`prompts/wmd-extra.txt`（界面里 Skill 优化立即生效）。
 - 加工作流：在 `src/workflows.json` 追加一条，字段照现有条目写（provider、images、audios、durationKey、sizeMode…）。
 - 换模型/加厂商：`src/providers.js` 的 `submitAutodl` / `chat`，或 `src/generic-video.js` 的两种视频模式、`src/imagegen.js` 的三种图像协议。
-- 改界面：`web/` 下 `index.html`（外壳）、`app.js`（所有页面渲染）、`styles.css`（本项目自己的样式），刷新即生效；`h3.css` 是原版产物，只读不改。
+- 改界面：`web/` 下 `index.html`（外壳）、`app.js`（所有页面渲染）、`styles.css`（本项目自己的样式），刷新即生效；`wmd.css` 是原版产物，只读不改。
 
 
 
@@ -205,7 +208,7 @@ npm test
 ```
 
 前四步在「剧本创作台」里对话完成，每步产出都可以点「下一步」接着走（附带上一步的交付文件）；
-最后一步「送到创作台」把提示词写进视频创作台，用 H3 官网 API 或管理器里的豆包 / Gemini 出片。
+最后一步「送到创作台」把提示词写进视频创作台，用 官网 API 或管理器里的豆包 / Gemini 出片。
 
 **后端是通用智能体，不需要为每个阶段写业务逻辑。** 扩展方式是「技能」：
 
@@ -221,14 +224,14 @@ npm test
 ## 启动与守护
 
 ```bat
-start-all.cmd    :: 管理器 17778（可选）→ 智能体 17820 → H3 17821，带健康检查和自动重启
+start-all.cmd    :: 管理器 17778（可选）→ 智能体 17820 → 创作台 17821，带健康检查和自动重启
 start-app.cmd    :: 同上，再用 Chrome 应用窗口打开
 ```
 
 - 端口已被健康服务占用时直接复用；
 - 子进程退出会自动重启（5 分钟内最多 5 次）；
 - 底部状态栏两个圆点分别是智能体 / 管理器，悬停看模型和账号数；
-- 单独启动：`start.cmd`（只起 H3）、`start-agent.cmd`（只起智能体）。
+- 单独启动：`start.cmd`（只起创作台）、`start-agent.cmd`（只起智能体）。
 
 ## AI 视频创作专家（智能体定位）
 
@@ -247,8 +250,8 @@ start-app.cmd    :: 同上，再用 Chrome 应用窗口打开
 | `probe_video` | 读时长、分辨率、帧率、编码、有无音频 |
 | `extract_frames` | 从成片抽帧（最多 12 张），做画面检查或首尾帧 |
 
-工具实现在 `agent_backend/app/create_tools.py`，通过本机 H3 接口执行；H3 地址默认
-`http://127.0.0.1:17821`，可用 `H3_BASE_URL` 覆盖。出片会真实消耗视频额度，出图会真实计费。
+工具实现在 `agent_backend/app/create_tools.py`，通过本机 创作台接口执行；创作台地址默认
+`http://127.0.0.1:17821`，可用 `WMD_BASE_URL` 覆盖。出片会真实消耗视频额度，出图会真实计费。
 
 规划执行仍由智能体的 `create_task_plan → record_step_result` 完成：例如"写一句提示词 → 提交视频 →
 等成片 → 抽帧检查 → 交付"。更细的创作规则（剧本/分镜/提示词）建议做成技能，随时改、随时生效。
@@ -307,9 +310,9 @@ start-app.cmd    :: 同上，再用 Chrome 应用窗口打开
 重新生成：
 
 ```bat
-set H3_BASE=http://127.0.0.1:17821
-set H3_USER=你的用户名
-set H3_PASS=你的密码
+set WMD_BASE=http://127.0.0.1:17821
+set WMD_USER=你的用户名
+set WMD_PASS=你的密码
 node scripts\gen-style-previews.cjs            :: 只补没生成的
 node scripts\gen-style-previews.cjs --force    :: 全部重生成
 ```
@@ -334,7 +337,7 @@ node scripts\gen-style-previews.cjs --force    :: 全部重生成
 
 统一根目录：`D:\notebook\AIGC\CREATION-PIPELINE`
 
-- `Creation-Studio`：H3 Studio 重建项目（原 `D:\notebook\software\H3-Studio`）
+- `Creation-Studio`：WENYUN.M-DESKTOP 重建项目
 - `Video-Generation-Manager`：视频管理器（原 `D:\notebook\software\管理器7.8.7\rebuild`）
 
 ## 顶栏服务控制
@@ -351,7 +354,7 @@ node scripts\gen-style-previews.cjs --force    :: 全部重生成
 
 ### 智能体执行控制
 
-创作台项目 h3-studio 默认使用 harness/2.0，健康接口返回 harness_runtime 与 engine_version。其他项目须通过 HARNESS_PROJECT_ALLOWLIST 配置；临时回退可设置 HARNESS_RUNTIME_ENABLED=false，但旧路径不支持持久运行取消与事件恢复。
+创作台项目 wenyun-m-desktop 默认使用 harness/2.0，健康接口返回 harness_runtime 与 engine_version。其他项目须通过 HARNESS_PROJECT_ALLOWLIST 配置；临时回退可设置 HARNESS_RUNTIME_ENABLED=false，但旧路径不支持持久运行取消与事件恢复。
 
 每轮执行有 180 秒总时限，模型和工具调用计入统一预算；harness 内不再叠加模型重试。停止按钮提交取消请求后等待后端终态回执，取消失败会显示提示。断流恢复按事件序号分页读取，每页最多 100 条，并去重；未取得结束回执时会明确显示中断。
 
@@ -361,5 +364,5 @@ node scripts\gen-style-previews.cjs --force    :: 全部重生成
 
 - 服务端新增 `src/studio-store.js`：`data/studio.db` 的 `studio_state(project, data, updated)` 表，按项目存整份创作台状态（提示词、参考图/音频路径、画幅、时长、模型等）。
 - API：`GET /api/studio/state?projectId=`、`POST /api/studio/state`（登录态内）。
-- 前端：编辑时 300ms debounce 写服务端，同时写 `localStorage.h3.studio.<projectId>` 作为离线缓存；刷新前用 `sendBeacon` 兜底提交；加载时比较服务端与本地 `updated`，取较新的一份。
+- 前端：编辑时 300ms debounce 写服务端，同时写 `localStorage.wmd.studio.<projectId>` 作为离线缓存；刷新前用 `sendBeacon` 兜底提交；加载时比较服务端与本地 `updated`，取较新的一份。
 - 切项目会先 flush 当前项目，再读取目标项目状态；目标项目没有记录才清空。

@@ -1,6 +1,7 @@
 'use strict';
 const http = require('node:http');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 const { URL } = require('node:url');
@@ -8,6 +9,7 @@ const config = require('./config');
 const workflows = require('./workflows');
 const providers = require('./providers');
 const prompts = require('./prompts');
+const seedance = require('./seedance');
 const library = require('./library');
 const assetLayout = require('./asset-layout');
 const auth = require('./auth');
@@ -33,13 +35,20 @@ const workbenchStore = require('./workbench-store');
 const workbenchRoutes = require('./workbench-routes');
 const generationStore = require('./generation-store');
 const creativeRoutes = require('./creative-routes');
+const mediaEpisodes = require('./media-episodes');
+const taskManifest = require('./task-manifest');
+const mediaDrafts = require('./media-drafts');
+const refImages = require('./ref-images');
+const jianying = require('./jianying');
 const [ensureDir, readJson, writeJson, uid] = [require('./util').ensureDir, require('./util').readJson, require('./util').writeJson, require('./util').uid];
 const { sanitizeFilename, kindOf, mimeFor, publicError, formatBytes, estimateTokens, httpJson } = require('./util');
 
 const WEB = path.join(__dirname, '..', 'web');
-const AGENT_URL = process.env.H3_AGENT_URL || 'http://127.0.0.1:17820';
-const AGENT_PROJECT = process.env.H3_AGENT_PROJECT || 'h3-studio';
+const AGENT_URL = process.env.WMD_AGENT_URL || 'http://127.0.0.1:17820';
+// 前端没带 X-Project-Id 时的兜底项目名：中性占位，不再借用别的产品项目名。
+const AGENT_PROJECT = process.env.WMD_AGENT_PROJECT || 'wmd-local';
 const STATIC = {
+  '/agent-workspace.js': ['agent-workspace.js', 'text/javascript; charset=utf-8'],
   '/': ['index.html', 'text/html; charset=utf-8'],
   '/index.html': ['index.html', 'text/html; charset=utf-8'],
   '/generation-params.js': ['generation-params.js', 'text/javascript; charset=utf-8'],
@@ -48,8 +57,6 @@ const STATIC = {
   '/workbench-manager.js': ['workbench-manager.js', 'text/javascript; charset=utf-8'],
   '/workbench.css': ['workbench.css', 'text/css; charset=utf-8'],
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
-  '/edit-math.js': ['edit-math.js', 'text/javascript; charset=utf-8'],
-  '/edit-enhancements.js': ['edit-enhancements.js', 'text/javascript; charset=utf-8'],
   '/creative.js': ['creative.js', 'text/javascript; charset=utf-8'],
   '/creative.css': ['creative.css', 'text/css; charset=utf-8'],
   '/styles.css': ['styles.css', 'text/css; charset=utf-8'],
@@ -65,7 +72,7 @@ const STATIC = {
   '/skins/moon.svg': ['skins/moon.svg', 'image/svg+xml'],
   '/skins/coast.svg': ['skins/coast.svg', 'image/svg+xml'],
   '/skins/forest.svg': ['skins/forest.svg', 'image/svg+xml'],
-  '/h3.css': ['h3.css', 'text/css; charset=utf-8'],
+  '/wmd.css': ['wmd.css', 'text/css; charset=utf-8'],
   '/favicon.svg': ['favicon.svg', 'image/svg+xml'],
 };
 
@@ -115,7 +122,7 @@ async function readBody(req, limit = 120 * 1024 * 1024) {
 
 function allowedRoots() {
   const cfg = config.load();
-  const roots = [cfg.saveFolder, cfg.assetFolder, cfg.uploadFolder, path.join(cfg.dataDir, 'frames')];
+  const roots = [cfg.saveFolder, cfg.assetFolder, cfg.uploadFolder, path.join(cfg.dataDir, 'frames'), path.join(cfg.dataDir, 'ref-images')];
   try {
     for (const project of projects.list()) {
       try { roots.push(workspace.pathsFor(project).dir); } catch { /* 单个项目目录异常不影响其它路径 */ }
@@ -256,14 +263,27 @@ async function handleOptimize(body) {
   const subjects = (body.subjects || []).filter((s) => s && s.ordinal && s.name);
   const duration = Math.max(1, Math.min(15, Number(body.duration) || 10));
   const language = body.language === 'en' ? 'en' : 'zh';
-  const messages = prompts.buildOptimizeMessages({
-    prompt: userPrompt,
-    assets,
-    subjects,
-    durationSeconds: duration,
-    maxDurationSeconds: 15,
-    language,
-  });
+  const format = body.format === 'seedance' ? 'seedance' : 'h3';
+  const records = format === 'seedance' ? seedance.recordCountFor(userPrompt, body.records) : 1;
+  // Seedance 这边以节拍稿里的「本组总时长」为准，读不到才用界面上的时长。
+  const seedanceDuration = format === 'seedance' ? seedance.detectDuration(userPrompt, duration) : duration;
+  const messages = format === 'seedance'
+    ? seedance.buildSeedanceMessages({
+      prompt: userPrompt,
+      assets,
+      subjects,
+      durationSeconds: seedanceDuration,
+      maxDurationSeconds: 15,
+      records,
+    })
+    : prompts.buildOptimizeMessages({
+      prompt: userPrompt,
+      assets,
+      subjects,
+      durationSeconds: duration,
+      maxDurationSeconds: 15,
+      language,
+    });
   if (body.includeImages) {
     const parts = [];
     for (const asset of assets) {
@@ -290,13 +310,18 @@ async function handleOptimize(body) {
     messages,
     timeoutMs: cfg.timeoutMs || 180000,
   });
-  const text = prompts.normalizeModelOutput(result.content);
-  const validation = prompts.validatePrompt(text, {
-    tokens: assets.map((a) => a.token),
-    subjects,
-    duration,
-  });
+  const text = format === 'seedance' ? seedance.normalizeSeedanceOutput(result.content) : prompts.normalizeModelOutput(result.content);
+  const validation = format === 'seedance'
+    ? seedance.validateSeedance(text, { tokens: assets.map((a) => a.token), subjects, duration: seedanceDuration })
+    : prompts.validatePrompt(text, {
+      tokens: assets.map((a) => a.token),
+      subjects,
+      duration,
+    });
   return {
+    format,
+    records,
+    duration: format === 'seedance' ? seedanceDuration : duration,
     prompt: text,
     warnings: validation.warnings,
     stats: validation.stats,
@@ -321,7 +346,7 @@ async function checkServices() {
   if (servicesCache.value && now - servicesCache.at < 4000) return servicesCache.value;
   const cfg = config.load();
   const mgrCh = (cfg.channels.video || []).find((c) => c.type === 'manager-video' && c.enabled !== false);
-  const managerUrl = ((mgrCh && mgrCh.baseUrl) || process.env.H3_MANAGER_URL || 'http://127.0.0.1:17778').replace(/\/+$/, '');
+  const managerUrl = ((mgrCh && mgrCh.baseUrl) || process.env.WMD_MANAGER_URL || 'http://127.0.0.1:17778').replace(/\/+$/, '');
   const out = {
     agent: { ok: false, url: AGENT_URL },
     manager: { ok: false, url: managerUrl, configured: !!mgrCh },
@@ -371,7 +396,10 @@ function proxyAgent(req, res, pathname, search) {
   } catch {
     return bad(res, '智能体地址配置无效', 502);
   }
-  const upstreamPath = pathname.replace(/^\/api\/agent/, '/agent') + (search || '');
+  const upstreamPath = pathname.replace(/^\/api\/agent/, '/agent')
+    .split('/')
+    .map((segment) => segment ? encodeURIComponent(segment) : segment)
+    .join('/') + (search || '');
   const headers = { ...req.headers, host: target.host, 'x-project-id': req.headers['x-project-id'] || AGENT_PROJECT };
   delete headers.connection;
   delete headers['accept-encoding'];
@@ -430,7 +458,7 @@ async function route(req, res) {
 
   let currentUser = null;
   const token = auth.tokenFromRequest(req);
-  const PUBLIC_API = new Set(['/api/health', '/api/auth/me', '/api/auth/login', '/api/auth/register', '/api/auth/logout']);
+  const PUBLIC_API = new Set(['/api/health', '/api/web-version', '/api/auth/me', '/api/auth/login', '/api/auth/register', '/api/auth/logout']);
   const internalCall = internalAuth.authorized(req);
   if (auth.enabled() && pathname.startsWith('/api') && !PUBLIC_API.has(pathname) && !internalCall) {
     currentUser = auth.userByToken(token);
@@ -454,20 +482,20 @@ async function route(req, res) {
     const body = await readBody(req);
     const user = auth.register(body.username, body.password);
     const session = auth.login(body.username, body.password);
-    res.setHeader('Set-Cookie', 'h3_session=' + encodeURIComponent(session.token) + '; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000');
+    res.setHeader('Set-Cookie', 'wmd_session=' + encodeURIComponent(session.token) + '; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000');
     return ok(res, { user, enabled: true });
   }
 
   if (method === 'POST' && pathname === '/api/auth/login') {
     const body = await readBody(req);
     const session = auth.login(body.username, body.password);
-    res.setHeader('Set-Cookie', 'h3_session=' + encodeURIComponent(session.token) + '; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000');
+    res.setHeader('Set-Cookie', 'wmd_session=' + encodeURIComponent(session.token) + '; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000');
     return ok(res, { user: session.user, enabled: true });
   }
 
   if (method === 'POST' && pathname === '/api/auth/logout') {
     auth.logout(token);
-    res.setHeader('Set-Cookie', 'h3_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0');
+    res.setHeader('Set-Cookie', 'wmd_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0');
     return ok(res, true);
   }
 
@@ -549,16 +577,19 @@ async function route(req, res) {
   }
 
   if (pathname.startsWith('/api/agent')) {
+    if (!req.headers['x-project-id'] && projectId) req.headers['x-project-id'] = projectId;
     return proxyAgent(req, res, pathname, url.search);
   }
 
 
 const PROJECT_ROOT = path.resolve(__dirname, '..');
-const AGENT_DIR = process.env.H3_AGENT_DIR || path.join(PROJECT_ROOT, 'agent_backend');
-const MANAGER_DIR = process.env.H3_MANAGER_DIR || path.join(PROJECT_ROOT, '..', 'Video-Generation-Manager');
-const PYTHON = process.env.H3_PYTHON || 'D:/notebook/AIGC/ml-engineer/backend/.venv/Scripts/python.exe';
+const AGENT_DIR = process.env.WMD_AGENT_DIR || path.join(PROJECT_ROOT, 'agent_backend');
+const MANAGER_DIR = process.env.WMD_MANAGER_DIR || path.join(PROJECT_ROOT, '..', 'Video-Generation-Manager');
+const LOCAL_PYTHON = path.join(AGENT_DIR, '.venv', 'Scripts', 'python.exe');
+const LEGACY_PYTHON = 'D:/notebook/AIGC/ml-engineer/backend/.venv/Scripts/python.exe';
+const PYTHON = process.env.WMD_PYTHON || (fs.existsSync(LOCAL_PYTHON) ? LOCAL_PYTHON : LEGACY_PYTHON);
 const SERVICE_STATE = path.join(PROJECT_ROOT, 'data', 'service-pids.json');
-const MANAGER_BASE = process.env.H3_MANAGER_URL || 'http://127.0.0.1:17778';
+const MANAGER_BASE = process.env.WMD_MANAGER_URL || 'http://127.0.0.1:17778';
 
 function readServicePids() {
   try { return JSON.parse(fs.readFileSync(SERVICE_STATE, 'utf8')); } catch { return {}; }
@@ -600,7 +631,7 @@ async function controlService(name, action) {
       if (!fs.existsSync(PYTHON)) throw new Error('找不到 Python：' + PYTHON);
       const child = spawn(PYTHON, ['-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', '17820'], {
         cwd: AGENT_DIR,
-        env: { ...process.env, AGENT_SETTINGS_PATH: path.join(AGENT_DIR, 'data', 'agent_settings.json'), HARNESS_AUTH_MODE: 'development', H3_BASE_URL: 'http://127.0.0.1:17821' },
+        env: { ...process.env, AGENT_SETTINGS_PATH: path.join(AGENT_DIR, 'data', 'agent_settings.json'), HARNESS_AUTH_MODE: 'development', WMD_BASE_URL: 'http://127.0.0.1:17821' },
         detached: true, stdio: 'ignore', windowsHide: true,
       });
       child.unref();
@@ -647,7 +678,16 @@ async function controlService(name, action) {
     }
   }
 
-  if (method === 'GET' && pathname === '/api/health') return ok(res, { status: 'ok', name: 'h3-studio', uptime: process.uptime(), activeImageTasks:imageTasks.tasks().activeCount() });
+  if (method === 'GET' && pathname === '/api/health') return ok(res, { status: 'ok', name: 'creation-studio', uptime: process.uptime(), activeImageTasks:imageTasks.tasks().activeCount() });
+
+  // 前端资源指纹：页面开着很久时用它发现「服务器已经换了新版本」，提示刷新，避免看到旧样式
+  if (method === 'GET' && pathname === '/api/web-version') {
+    const files = ['index.html', 'app.js', 'styles.css'].map((name) => path.join(WEB, name));
+    const parts = files.map((file) => {
+      try { return Math.round(fs.statSync(file).mtimeMs).toString(36); } catch { return '0'; }
+    });
+    return ok(res, { version: parts.join('-') });
+  }
 
   if (method === 'GET' && pathname === '/api/studio/state') {
     const q = new URL(req.url, 'http://127.0.0.1');
@@ -681,6 +721,8 @@ async function controlService(name, action) {
         labels: prompts.SECTION_LABEL,
         examples: prompts.EXAMPLES,
         skeleton: prompts.SKELETON,
+        seedanceSkeleton: seedance.SKELETON,
+        seedance: { start: seedance.START, end: seedance.END, record: seedance.RECORD },
       },
     });
   }
@@ -701,11 +743,14 @@ async function controlService(name, action) {
 
   if (method === 'POST' && pathname === '/api/prompt/validate') {
     const body = await readBody(req);
-    return ok(res, prompts.validatePrompt(String(body.prompt || ''), {
-      tokens: (body.assets || []).map((a) => a.token),
-      subjects: body.subjects || [],
-      duration: Number(body.duration) || 10,
-    }));
+    const text = String(body.prompt || '');
+    const tokens = (body.assets || []).map((a) => a.token);
+    const subjects = body.subjects || [];
+    const duration = Number(body.duration) || 10;
+    const result = seedance.looksLikeSeedance(text)
+      ? seedance.validateSeedance(text, { tokens, subjects, duration })
+      : prompts.validatePrompt(text, { tokens, subjects, duration });
+    return ok(res, result);
   }
 
   if (method === 'GET' && pathname === '/api/channels/types') {
@@ -948,6 +993,11 @@ function rememberImageBatch(entry) {
     return ok(res,result.result);
   }
 
+  if (method === 'POST' && pathname === '/api/chat/ref-image') {
+    const body = await readBody(req);
+    return ok(res, await refImages.one(body.prompt, { size: body.size, ratio: body.ratio }));
+  }
+
   if (method === 'POST' && pathname === '/api/images/save-copy') {
     const body = await readBody(req);
     const target = String(body.target || 'assets');
@@ -1070,8 +1120,10 @@ function rememberImageBatch(entry) {
     return ok(res, { message: String(result.content).trim().slice(0, 80), elapsedMs: Date.now() - started });
   }
 
-  if (method === 'POST' && pathname === '/api/optimize') {
-    return ok(res, await handleOptimize(await readBody(req)));
+  if (method === 'POST' && (pathname === '/api/optimize' || pathname === '/api/optimize/seedance')) {
+    const body = await readBody(req);
+    if (pathname === '/api/optimize/seedance') body.format = 'seedance';
+    return ok(res, await handleOptimize(body));
   }
 
   if (method === 'POST' && pathname === '/api/upload/raw') {
@@ -1121,8 +1173,8 @@ function rememberImageBatch(entry) {
 
 /* ------------------------- 智能体可用的本地创作工具 ------------------------- */
 
-const FFMPEG = process.env.H3_FFMPEG || 'D:/notebook/software/ffmpeg/bin/ffmpeg.exe';
-const FFPROBE = process.env.H3_FFPROBE || 'D:/notebook/software/ffmpeg/bin/ffprobe.exe';
+const FFMPEG = process.env.WMD_FFMPEG || 'D:/notebook/software/ffmpeg/bin/ffmpeg.exe';
+const FFPROBE = process.env.WMD_FFPROBE || 'D:/notebook/software/ffmpeg/bin/ffprobe.exe';
 
 function runCommand(cmd, args, timeoutMs = 180000) {
   return new Promise((resolve, reject) => {
@@ -1270,6 +1322,94 @@ function mediaPath(input) {
   const deleteEventRoute = /^\/api\/events\/([^/]+)$/.exec(pathname);
   if (method === 'DELETE' && deleteEventRoute) return ok(res, events.removeEvent(deleteEventRoute[1]));
 
+  /* 豆包视频提取：借管理器的账号登录态抓对话里的成片，再拿回来替换本地成片 */
+  // 管理器有 Bearer 鉴权，token 存在「管理器」类型渠道的 apiKey 里（和别的管理器调用保持一致）
+  const managerChannel = () => (config.load().channels.video || []).find((c) => c.type === 'manager-video' && c.enabled !== false);
+  const managerBaseUrl = () => {
+    const channel = managerChannel();
+    return String((channel && channel.baseUrl) || MANAGER_BASE).replace(/\/+$/, '');
+  };
+  const managerAuth = () => {
+    const channel = managerChannel();
+    const token = String((channel && channel.apiKey) || '').replace(/^\s*Bearer\s+/i, '').trim();
+    const headers = { Accept: 'application/json' };
+    if (token) headers.Authorization = 'Bearer ' + token;
+    return headers;
+  };
+  if (pathname === '/api/extract/accounts' && method === 'GET') {
+    const res2 = await httpJson(managerBaseUrl() + '/api/extract/accounts', { headers: managerAuth(), timeoutMs: 15000 }).catch((err) => ({ ok: false, status: 0, data: null, text: err.message }));
+    if (!res2.ok || !res2.data) return bad(res, '管理器没响应，先在管理器里确认服务在跑（' + String((res2.data && res2.data.error) || res2.text || '连接失败').slice(0, 120) + '）', 502);
+    const accounts = (res2.data.accounts || []).map((row) => ({ id: row.id, name: row.name, group: row.group || '', enabled: row.enabled !== false }));
+    return ok(res, { accounts });
+  }
+  if (pathname === '/api/extract/scan' && method === 'POST') {
+    const body = await readBody(req);
+    if (!String(body.url || '').trim()) return bad(res, '请先粘贴豆包对话链接');
+    if (!body.accountId) return bad(res, '请选择用于提取的账号');
+    try {
+      const res2 = await httpJson(managerBaseUrl() + '/api/extract/scan', {
+        method: 'POST',
+        headers: { ...managerAuth(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: String(body.url).trim(), accountId: String(body.accountId) }),
+        timeoutMs: 240000,
+      });
+      if (!res2.ok || !res2.data) return bad(res, (res2.data && res2.data.error) || '提取失败：管理器没有返回结果', 502);
+      return ok(res, res2.data);
+    } catch (err) {
+      return bad(res, '提取失败：' + err.message, 502);
+    }
+  }
+  if (pathname === '/api/extract/download' && method === 'POST') {
+    const body = await readBody(req);
+    if (!body.sessionId || !body.key) return bad(res, '缺少提取会话，请重新扫描');
+    try {
+      const res2 = await httpJson(managerBaseUrl() + '/api/extract/download', {
+        method: 'POST',
+        headers: { ...managerAuth(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: String(body.sessionId), key: String(body.key), name: String(body.name || '') }),
+        timeoutMs: 300000,
+      });
+      if (!res2.ok || !res2.data) return bad(res, (res2.data && res2.data.error) || '下载失败', 502);
+      return ok(res, res2.data);
+    } catch (err) {
+      return bad(res, '下载失败：' + err.message, 502);
+    }
+  }
+  if (pathname === '/api/extract/stream' && method === 'GET') {
+    // 播放时用：把带鉴权的流地址换成一次性直通（管理器侧只认 127.0.0.1，不做跨机暴露）
+    const token = String((managerChannel() && managerChannel().apiKey) || '').replace(/^\s*Bearer\s+/i, '').trim();
+    const target = managerBaseUrl() + '/api/extract/stream?sessionId=' + encodeURIComponent(url.searchParams.get('sessionId') || '')
+      + '&key=' + encodeURIComponent(url.searchParams.get('key') || '')
+      + (token ? '&token=' + encodeURIComponent(token) : '');
+    res.writeHead(302, { Location: target, 'Cache-Control': 'no-store' });
+    return res.end();
+  }
+
+  if (method === 'GET' && pathname === '/api/events/trash') return ok(res, { items: events.listTrash() });
+
+  /* 任务清单：任务 → 镜头 → 提示词 → 成片路径 的完整 JSON 映射 */
+  if (method === 'GET' && pathname === '/api/tasks/manifest') {
+    const kind = url.searchParams.get('kind') === 'image' ? 'image' : 'video';
+    const pid = scoped(url.searchParams.get('projectId'));
+    return ok(res, taskManifest.build(pid, kind));
+  }
+  if (method === 'POST' && pathname === '/api/tasks/manifest/save') {
+    const body = await readBody(req).catch(() => ({}));
+    const kind = body.kind === 'image' ? 'image' : 'video';
+    const pid = scoped(body.projectId);
+    const saved = taskManifest.save(pid, kind);
+    return ok(res, { file: saved.file, counts: saved.manifest.counts });
+  }
+  if (method === 'POST' && pathname === '/api/events/trash/restore') {
+    const body = await readBody(req).catch(() => ({}));
+    return ok(res, events.restoreEvent(body.id || ''));
+  }
+  const itemRestoreRoute = /^\/api\/events\/([^/]+)\/items\/restore$/.exec(pathname);
+  if (method === 'POST' && itemRestoreRoute) {
+    const body = await readBody(req).catch(() => ({}));
+    return ok(res, events.restoreItem(itemRestoreRoute[1], body.itemId || ''));
+  }
+
   const eventAction = /^\/api\/events\/([^/]+)\/(pause|resume|cancel|retry-failed)$/.exec(pathname);
   if (method === 'POST' && eventAction) {    const id = eventAction[1];
     if (eventAction[2] === 'pause') return ok(res, events.pauseEvent(id));
@@ -1340,6 +1480,100 @@ function mediaPath(input) {
   if (method === 'POST' && pathname === '/api/jobs/reorder') {
     const body = await readBody(req);
     return ok(res, jobs.reorder(Array.isArray(body.ids) ? body.ids : []));
+  }
+
+  /* 手动维护成片：重命名 / 删除 / 替换（右键菜单用的三条） */
+  const outputAction = /^\/api\/jobs\/([^/]+)\/output\/(rename|delete|replace|add)$/.exec(pathname);
+
+  /* 从本机已有文件顶替成片（比如刚用管理器提取下来的豆包原片），不走浏览器上传 */
+  const fromPathRoute = /^\/api\/jobs\/([^/]+)\/output\/from-path$/.exec(pathname);
+  if (fromPathRoute && method === 'POST') {
+    const jobId = fromPathRoute[1];
+    const body = await readBody(req);
+    const source = path.resolve(String(body.sourcePath || ''));
+    if (!body.sourcePath || !fs.existsSync(source) || !fs.statSync(source).isFile()) return bad(res, '源文件不存在：' + (body.sourcePath || '空'), 404);
+    const mode = body.mode === 'add' ? 'add' : 'replace';
+    const target = body.path ? path.resolve(String(body.path)) : '';
+    if (mode === 'replace' && !target) return bad(res, '缺少要替换的成片路径');
+    const ext = path.extname(source) || '.mp4';
+    const name = sanitizeFilename(String(body.name || path.basename(source)));
+    if (mode === 'add') {
+      const added = jobs.addOutput(jobId, source, { name });
+      return ok(res, { out: added.out, mode, job: jobs.get(jobId) });
+    }
+    if (!fs.existsSync(path.dirname(target))) return bad(res, '成片目录不存在', 404);
+    const temp = path.join(path.dirname(target), '.from-path-' + uid() + ext);
+    try {
+      fs.copyFileSync(source, temp);
+    } catch (err) {
+      return bad(res, '复制源文件失败：' + err.message, 500);
+    }
+    const result = jobs.replaceOutput(jobId, target, temp, { name });
+    return ok(res, { out: result.out, parked: result.parked, mode, job: jobs.get(jobId) });
+  }
+
+  if (outputAction && method === 'POST') {
+    const jobId = outputAction[1];
+    const action = outputAction[2];
+    const rawTarget = url.searchParams.get('path') || '';
+    const target = rawTarget ? path.resolve(rawTarget) : '';
+    const remapMedia = (fromAbs, toAbs) => {
+      if (!fromAbs || !toAbs) return;
+      try {
+        const root = path.resolve(library.mediaRoot(projectId));
+        const relOf = (file) => path.relative(root, path.resolve(file)).split(path.sep).join('/');
+        mediaEpisodes.remap(projectId, [{ from: relOf(fromAbs), to: relOf(toAbs) }]);
+      } catch { /* 分集归属只是展示信息，改不动也不拦操作 */ }
+    };
+    if (action === 'rename') {
+      const body = await readBody(req);
+      const result = jobs.renameOutput(jobId, target, body.name || '');
+      remapMedia(target, result.out.path);
+      return ok(res, { out: result.out, moved: result.moved, job: jobs.get(jobId) });
+    }
+    if (action === 'delete') {
+      const result = jobs.deleteOutput(jobId, target);
+      try {
+        const root = path.resolve(library.mediaRoot(projectId));
+        const relOf = (file) => path.relative(root, path.resolve(file)).split(path.sep).join('/');
+        mediaEpisodes.assign(projectId, '', [relOf(target)]);
+      } catch { /* 没有分集归属就直接跳过 */ }
+      return ok(res, { removed: result.removed, parked: result.parked, job: jobs.get(jobId) });
+    }
+    const name = sanitizeFilename(url.searchParams.get('name') || path.basename(target || '成片.mp4'));
+    const limit = 4 * 1024 * 1024 * 1024;
+    if (Number(req.headers['content-length']) > limit) { req.resume(); return bad(res, '文件超过 4GB', 413); }
+    if (action === 'replace' && !fs.existsSync(path.dirname(target))) return bad(res, '成片目录不存在', 404);
+    const partialDir = action === 'add' ? os.tmpdir() : path.dirname(target);
+    const partial = path.join(partialDir, '.upload-' + uid() + (path.extname(name) || '.mp4'));
+    let handle = null;
+    let bytes = 0;
+    try {
+      handle = await fs.promises.open(partial, 'wx');
+      for await (const chunk of req) {
+        bytes += chunk.length;
+        if (bytes > limit) throw new Error('文件超过 4GB');
+        let offset = 0;
+        while (offset < chunk.length) {
+          const written = await handle.write(chunk, offset, chunk.length - offset);
+          offset += written.bytesWritten;
+        }
+      }
+      if (!bytes) throw new Error('文件内容为空');
+      await handle.close();
+      handle = null;
+    } catch (err) {
+      if (handle) await handle.close().catch(() => {});
+      await fs.promises.unlink(partial).catch(() => {});
+      throw err;
+    }
+    if (action === 'add') {
+      const added = jobs.addOutput(jobId, partial, { name });
+      return ok(res, { out: added.out, job: jobs.get(jobId) });
+    }
+    const result = jobs.replaceOutput(jobId, target, partial, { name });
+    remapMedia(target, result.out.path);
+    return ok(res, { out: result.out, parked: result.parked, job: jobs.get(jobId) });
   }
 
   if (method === 'GET' && pathname === '/api/assets/library') {
@@ -1459,8 +1693,46 @@ function mediaPath(input) {
     return serveFile(req, res, library.fileForAsset(projectId, url.searchParams.get('rel') || ''));
   }
 
+  if (method === 'GET' && pathname === '/api/media/tasks') {
+    return ok(res, library.listMediaTasks(url.searchParams.get('kind') || '', projectId));
+  }
+
   if (method === 'GET' && pathname === '/api/media') {
-    return ok(res, library.listMedia(url.searchParams.get('kind') || '', projectId));
+    return ok(res, library.listMedia(url.searchParams.get('kind') || '', projectId, { taskTitle: url.searchParams.get('task') || '' }));
+  }
+
+  if (method === 'GET' && pathname === '/api/media/episodes') {
+    const pid = scoped(url.searchParams.get('projectId'));
+    return ok(res, { ...mediaEpisodes.list(pid), jianying: jianying.status() });
+  }
+
+  if (method === 'POST' && pathname === '/api/media/episodes') {
+    const body = await readBody(req);
+    const pid = scoped(body.projectId);
+    if (!pid) return bad(res, '先选择项目');
+    if (body.action === 'create') return ok(res, mediaEpisodes.create(pid, { name: body.name, number: body.number }));
+    if (body.action === 'rename') return ok(res, mediaEpisodes.rename(pid, body.id, body.name));
+    if (body.action === 'delete') return ok(res, mediaEpisodes.remove(pid, body.id));
+    if (body.action === 'assign') return ok(res, mediaEpisodes.assign(pid, body.episodeId || '', body.rels));
+    return bad(res, '未知操作');
+  }
+
+  if (method === 'POST' && pathname === '/api/media/jianying') {
+    const body = await readBody(req);
+    const pid = scoped(body.projectId);
+    if (!pid) return bad(res, '先选择项目');
+    const project = projects.get(pid);
+    const projectName = (project && project.name) || '未命名项目';
+    const data = mediaEpisodes.list(pid);
+    const media = library.listMedia('video', pid);
+    const plan = mediaDrafts.planTargets(body, { projectName, data, mediaItems: media.items });
+    if (plan.error) return bad(res, plan.error);
+    const targets = plan.targets;
+    const result = jianying.createDrafts(targets.map((target) => ({
+      name: target.name,
+      clips: target.items.map((item) => ({ path: item.path, name: item.name, kind: item.kind })),
+    })));
+    return ok(res, { ...result, drafts: targets.map((target) => ({ name: target.name, clips: target.items.length, episodeId: target.episodeId })) });
   }
 
   if (method === 'POST' && pathname === '/api/media/rename-shots') {
@@ -1470,11 +1742,96 @@ function mediaPath(input) {
     if (body.dryRun !== false) return ok(res, plan);
     if (!plan.plan.length) return ok(res, { ...plan, moved: [] });
     const result = jobs.renameOutputs(plan.plan);
+    const root = path.resolve(library.mediaRoot(projectId));
+    const relOf = (file) => path.relative(root, path.resolve(file)).split(path.sep).join('/');
+    mediaEpisodes.remap(projectId, plan.plan.map((row) => ({ from: relOf(row.oldPath), to: relOf(row.newPath) })));
     return ok(res, { ...plan, plan: plan.plan, moved: result.moved });
   }
 
   if (method === 'GET' && pathname === '/api/media/file') {
     return serveFile(req, res, library.mediaFile(projectId, url.searchParams.get('path') || ''));
+  }
+
+  /**
+   * 导入自己生成（或从别处下载）的成片：
+   * 落盘到 <项目>/media/<日期>/import-<id>/<原文件名>，并写一份 params.json，
+   * 这样媒体库、分集、剪映导出都能像普通任务成片一样认出来。
+   * body 走原始流（浏览器 fetch(file)），不吃 base64，几十上百 MB 也不用先编码。
+   */
+  if (method === 'POST' && pathname === '/api/media/import') {
+    const name = sanitizeFilename(url.searchParams.get('name') || 'import.mp4');
+    const fileKind = kindOf(name);
+    if (fileKind !== 'video' && fileKind !== 'image' && fileKind !== 'audio') return bad(res, '只支持导入视频 / 图片 / 音频');
+    const dayRaw = String(url.searchParams.get('day') || '').trim();
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+    const day = /^\d{4}-\d{2}-\d{2}$/.test(dayRaw) ? dayRaw : today;
+    const taskTitle = String(url.searchParams.get('taskTitle') || '').slice(0, 80);
+    const shotLabel = String(url.searchParams.get('shotLabel') || '').slice(0, 80);
+    const limit = 4 * 1024 * 1024 * 1024;
+    if (Number(req.headers['content-length']) > limit) {
+      req.resume();
+      return bad(res, '文件超过 4GB', 413);
+    }
+    const root = path.resolve(library.mediaRoot(projectId));
+    const jobId = 'import-' + uid();
+    const dir = ensureDir(path.join(root, day, jobId));
+    const target = path.join(dir, name);
+    const partial = target + '.part';
+    let handle = null;
+    let bytes = 0;
+    try {
+      handle = await fs.promises.open(partial, 'wx');
+      for await (const chunk of req) {
+        bytes += chunk.length;
+        if (bytes > limit) throw new Error('文件超过 4GB');
+        let offset = 0;
+        while (offset < chunk.length) {
+          const written = await handle.write(chunk, offset, chunk.length - offset);
+          offset += written.bytesWritten;
+        }
+      }
+      if (!bytes) throw new Error('文件内容为空');
+      await handle.close();
+      handle = null;
+      await fs.promises.rename(partial, target);
+    } catch (err) {
+      if (handle) await handle.close().catch(() => {});
+      await fs.promises.unlink(partial).catch(() => {});
+      await fs.promises.rm(dir, { recursive: true, force: true }).catch(() => {});
+      throw err;
+    }
+    const stem = name.replace(/\.[^.]+$/, '');
+    writeJson(path.join(dir, 'params.json'), {
+      id: jobId,
+      createdAt: now.toISOString(),
+      finishedAt: now.toISOString(),
+      workflow: '手工导入',
+      title: shotLabel || stem,
+      shotLabel: shotLabel || stem,
+      outputLabel: shotLabel || stem,
+      taskTitle,
+      eventId: '',
+      eventItemId: '',
+      prompt: '',
+      userPrompt: '',
+      imported: true,
+      sourceName: name,
+    });
+    const rel = path.relative(root, target).split(path.sep).join('/');
+    return ok(res, {
+      path: target,
+      rel,
+      name,
+      bytes,
+      kind: fileKind,
+      day,
+      jobId,
+      taskTitle,
+      shotLabel: shotLabel || stem,
+      url: '/api/media/file?path=' + encodeURIComponent(target),
+    });
   }
 
   if (method === 'POST' && pathname === '/api/media/open') {
@@ -1509,7 +1866,13 @@ function mediaPath(input) {
   }
 
   if (method === 'GET' && pathname === '/api/prompt') {
-    return ok(res, { skeleton: prompts.SKELETON, examples: prompts.EXAMPLES, labels: prompts.SECTION_LABEL, sections: prompts.SECTION_KEYS });
+    return ok(res, {
+      skeleton: prompts.SKELETON,
+      examples: prompts.EXAMPLES,
+      labels: prompts.SECTION_LABEL,
+      sections: prompts.SECTION_KEYS,
+      seedance: { skeleton: seedance.SKELETON, start: seedance.START, end: seedance.END, record: seedance.RECORD },
+    });
   }
 
   if (method === 'GET' && pathname === '/api/voices') {
@@ -1663,10 +2026,10 @@ function start() {
   events.start();
   imageTasks.tasks().initialize();
   imageTasks.tasks().pump();
-  const port = Number(process.env.H3_PORT || cfg.port || 17821);
+  const port = Number(process.env.WMD_PORT || cfg.port || 17821);
   server.listen(port, '127.0.0.1', () => {
     const url = `http://127.0.0.1:${port}`;
-    console.log(`H3 Studio → ${url}`);
+    console.log(`WENYUN.M-DESKTOP → ${url}`);
     console.log(`数据目录 ${config.DATA}`);
     jobs.pump();
     // 重启对账：能确认的才改状态，确认不了就保持“待对账”
@@ -1685,7 +2048,7 @@ function start() {
   });
   server.on('error', (err) => {
     if (err && err.code === 'EADDRINUSE') {
-      console.log(`端口 ${port} 已被占用，可能已经有一个 H3 Studio 在运行：http://127.0.0.1:${port}`);
+      console.log(`端口 ${port} 已被占用，可能已经有一个 WENYUN.M-DESKTOP 在运行：http://127.0.0.1:${port}`);
       process.exit(0);
     }
     console.error('启动失败：' + err.message);
@@ -1712,6 +2075,10 @@ module.exports = { server, start };
  * 媒体库「按分镜重命名」：同一任务内按原始分镜顺序编号为 分镜 1..N。
  * 只生成计划，不直接改文件；用户确认后才会调用 jobs.renameOutputs。
  */
+function shotIndexOf(item) {
+  return mediaDrafts.shotIndexOf(item);
+}
+
 function planMediaShotNames(projectId) {
   const data = library.listMedia('video', projectId);
   const root = path.resolve(data.root);

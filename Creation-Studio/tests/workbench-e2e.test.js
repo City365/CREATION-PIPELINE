@@ -2,11 +2,11 @@
 const test=require('node:test');const assert=require('node:assert/strict');const fs=require('node:fs');const os=require('node:os');const path=require('node:path');const {spawn}=require('node:child_process');const {startMockCloud,PNG}=require('./mock-cloud');
 const ROOT=path.resolve(__dirname,'..');
 test('正式 API：生成、另存、移动、历史提示词、隔离、重启和旧记录回读',{timeout:60000},async t=>{
- const dir=fs.mkdtempSync(path.join(os.tmpdir(),'h3-workbench-api-'));const data=path.join(dir,'data');fs.mkdirSync(data,{recursive:true});
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'wmd-workbench-api-'));const data=path.join(dir,'data');fs.mkdirSync(data,{recursive:true});
  const mock=await startMockCloud();let child;
  const base='http://127.0.0.1:18942';
  async function call(p,method='GET',body){const r=await fetch(base+p,{method,headers:body?{'Content-Type':'application/json'}:undefined,body:body?JSON.stringify(body):undefined});const d=await r.json();return {status:r.status,...d};}
- async function start(){child=spawn(process.execPath,[path.join(ROOT,'src/server.js')],{cwd:ROOT,env:{...process.env,APPDATA:path.join(dir,'appdata'),H3_DATA_DIR:data,H3_PORT:'18942'},windowsHide:true,stdio:'ignore'});for(let i=0;i<100;i++){try{if((await call('/api/health')).ok)return;}catch{}await new Promise(r=>setTimeout(r,100));}throw Error('server not ready');}
+ async function start(){child=spawn(process.execPath,[path.join(ROOT,'src/server.js')],{cwd:ROOT,env:{...process.env,APPDATA:path.join(dir,'appdata'),WMD_DATA_DIR:data,WMD_PORT:'18942'},windowsHide:true,stdio:'ignore'});for(let i=0;i<100;i++){try{if((await call('/api/health')).ok)return;}catch{}await new Promise(r=>setTimeout(r,100));}throw Error('server not ready');}
  async function stop(){if(child){const exit=new Promise(r=>child.once('exit',r));child.kill();await exit;child=null;}}
  t.after(async()=>{await stop();await new Promise(r=>mock.server.close(r));fs.rmSync(dir,{recursive:true,force:true});});await start();
  await call('/api/config','PUT',{saveFolder:path.join(dir,'media'),assetFolder:path.join(dir,'assets')});

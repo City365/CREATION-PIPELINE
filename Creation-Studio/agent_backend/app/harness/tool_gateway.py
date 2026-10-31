@@ -32,7 +32,7 @@ class ToolGateway(AgentMiddleware):
                 run_store.append_event(ctx.project,ctx.run_id,{'type':'tool_reused','tool_call_id':cid,'tool_name':name})
                 return ToolMessage(content=json.dumps({'ok':True,'reused':True,'plan':ctx.receipt['plan'],'note':'恢复已有计划，请沿用原步骤编号，不重建计划'},ensure_ascii=False),tool_call_id=cid,name=name)
             risk=registry.CAPABILITIES[name]
-            write=risk in ('workspace_write','media_write')
+            write=risk in ('workspace_write','media_write','fs_write','shell')
             fingerprint=hashlib.sha256(json.dumps([name,args],sort_keys=True).encode()).hexdigest()
             if write and fingerprint in self.write_cache:
                 run_store.append_event(ctx.project,ctx.run_id,{'type':'tool_reused','tool_call_id':cid,'tool_name':name})

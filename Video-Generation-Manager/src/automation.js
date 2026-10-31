@@ -23,8 +23,42 @@ const DOUBAO_DEFAULTS={
 function selectorsFor(platform, account={}){
   return {...(platform==='doubao'?DOUBAO_DEFAULTS:{}), ...(account.selectors||{})};
 }
-async function firstVisible(page, selector, timeout=15000) {
-  const end=Date.now()+timeout;
+// 确认和催促都用语义相近的多种说法，避免同一句固定话术反复出现。
+// 每次从洗牌袋里取一条，同一进程内不会连续重复；重启后重新随机。
+const CONFIRM_TEXTS=[
+  '确认，开始生成视频',
+  '确定，生成视频',
+  '可以生成视频吧',
+  '好的，请开始生成视频',
+  '没问题，直接生成视频',
+  '同意，开始生成吧',
+  '快点，给我生成视频',
+  '就按这个生成视频',
+  '开始吧，生成视频',
+];
+const PUSH_TEXTS=[
+  '我确定要生成视频，请按上面的提示词直接生成',
+  '请继续，用刚才的描述生成视频',
+  '不需要文字方案，直接生成视频',
+  '可以生成，开始吧，生成视频',
+  '请帮我生成视频，就按上面的内容',
+  '我确认要生成，直接开始生成视频',
+  '用上面的提示词生成视频，谢谢',
+];
+function makePhrasePicker(pool){
+  let bag=[];
+  return (avoid='')=>{
+    if(!bag.length){
+      bag=[...pool];
+      for(let i=bag.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[bag[i],bag[j]]=[bag[j],bag[i]];}
+    }
+    const index=Math.max(0,bag.findIndex(t=>t!==avoid));
+    return bag.splice(index,1)[0];
+  };
+}
+const pickConfirmText=makePhrasePicker(CONFIRM_TEXTS);
+const pickPushText=makePhrasePicker(PUSH_TEXTS);
+async function firstVisible(page, selector, timeout=15000) {  const end=Date.now()+timeout;
   while(Date.now()<end) {
     const locator=page.locator(selector); const count=await locator.count();
     for(let i=0;i<count;i++) if(await locator.nth(i).isVisible()) return locator.nth(i);
@@ -32,7 +66,73 @@ async function firstVisible(page, selector, timeout=15000) {
   }
   throw new Error('找不到页面控件，请先登录或在账号高级设置中更新选择器：'+selector);
 }
-async function applyOptions(page, task, selectors, signal) {
+// 按可见文字点第一个匹配项；找不到返回 false（不抛错，便于回退到“更多技能”）
+async function clickFirstText(page, pattern) {
+  const list=page.getByText(pattern);
+  const count=await list.count().catch(()=>0);
+  for(let i=0;i<count;i++){
+    const item=list.nth(i);
+    if(!await item.isVisible().catch(()=>false))continue;
+    try{await item.click();return true;}catch{continue;}
+  }
+  return false;
+}
+
+// 页面弹窗：先等 3–5 秒（可能自己消失，或用户手动点掉），不要抢着关
+const POPUP_SELECTOR='[role="dialog"],[role="alertdialog"],[data-testid*="dialog"],[data-testid*="modal"],[class*="modal"],[class*="popup"],[class*="Dialog"]';
+async function visiblePopup(page) {
+  const list=page.locator(POPUP_SELECTOR);
+  const count=await list.count().catch(()=>0);
+  for(let i=0;i<count;i++){
+    const item=list.nth(i);
+    if(!await item.isVisible().catch(()=>false))continue;
+    const box=await item.boundingBox().catch(()=>null);
+    if(box && box.width>80 && box.height>40) return item;
+  }
+  return null;
+}
+// 已知无害的引导弹窗：识别后主动关掉；验证/确认/额度类弹窗一律不碰。
+// 豆包网页版会随机弹「下载电脑版 · 使用完整功能」，不关掉会一直挡住参数面板点击。
+async function dismissBenignPopup(popup) {
+  if(typeof popup.innerText!=='function' || typeof popup.getByText!=='function')return false;
+  const text=String(await popup.innerText().catch(()=> '')||'');
+  if(!/下载电脑版|使用完整功能/.test(text))return false;
+  for(const label of ['下次提醒我','下次再说']){
+    const btn=popup.getByText(label,{exact:true}).first();
+    if(await btn.count().catch(()=>0) && await btn.isVisible().catch(()=>false)){
+      try{await btn.click({timeout:3000});return true;}catch{/* 换下一个入口 */}
+    }
+  }
+  const close=popup.locator('[aria-label="关闭"]').first();
+  if(await close.count().catch(()=>0) && await close.isVisible().catch(()=>false)){
+    try{await close.click({timeout:3000});return true;}catch{/* 保持等待 */}
+  }
+  return false;
+}
+async function settlePopups(page,{signal,update,label='页面提示弹窗',graceMs=5000,maxWaitMs=120000}={}) {
+  const started=Date.now();
+  let announced=false;let dismissed=0;
+  while(true){
+    signal?.throwIfAborted?.();
+    const popup=await visiblePopup(page);
+    if(!popup)return true;
+    if(dismissed<3 && await dismissBenignPopup(popup)){
+      dismissed++;
+      update?.({message:label+'：已识别并关闭「下载电脑版」引导弹窗'});
+      await wait(300,undefined,{signal});
+      continue;
+    }
+    const waited=Date.now()-started;
+    if(!announced && waited>=graceMs){
+      announced=true;
+      await page.bringToFront().catch(()=>{});
+      update?.({status:'paused',message:label+'还开着：请在账号窗口里手动点掉它（任务会等 2 分钟，自己消失也会继续）'});
+    }
+    if(waited>=maxWaitMs)return false;
+    await wait(400,undefined,{signal});
+  }
+}
+async function applyOptions(page, task, selectors, signal, hooks={}) {
   const proof={requested:{model:task.model||'',ratio:task.ratio||'',duration:task.duration??null,resolution:task.resolution||''}};
   // Explicit options are mandatory: never silently send with a different model or duration.
   const options = [
@@ -46,14 +146,113 @@ async function applyOptions(page, task, selectors, signal) {
     signal.throwIfAborted(); if(!required) continue;
     if(key==='modeControl' && await page.locator('[data-input-engine-actionbar-control-key="video-model"]').isVisible().catch(()=>false))continue;
     const selector=selectors[key] || (key==='resolutionControl'?selectors.durationControl:undefined);
-    if(selector) {
-      if(task.platform==='doubao'&&key!=='modeControl'&&key!=='modelControl'&&!await page.locator(selector).isVisible().catch(()=>false)){const sidebar=page.locator('[data-testid="siderbar_close_btn"]');if(await sidebar.isVisible().catch(()=>false)){await sidebar.click();await wait(350,undefined,{signal});}}
-      const control=await firstVisible(page,selector,5000);await control.click();
-    } else if(key==='modeControl') {
-      const controls=page.getByText(/^(视频生成|生成视频|Video)$/);let found=false;
-      for(let i=0;i<await controls.count();i++) if(await controls.nth(i).isVisible()){await controls.nth(i).click();found=true;break;}
-      if(!found && task.platform!=='fixture') throw new Error('没有找到视频模式入口，请先配置账号的modeControl选择器');
+    if(key==='modeControl') {
+      // 真实页面：入口可能是露在外面的「视频生成」，也可能收在「更多技能」里；
+      // 页面里同名元素有多份（隐藏副本），必须取可见的、并且点完确认真的进了视频模式。
+      const inVideoMode=async()=>await page.locator('[data-input-engine-actionbar-control-key="video-model"]').isVisible().catch(()=>false)
+        || await page.locator('[data-input-engine-actionbar-render-entry-key="video-generation-params-panel"]').isVisible().catch(()=>false);
+      const hasVideoText=async()=>await page.evaluate(()=>document.body.innerText.includes('视频生成')).catch(()=>false);
+      const clickVisible=async(build,{verify=true}={})=>{
+        let loc=null;
+        try{ loc=build(); }catch{ return false; }
+        if(!loc) return false;
+        const count=await loc.count().catch(()=>0);
+        for(let i=0;i<count;i++){
+          const el=loc.nth(i);
+          if(!await el.isVisible().catch(()=>false))continue;
+          try{ await el.click(); }catch{ continue; }
+          await wait(700,undefined,{signal});
+          if(!verify || await inVideoMode()) return true;
+        }
+        return false;
+      };
+      // 打开「更多技能」菜单：页面里同一 testid 有多份副本，实测只有第 1 个能展开菜单，
+      // 所以先用 JS 点第 1 个，再校验「视频生成」是否真的出现，避免反复点把菜单关掉。
+      const openSkillMenu=async()=>{
+        if(await hasVideoText())return true;
+        const jsClick=async(kind)=>page.evaluate((k)=>{
+          const pick=()=>{
+            if(k==='first')return document.querySelectorAll('[data-testid="skill_bar_button_more"]')[0]||null;
+            if(k==='text')return [...document.querySelectorAll('div,span')].find((e)=>(e.innerText||'').trim()==='更多技能')||null;
+            if(k==='parent'){const el=[...document.querySelectorAll('div,span')].find((e)=>(e.innerText||'').trim()==='更多技能');return el?(el.closest('button,[role="button"]')||el.parentElement):null;}
+            return null;
+          };
+          const el=pick();
+          if(!el)return false;
+          el.click();
+          return true;
+        },kind).catch(()=>false);
+        for(const kind of ['first','text','parent']){
+          if(!await jsClick(kind))continue;
+          await wait(700,undefined,{signal});
+          if(await hasVideoText())return true;
+        }
+        // Playwright 真实鼠标兜底（有些浮层只对真实 hover/click 响应）
+        const byId=page.locator('[data-testid="skill_bar_button_more"]').first();
+        if(await byId.isVisible().catch(()=>false)){
+          await byId.hover({timeout:2000}).catch(()=>{});
+          await wait(500,undefined,{signal});
+          if(await hasVideoText())return true;
+          await byId.click({timeout:2000}).catch(()=>{});
+          await wait(700,undefined,{signal});
+          if(await hasVideoText())return true;
+        }
+        return await hasVideoText();
+      };
+      const clickVideoEntry=async()=>{
+        // 先点确定的技能条按钮；getByText 会同时命中按钮里的 span 副本，点错副本会白等超时。
+        if(await clickVisible(()=>page.locator('[data-testid^="skill_bar_button_"]').filter({hasText:'视频生成'})))return true;
+        if(await clickVisible(()=>page.getByText(/^\s*(视频生成|生成视频|Video)\s*$/)))return true;
+        if(await clickVisible(()=>page.getByText('视频生成',{exact:false})))return true;
+        // JS 兜底：直接点正文为「视频生成」的可见元素
+        const js=await page.evaluate(()=>{
+          const el=[...document.querySelectorAll('[data-testid^="skill_bar_button_"],button,[role="button"],[role="menuitem"],div,span')]
+            .filter((e)=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0;})
+            .find((e)=>(e.innerText||'').trim()==='视频生成');
+          if(!el)return false;el.click();return true;
+        }).catch(()=>false);
+        if(js){await wait(700,undefined,{signal});}
+        return js ? await inVideoMode() : false;
+      };
+      // 编辑器比底部技能条先出现；技能条没渲染就点不到「视频生成」，先等它出现再尝试。
+      const skillBar=page.locator('[data-testid^="skill_bar_button_"]');
+      const readyDeadline=Date.now()+Number(hooks.skillBarTimeoutMs ?? 20000);
+      while(Date.now()<readyDeadline){
+        if(await skillBar.count().catch(()=>0))break;
+        await wait(400,undefined,{signal});
+      }
+      let entered=false;
+      const tried=[];
+      if(selector){ tried.push('账号配置'); entered=await clickVisible(()=>page.locator(selector)); }
+      if(!entered){ tried.push('直接入口'); entered=await clickVideoEntry(); }
+      if(!entered){
+        tried.push('更多技能');
+        if(await openSkillMenu()) entered=await clickVideoEntry();
+        if(entered) hooks.update?.({message:'已通过「更多技能」进入视频模式'});
+      }
+      if(!entered && task.platform!=='fixture'){
+        // 只报可见控件：同一个 testid 在页面里可能有多份隐藏副本，直接 count 会误导排查。
+        const diag=await page.evaluate(()=>{
+          const isVisible=e=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0;};
+          const labels=[...document.querySelectorAll('[data-testid^="skill_bar_button_"]')].filter(isVisible)
+            .map(e=>(e.innerText||'').trim()).filter(Boolean).slice(0,10);
+          const more=[...document.querySelectorAll('[data-testid="skill_bar_button_more"]')].filter(isVisible).length;
+          return {labels,more};
+        }).catch(()=>({labels:[],more:0}));
+        const diagInfo=diag&&typeof diag==='object'?diag:{};
+        const diagLabels=Array.isArray(diagInfo.labels)?diagInfo.labels:[];
+        const diagText='页面 '+(page.url?page.url():'?')
+          +'；可见「更多技能」按钮 '+(Number(diagInfo.more)||0)+' 个'
+          +'；可见技能条按钮：'+(diagLabels.length?diagLabels.join(' / '):'无')
+          +'；页面含「视频生成」文字：'+(await hasVideoText()?'有':'无');
+        throw new Error('没有找到视频模式入口（已尝试：'+tried.join(' → ')+'；'+diagText+'）；请在账号窗口确认页面有「视频生成」，或更新 modeControl 选择器');
+      }
+      await settlePopups(page,{signal,update:hooks.update,label:'切换到视频模式后的提示'});
       continue;
+    }
+    if(selector) {
+      if(task.platform==='doubao'&&key!=='modelControl'&&!await page.locator(selector).isVisible().catch(()=>false)){const sidebar=page.locator('[data-testid="siderbar_close_btn"]');if(await sidebar.isVisible().catch(()=>false)){await sidebar.click();await wait(350,undefined,{signal});}}
+      const control=await firstVisible(page,selector,5000);await control.click();
     } else {
       throw new Error('指定了'+label+'，但未配置'+key+'选择器；请在账号高级设置中配置，或留空使用网页当前设置');
     }
@@ -75,8 +274,10 @@ async function applyOptions(page, task, selectors, signal) {
     if(!applied)await choices.first().waitFor({state:'visible',timeout:5000}).catch(()=>{});
     for(let i=0;!applied && i<await choices.count();i++) if(await choices.nth(i).isVisible()){await choices.nth(i).click();applied=true;break;}
     if(!applied) throw new Error('页面没有可选参数：'+label+'；已停止提交');
-    await page.keyboard.press('Escape');
+    // 参数面板还开着才按 Escape 收起来；不主动去关刚冒出来的弹窗
+    if(await page.locator(selector).isVisible().catch(()=>false)) await page.keyboard.press('Escape');
     await wait(350,undefined,{signal});
+    await settlePopups(page,{signal,update:hooks.update,label:'参数面板旁弹出的提示'});
     if(key==='durationControl' || key==='ratioControl' || key==='resolutionControl'){
       const trigger=page.locator(selector);const expected=key==='durationControl'?String(task.duration)+'s':key==='resolutionControl'?task.resolution:task.ratio;
       const end=Date.now()+3000;let confirmed=false;
@@ -169,14 +370,63 @@ async function uploadReferences(page, files, selectors, signal, platform, update
     return {expectedCount:files.length,actualCount:await page.locator(selectors.attachment).count(),attachments:platform==='doubao'?await page.evaluate(readAttachmentState,selectors.attachment):[],network:trace.events.slice()};
   } finally { trace.stop(); }
 }
+// 提交任务前的暖场：先像普通用户一样聊两轮创作话题，让上下文看起来是正常交流。
+// 只发普通聊天，不点确认、不进入视频模式；失败也不影响任务，记录到 warmup 字段即可。
+async function waitForChatReply(page,selectors,signal,{baseline,prompt,timeoutMs=45000,stableMs=1500,pollMs=600}={}){
+  const end=Date.now()+timeoutMs;let last='';let since=0;
+  while(Date.now()<end){
+    signal?.throwIfAborted?.();
+    const state=await page.evaluate(readPageState,{selectors,baseline,prompt});
+    if(state.captcha)return {reply:last,error:'页面要求人工验证'};
+    if(state.responding||!state.replies.length){last='';since=0;}
+    else if(state.text!==last){last=state.text;since=Date.now();}
+    else if(since&&Date.now()-since>=stableMs)return {reply:last,error:''};
+    await wait(pollMs,undefined,{signal});
+  }
+  return {reply:last,error:last?'':'等待暖场回复超时'};
+}
+async function warmUpConversation({page,task,selectors,signal,update=()=>{},warmup=null}){
+  const cfg=warmup&&typeof warmup.config==='function'?warmup.config():warmup;
+  if(!cfg||!cfg.enabled)return null;
+  const rounds=Math.max(1,Math.min(3,Number(cfg.rounds)||2));
+  const timeoutMs=Math.max(3000,Number(cfg.timeoutMs)||45000);
+  const stableMs=Number.isFinite(Number(cfg.stableMs))?Math.max(0,Number(cfg.stableMs)):800;
+  const pollMs=Math.max(100,Number(cfg.pollMs)||600);
+  // 视频模式下输入会被平台当成视频任务，先切回普通对话再暖场。
+  const videoMode=()=>page.locator('[data-input-engine-actionbar-control-key="video-model"]').isVisible().catch(()=>false);
+  if(await videoMode()){
+    const newChat=page.locator(selectors.newChat||DOUBAO_DEFAULTS.newChat).first();
+    if(await newChat.count().catch(()=>0)){await newChat.click().catch(()=>{});await wait(800,undefined,{signal});}
+  }
+  if(await videoMode())return {skipped:'页面停留在视频模式，未暖场'};
+  await settlePopups(page,{signal,update,label:'暖场前的页面弹窗',graceMs:4000,maxWaitMs:20000});
+  const plan=await warmup.plan({task:{prompt:task.prompt,platform:task.platform},rounds});
+  const messages=((plan&&plan.messages)||[]).slice(0,rounds);
+  const source=(plan&&plan.source)||'pool';
+  const sent=[];
+  update({status:'warming',message:'执行前暖场：先和豆包聊创作话题（0/'+messages.length+'）',warmup:{rounds:0,total:messages.length,source}});
+  for(let index=0;index<messages.length;index++){
+    signal.throwIfAborted();
+    const text=messages[index];
+    const baseline=(await page.evaluate(readPageState,{selectors})).keys||[];
+    update({status:'warming',message:'执行前暖场：和豆包聊创作话题（'+(index+1)+'/'+messages.length+'）',warmup:{rounds:index,total:messages.length,source,messages:sent.map(item=>item.text)}});
+    await submitText(page,text,selectors,signal);
+    const result=await waitForChatReply(page,selectors,signal,{baseline,prompt:text,timeoutMs,stableMs,pollMs});
+    sent.push({text,reply:String(result.reply||'').slice(0,400),error:result.error||''});
+    update({warmup:{rounds:index+1,total:messages.length,source,messages:sent.map(item=>item.text)}});
+  }
+  return {rounds:sent.length,total:messages.length,source,messages:sent,finishedAt:new Date().toISOString()};
+}
 async function prepareInputs(page,task,selectors,signal,platform,update=()=>{}) {
   signal.throwIfAborted();
   const editor=await firstVisible(page,selectors.editor||'textarea,[contenteditable=true]');
   // Upload into a fresh composer. Filling a long prompt before upload can retain
   // stale attachment props; the verified native binding writes the prompt later.
   await editor.fill('');
+  // 页面加载后可能先弹「下载电脑版」引导，先处理掉再点参数，避免点击被遮罩拦截。
+  await settlePopups(page,{signal,update,label:'打开账号页面后的提示'});
   update({status:'configuring',message:'设置视频参数',progress:3});
-  const parameters=await applyOptions(page,task,selectors,signal);update({parameters});
+  const parameters=await applyOptions(page,task,selectors,signal,{update});update({parameters});
   const uploadDiagnostics=await uploadReferences(page,task.references,selectors,signal,platform,update);
   return {parameters,uploadDiagnostics};
 }
@@ -211,7 +461,7 @@ async function resolveGeneratedMedia({ page, state, task, anchorKey = '', signal
   }
   return null;
 }
-function createExecutor({ pool, store, downloads, ffprobe, fixture=false, getDispatcher, prepareOnly=false }) {
+function createExecutor({ pool, store, downloads, ffprobe, fixture=false, getDispatcher, prepareOnly=false, interpreter=null, warmup=null }) {
   return async function execute(task, account, signal, update) {
     let page;let finished=false;
     try {
@@ -230,8 +480,22 @@ function createExecutor({ pool, store, downloads, ffprobe, fixture=false, getDis
           if(initial.messageCount) throw new Error('新会话未清空历史消息，已停止提交');
         }
         if(task.platform==='doubao') await page.evaluate(resolver);
+        // 提交前先聊两轮创作话题，避免一上来就丢任务；失败只记录，不阻断任务。
+        let warmupInfo=null;
+        if(!task.resume && !prepareOnly && task.platform==='doubao' && warmup){
+          try {
+            warmupInfo=await warmUpConversation({page,task,selectors,signal,update,warmup});
+            if(warmupInfo)update({warmup:warmupInfo});
+          } catch(error) {
+            if(/has been closed|Target page, context or browser has been closed/i.test(String(error?.message||error)))throw error;
+            signal.throwIfAborted();
+            update({warmup:{error:String(error?.message||error),finishedAt:new Date().toISOString()}});
+          }
+        }
         let prepared;
         if(!task.resume)prepared=await prepareInputs(page,task,selectors,signal,account.platform,update);
+        // 提交前如果页面上有弹窗，先给它 3–5 秒（可能自己消失，或让用户手动点掉）
+        await settlePopups(page,{signal,update,label:'提交前的页面弹窗'});
         if(task.resume){await page.locator('[data-testid="message-list"] .scroller').evaluateAll(es=>es.forEach(e=>{e.scrollTop=0;}));await wait(500,undefined,{signal});}
         const before=task.resume?{keys:[],captcha:false}:await page.evaluate(readPageState,{selectors});
         if(before.captcha) {update({status:'paused',message:'请在账号窗口完成人工验证'});throw new Error('提交前需要人工验证，请完成后重新提交');}
@@ -246,17 +510,24 @@ function createExecutor({ pool, store, downloads, ffprobe, fixture=false, getDis
         if(prepareOnly)return {sent:false,mode:'executor-before-send',text:preparedBinding?.text||task.prompt,bindings:preparedBinding?.bindings||[],parameters:prepared?.parameters,uploadDiagnostics:prepared?.uploadDiagnostics};
         const deadline=Date.now()+task.timeoutSeconds*1000;
         let anchorKey='',submittedDeadline=Date.now()+60000, confirmations=0,lastConfirmation='',lastReply='',stableSince=Date.now();
+        // 我们发过的任务类消息（暖场 + 确认 + 催促）都要让页面归属检查认出来，不能算成“额外用户消息”。
+        // 暖场消息渲染后可能被平台重新挂载（data 属性丢失、key 变化），只靠 baseline 会误判；
+        // 续查任务时暖场消息来自任务记录。
+        const persistedWarmup=task.warmup&&Array.isArray(task.warmup.messages)?task.warmup.messages:[];
+        const warmupSources=warmupInfo&&Array.isArray(warmupInfo.messages)?warmupInfo.messages:persistedWarmup;
+        const warmupTexts=warmupSources.map(item=>String(item&&item.text||'').trim()).filter(Boolean);
+        const taskReplyTexts=[...warmupTexts];const confirmReplyTexts=[];
+        let pushRounds=0,lastPushSource='',lastConfirmPhrase='',lastPushPhrase='';
+        let lastUnderstoodKey='';let lastVerdict=null;let lastState=null;
         let media,ownership;
         while(Date.now()<deadline) {
           signal.throwIfAborted();
+          // 弹窗挡住页面时先等它自己消失 / 等用户点掉，不抢着关窗口
+          if(await visiblePopup(page)) await settlePopups(page,{signal,update,label:'页面弹窗'});
           if(task.nextPollAt>Date.now())await wait(task.nextPollAt-Date.now(),undefined,{signal});
           Object.assign(selectors,store.get(account.id)?.selectors || {});
-          const state=await page.evaluate(readPageState,{selectors,baseline:before.keys,prompt:task.submittedPrompt||task.prompt,anchorKey,attachments:(task.references||[]).length});
-          if(state.otherUser){
-            update({conversationURL:page.url(), userKey:state.userKey, ownershipDiagnostics:{messageCount:state.messageCount,userId:state.userId,messages:state.messages||[]}});
-            const seen=(state.messages||[]).filter(m=>m.role==='user'&&m.text).map(m=>m.text.slice(0,80));
-            throw new Error('任务会话出现额外用户消息，已停止操作以避免混用结果'+(seen.length?'；会话中的用户消息：'+seen.join(' / '):''));
-          }
+          const state=await page.evaluate(readPageState,{selectors,baseline:before.keys,prompt:task.submittedPrompt||task.prompt,anchorKey,attachments:(task.references||[]).length,taskReplies:taskReplyTexts,confirmReplies:confirmReplyTexts});
+          lastState=state;
           if(state.captcha) {
             // 人工验证只能由人在账号窗口里完成；把窗口提到最前，避免看起来“卡住不动”。
             if(!task.captchaPausedAt)update({captchaPausedAt:new Date().toISOString()});
@@ -301,14 +572,57 @@ function createExecutor({ pool, store, downloads, ffprobe, fixture=false, getDis
           }
           if(state.refusal) throw new Error('平台拒绝：'+state.text.slice(-1000));
           if(state.failure) throw new Error('平台生成失败：'+state.text.slice(-1000));
-          if(!generating && !state.responding && !state.confirmationSent && confirmations===0 && !task.confirmationSentAt && !task.stopRequestedAt && state.confirmation && Date.now()-stableSince>=15000 && state.text!==lastConfirmation) {
-            confirmations++;update({confirmationSentAt:new Date().toISOString(),message:'方案回复已结束，正在确认生成视频'});
+          // 新回复稳定后，用理解器判断一次语义；模型不可用或未启用时完全退回下面的正则逻辑。
+          if(interpreter && !state.responding && !state.generating && state.replies.length){
+            const latest=state.replies[state.replies.length-1];
+            const replyKey=String(latest.key||latest.id||'')+':'+String(latest.text||'').length;
+            if(replyKey!==lastUnderstoodKey){
+              lastUnderstoodKey=replyKey;
+              lastVerdict=null;
+              const understood=await interpreter.classify({
+                task:{prompt:task.submittedPrompt||task.prompt,model:task.model,duration:task.duration,ratio:task.ratio,resolution:task.resolution},
+                lastReply:latest.text,
+                recentReplies:state.replies.slice(-10).map(reply=>reply.text),
+                sent:taskReplyTexts,
+                pushRounds,
+              });
+              if(understood){
+                lastVerdict=understood;
+                update({replyUnderstanding:{intent:understood.intent,confidence:understood.confidence,nextAction:understood.nextAction,evidence:understood.evidence,suggestedReply:understood.suggestedReply,at:new Date().toISOString()}});
+              }
+            }
+          }
+          const verdict=lastVerdict;
+          const confident=Boolean(verdict&&verdict.confidence>=0.6);
+          const suppressRegex=confident&&['wait','fail'].includes(verdict.nextAction);
+          if(confident&&verdict.nextAction==='fail')throw new Error('平台拒绝：'+(verdict.evidence||state.text.slice(-1000)));
+          const confirmByLlm=confident&&verdict.nextAction==='confirm'&&verdict.confidence>=0.75;
+          const confirmByRegex=!suppressRegex&&state.confirmation;
+          const confirmStable=confirmByLlm?Date.now()-stableSince>=4000:Date.now()-stableSince>=15000;
+          if(!generating && !state.responding && !state.confirmationSent && confirmations===0 && !task.confirmationSentAt && !task.stopRequestedAt && (confirmByLlm||confirmByRegex) && confirmStable && state.text!==lastConfirmation) {
+            confirmations++;
+            const phrase=(confirmByLlm&&verdict.suggestedReply)||pickConfirmText(lastConfirmPhrase);lastConfirmPhrase=phrase;
+            taskReplyTexts.push(phrase);confirmReplyTexts.push(phrase);
+            update({confirmationSentAt:new Date().toISOString(),confirmationPhrase:phrase,confirmationSource:confirmByLlm?'ai':'rule',message:'方案回复已结束，正在确认生成视频'});
             update({status:'submitting',message:'平台方案已输出完成，确认并开始生成视频',progress:25});
-            await submitText(page,'确认，开始生成视频',selectors,signal);lastConfirmation=state.text;
+            await submitText(page,phrase,selectors,signal);lastConfirmation=state.text;
+          } else if(!generating && !state.responding && !state.confirmationSent && !task.confirmationSentAt && !task.stopRequestedAt) {
+            const pushByLlm=confident&&verdict.nextAction==='push';
+            const pushByRegex=!suppressRegex&&state.videoUnavailable;
+            const pushStable=pushByLlm?Date.now()-stableSince>=4000:Date.now()-stableSince>=8000;
+            if((pushByLlm||pushByRegex)&&pushRounds<3&&pushStable&&state.text!==lastPushSource){
+              // 平台有时先回「暂时不能生成视频」来验证真人；继续用不同说法请求，最多 3 轮。
+              pushRounds++;lastPushSource=state.text;
+              const phrase=(pushByLlm&&verdict.suggestedReply)||pickPushText(lastPushPhrase);lastPushPhrase=phrase;
+              taskReplyTexts.push(phrase);
+              update({pushRounds,pushSource:pushByLlm?'ai':'rule',status:'submitting',message:'平台暂未同意生成（第 '+pushRounds+'/3 轮），正在再次请求生成视频',progress:25});
+              await submitText(page,phrase,selectors,signal);
+              stableSince=Date.now();lastReply='';
+            }
           }
           if(task.generationWaitStartedAt){if(!task.nextPollAt||task.nextPollAt<=Date.now())update({nextPollAt:Date.now()+30000});}else await wait(1000,undefined,{signal});
         }
-        if(!media) throw new Error('等待本次生成超时；未自动重发平台请求');
+        if(!media) throw new Error('等待本次生成超时（已催促 '+pushRounds+' 轮）；未自动重复提交原始提示词');
         signal.throwIfAborted();update({status:'downloading',message:'下载并检查MP4完整性与时长',progress:90});
         const downloadsDir=typeof downloads==='function'?downloads():downloads;
         const destination=path.join(downloadsDir,task.id+'.mp4');
@@ -316,8 +630,20 @@ function createExecutor({ pool, store, downloads, ffprobe, fixture=false, getDis
         signal.throwIfAborted();finished=true;
         return {...result,file:path.basename(result.path),watermarkMethod:media.method,ownership,downloadedAt:new Date().toISOString()};
       } catch(error){
-        if(/Target page, context or browser has been closed|has been closed/i.test(String(error?.message||error)))
-          throw new Error('账号浏览器窗口被关闭，任务已中断；遇到人工验证请直接在窗口里完成，不要关闭窗口');
+        try{
+          if(error&&typeof error==='object'){
+            error.failureContext={
+              lastReply:(lastState?.replies||[]).map(reply=>reply.text).join('\n').slice(-4000),
+              pageText:String(lastState?.text||'').slice(-4000),
+              flags:{confirmation:!!lastState?.confirmation,generating:!!lastState?.generating,quota:!!lastState?.quota,failure:!!lastState?.failure,refusal:!!lastState?.refusal,captcha:!!lastState?.captcha},
+            };
+          }
+        }catch{/* 诊断上下文不是必需的 */}
+        if(/Target page, context or browser has been closed|has been closed/i.test(String(error?.message||error))){
+          const closed=new Error('账号浏览器窗口被关闭，任务已中断；遇到人工验证请直接在窗口里完成，不要关闭窗口');
+          closed.failureContext=error?.failureContext;
+          throw closed;
+        }
         throw error;
       } finally {signal.removeEventListener('abort',abort);}
     } finally {
@@ -326,4 +652,4 @@ function createExecutor({ pool, store, downloads, ffprobe, fixture=false, getDis
     }
   };
 }
-module.exports = { createExecutor, firstVisible, submitText, uploadReferences, prepareInputs, applyOptions, resolveGeneratedMedia, selectorsFor, DOUBAO_DEFAULTS };
+module.exports = { createExecutor, firstVisible, submitText, uploadReferences, prepareInputs, applyOptions, resolveGeneratedMedia, selectorsFor, DOUBAO_DEFAULTS, settlePopups, visiblePopup, clickFirstText, warmUpConversation, waitForChatReply, CONFIRM_TEXTS, PUSH_TEXTS, makePhrasePicker };

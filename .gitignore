@@ -17,3 +17,7 @@
 *.db
 *.db-*
 Creation-Studio/background-music/
+
+# Generated evidence and local exports (screenshots, acceptance dirs, inventories)
+/output/
+/Creation-Studio/output/

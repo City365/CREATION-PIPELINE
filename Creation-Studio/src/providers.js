@@ -6,7 +6,7 @@ const { httpJson, fetchBuffer, encodeMultipart, mimeFor, deepFindUrl } = require
 
 /* ------------------------------------ 官网 API（AutoDL） ------------------------------------ */
 
-const AUTODL_BASE = process.env.H3_AUTODL_BASE || 'https://autodl.art';
+const AUTODL_BASE = process.env.WMD_AUTODL_BASE || 'https://autodl.art';
 
 function autodlHeaders(token) {
   return {

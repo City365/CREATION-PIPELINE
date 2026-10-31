@@ -36,12 +36,12 @@ def test_image_tool_preserves_reference_paths(monkeypatch):
 @pytest.mark.parametrize('source', ['file', 'environment'])
 def test_internal_credentials_are_sent(monkeypatch, tmp_path, source):
     token = 'test-' + 'a' * 64
-    monkeypatch.setenv('H3_DATA_DIR', str(tmp_path))
-    monkeypatch.delenv('H3_INTERNAL_TOKEN', raising=False)
+    monkeypatch.setenv('WMD_DATA_DIR', str(tmp_path))
+    monkeypatch.delenv('WMD_INTERNAL_TOKEN', raising=False)
     if source == 'file':
         (tmp_path / 'internal-token.json').write_text(json.dumps({'token': token}))
     else:
-        monkeypatch.setenv('H3_INTERNAL_TOKEN', token)
+        monkeypatch.setenv('WMD_INTERNAL_TOKEN', token)
     captured = []
 
     class Response:
@@ -55,7 +55,7 @@ def test_internal_credentials_are_sent(monkeypatch, tmp_path, source):
 
     monkeypatch.setattr(create_tools.urllib.request, 'urlopen', open_request)
     assert create_tools._http('GET', '/api/state')['status'] == 'ok'
-    assert captured[0].get_header('X-h3-internal') == token
+    assert captured[0].get_header('X-wmd-internal') == token
 
 
 def test_media_writes_are_deduplicated_and_blocked_on_resume(monkeypatch, tmp_path):

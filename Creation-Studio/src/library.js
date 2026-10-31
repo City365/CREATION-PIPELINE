@@ -378,7 +378,8 @@ function fileForAsset(projectId, rel) {
 
 /* ------------------------------------ 媒体库 ------------------------------------ */
 
-function listMedia(kind, projectId) {
+function listMedia(kind, projectId, options = {}) {
+  const taskFilter = String(options.taskTitle || '').trim();
   const root = path.resolve(mediaRoot(projectId));
   const items = [];
   const jobs = require('./jobs');
@@ -396,7 +397,8 @@ function listMedia(kind, projectId) {
   };
   let days = [];
   try {
-    days = fs.readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
+    // 以 _ 开头的是内部目录（_trash 回收站等），不参与成片列表
+    days = fs.readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory() && !d.name.startsWith('_')).map((d) => d.name);
   } catch { days = []; }
   for (const day of days) {
     if (day === 'images') continue;
@@ -418,6 +420,9 @@ function listMedia(kind, projectId) {
         const needsMeta = !params || !params.taskTitle || !params.shotLabel;
         const event = needsMeta ? resolveEvent(job && job.eventId) : null;
         const eventItem = event ? (event.items || []).find((row) => row.id === job.eventItemId) : null;
+        const taskTitle = (params && (params.taskTitle || params.eventTitle)) || (event && event.title) || (job && job.taskTitle) || '';
+        // 前端把没有任务名的归到「未记录任务」，按任务过滤时也要按同一套名字比对
+        if (taskFilter && (taskTitle || '未记录任务') !== taskFilter) continue;
         items.push({
           day,
           jobId: jobEntry.name,
@@ -427,7 +432,7 @@ function listMedia(kind, projectId) {
           bytes: st.size,
           mtime: st.mtimeMs,
           title: (params && params.workflow) || '',
-          taskTitle: (params && (params.taskTitle || params.eventTitle)) || (event && event.title) || (job && job.taskTitle) || '',
+          taskTitle,
           shotLabel: (params && (params.title || params.shotLabel)) || (eventItem && eventItem.title) || (job && job.title) || '',
           outputLabel: (params && (params.outputLabel || params.shotLabel)) || '',
           eventId: (params && params.eventId) || (job && job.eventId) || '',
@@ -450,6 +455,7 @@ function listMedia(kind, projectId) {
         if (!entry.isFile() || kindOf(entry.name) !== 'image') continue;
         const abs = path.join(dir, entry.name);
         const st = fs.statSync(abs);
+        if (taskFilter && taskFilter !== '图像生成') continue;
         items.push({
           day,
           jobId: 'images',
@@ -469,6 +475,51 @@ function listMedia(kind, projectId) {
   items.sort((a, b) => b.mtime - a.mtime);
   const project = projectOrNull(projectId);
   return { root, projectId: String(projectId || ''), projectName: project ? project.name : '', items };
+}
+
+/**
+ * 媒体库任务菜单：只按任务聚合，不返回文件明细。
+ * 页面默认停在这一层，避免一次性把成百上千个缩略图塞进浏览器。
+ */
+function listMediaTasks(kind, projectId) {
+  const data = listMedia(kind, projectId);
+  const groups = new Map();
+  let videoCount = 0;
+  let imageCount = 0;
+  for (const item of data.items) {
+    if (item.kind === 'video') videoCount++;
+    if (item.kind === 'image') imageCount++;
+    const key = item.taskTitle || '未记录任务';
+    const row = groups.get(key) || {
+      taskTitle: key,
+      count: 0,
+      videos: 0,
+      images: 0,
+      bytes: 0,
+      cover: '',
+      coverKind: '',
+      mtime: 0,
+      day: item.day,
+      eventId: item.eventId || '',
+    };
+    row.count++;
+    row.bytes += item.bytes;
+    if (item.kind === 'video') row.videos++;
+    else row.images++;
+    row.mtime = Math.max(row.mtime, item.mtime);
+    if (!row.cover) { row.cover = item.url; row.coverKind = item.kind; }
+    if (!row.eventId && item.eventId) row.eventId = item.eventId;
+    groups.set(key, row);
+  }
+  const tasks = [...groups.values()].sort((a, b) => b.mtime - a.mtime);
+  return {
+    root: data.root,
+    projectId: data.projectId,
+    projectName: data.projectName,
+    total: data.items.length,
+    counts: { video: videoCount, image: imageCount },
+    tasks,
+  };
 }
 
 function mediaFile(projectId, file) {
@@ -532,6 +583,7 @@ module.exports = {
   createFolder: createGroup,
   fileForAsset,
   listMedia,
+  listMediaTasks,
   mediaFile,
   moveProjectMeta,
   metaFor,

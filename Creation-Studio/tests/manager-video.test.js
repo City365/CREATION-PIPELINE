@@ -85,15 +85,15 @@ function startMockManager() {
 }
 
 test('外接管理器：豆包 / Gemini 视频任务跑通', { timeout: 90000 }, async () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'h3-manager-'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wmd-manager-'));
   const manager = await startMockManager();
   const child = spawn(process.execPath, [path.join(ROOT, 'src', 'server.js')], {
     cwd: ROOT,
     env: {
       ...process.env,
       APPDATA: path.join(tmp, 'appdata'),
-      H3_PORT: String(PORT),
-      H3_DATA_DIR: path.join(tmp, 'data'),
+      WMD_PORT: String(PORT),
+      WMD_DATA_DIR: path.join(tmp, 'data'),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,

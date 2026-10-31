@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>豆包本地控制台 v2</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="brand">
+      <span class="dot" id="statusDot"></span>
+      <div>
+        <div class="brand-title">豆包本地控制台 v2</div>
+        <div class="brand-sub" id="statusText">连接中…</div>
+      </div>
+    </div>
+    <div class="side-actions">
+      <button id="btnNew" class="btn">新建对话</button>
+      <button id="btnRefresh" class="btn ghost">刷新会话</button>
+    </div>
+    <div class="side-label">最近会话</div>
+    <div class="conv-list" id="convList"></div>
+    <div class="side-foot">
+      <button id="btnReconnect" class="btn ghost small">重新连接客户端</button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div class="pill" id="convId">会话 -</div>
+      <div class="pill" id="busyPill">空闲</div>
+      <div class="spacer"></div>
+      <button id="btnStop" class="btn danger small" disabled>中断生成</button>
+    </header>
+    <section class="chat" id="chat"></section>
+    <footer class="composer">
+      <textarea id="input" rows="2" placeholder="给豆包发一条消息，Ctrl+Enter 发送"></textarea>
+      <button id="btnSend" class="btn primary">发送</button>
+    </footer>
+  </main>
+
+  <aside class="panel">
+    <div class="panel-block">
+      <div class="panel-title">客户端账号 <span class="muted" id="acctCurrent"></span></div>
+      <div class="acct-list" id="acctList"></div>
+      <button id="btnAcctRefresh" class="btn ghost small">刷新账号</button>
+    </div>
+
+    <div class="panel-block">
+      <div class="panel-title">界面菜单识别</div>
+      <div class="menu-summary" id="menuSummary">—</div>
+      <button id="btnMenus" class="btn ghost small">识别左栏 / 底栏</button>
+    </div>
+
+    <div class="panel-block grow">
+      <div class="panel-title">v2 队列 <span class="muted" id="queueCounts"></span></div>
+      <div class="queue-controls">
+        <button id="btnQueueStart" class="btn small primary">启动</button>
+        <button id="btnQueuePause" class="btn small ghost">暂停</button>
+        <button id="btnQueueStop" class="btn small danger">停止</button>
+        <button id="btnQueueClear" class="btn small ghost">清空已完成</button>
+      </div>
+      <textarea id="queueInput" rows="2" placeholder="一轮任务一条，回车换行；逐条入队"></textarea>
+      <button id="btnQueueAdd" class="btn small">加入队列</button>
+      <div class="queue-list" id="queueList"></div>
+    </div>
+  </aside>
+</div>
+<script src="/app.js"></script>
+</body>
+</html>

@@ -71,7 +71,7 @@ def build_task_tools(receipt, question, publish, available_sources, project=None
         return result
     @tool
     def create_workspace_artifact(name: str, format: str, content: str) -> dict:
-        """生成可预览的交付文件，保存到当前对话工作空间，前端自动显示文件卡片。format 支持 txt、md、html、csv、xlsx；xlsx 的 content 必须为 JSON 字符串 {"sheets":[{"name":"Sheet1","rows":[["列名"],["值"]]}]}。HTML 预览不执行脚本。文件不能冒充已验证的业务报告。"""
+        """生成可预览的交付文件，保存到当前对话工作空间，前端自动显示文件卡片。format 支持 txt、md、html、csv、json、xlsx；xlsx 的 content 必须为 JSON 字符串 {"sheets":[{"name":"Sheet1","rows":[["列名"],["值"]]}]}，json 的 content 必须是合法 JSON 文本。HTML 预览不执行脚本。文件不能冒充已验证的业务报告。"""
         from app.workspace import create_artifact
         from fastapi import HTTPException
         with lock:

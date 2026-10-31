@@ -12,6 +12,27 @@ function referenceParts(text,files){
  if(last<text.length)parts.push({text:text.slice(last)});
  return parts;
 }
+// 候选列表是模糊匹配：“办公室.png”也会命中“主管办公室.png”。
+// 必须按完整文件名挑，否则会把两个不同素材当成同名，或者点到另一张。
+function pickCandidate(texts,name){
+ const norm=value=>String(value||'').replace(/\s+/g,' ').trim();
+ const wanted=norm(name);
+ const entries=(Array.isArray(texts)?texts:[]).map((raw,index)=>({index,text:norm(raw)}));
+ const exact=entries.filter(entry=>entry.text===wanted);
+ if(exact.length===1)return {index:exact[0].index};
+ if(exact.length>1)return {index:-1};
+ // 候选行可能带大小、格式等附加信息：文件名要在开头，后面紧跟空白。
+ const prefixed=entries.filter(entry=>entry.text.startsWith(wanted)&&/^(?:\s|$)/.test(entry.text.slice(wanted.length)));
+ if(prefixed.length===1)return {index:prefixed[0].index};
+ if(prefixed.length>1)return {index:-1};
+ // 兜底：文件名前面不能紧跟文字，避免“办公室.png”命中“主管办公室.png”。
+ const standalone=entries.filter(entry=>{
+  const at=entry.text.indexOf(wanted);
+  if(at<0)return false;
+  return !/[\p{L}\p{N}_-]/u.test(entry.text[at-1]||'');
+ });
+ return {index:standalone.length===1?standalone[0].index:-1};
+}
 async function bindReferences(page,editor,text,files,signal){
  const parts=referenceParts(text,files);const expected=parts.filter(p=>p.index!==undefined);
  if(!expected.length){await editor.fill(text);return {text,bindings:[]};}
@@ -34,8 +55,13 @@ async function bindReferences(page,editor,text,files,signal){
   const option=page.getByRole('option').filter({hasText:part.name});
   try { await option.first().waitFor({state:'visible',timeout:10000}); }
   catch { throw new Error('豆包素材候选未出现：'+part.name+'（已尝试输入 @'+query+'）'); }
-  if(await option.count()!==1)throw new Error('豆包素材候选不唯一：'+part.name);
-  await option.click();
+  const candidates=await option.allInnerTexts().catch(()=>[]);
+  const picked=pickCandidate(candidates,part.name);
+  if(picked.index<0){
+   const listed=(Array.isArray(candidates)?candidates:[]).map(item=>String(item).replace(/\s+/g,' ').trim()).filter(Boolean).join(' / ');
+   throw new Error('豆包素材候选无法唯一确定：'+part.name+(listed?'（候选：'+listed+'）':''));
+  }
+  await option.nth(picked.index).click();
   const nodes=await editor.locator('.node-inputEngineMention').evaluateAll(es=>es.map(e=>({name:e.textContent.trim(),src:e.querySelector('img')?.src||''})));
   const last=nodes.at(-1);
   if(nodes.length!==bindings.length+1||last.name!==part.name||last.src!==cards[part.index].src)throw new Error('豆包原生图片引用未核验通过：'+part.name);
@@ -46,4 +72,4 @@ async function bindReferences(page,editor,text,files,signal){
  if(actual.replace(/\s+/g,'')!==expectedText.replace(/\s+/g,''))throw new Error('图片引用插入后全文顺序或内容不一致，已停止发送');
  return {text:actual,bindings};
 }
-module.exports={referenceParts,bindReferences};
+module.exports={referenceParts,bindReferences,pickCandidate};

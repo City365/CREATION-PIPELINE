@@ -5,8 +5,8 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'h3-asset-layout-'));
-process.env.H3_DATA_DIR = dir;
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wmd-asset-layout-'));
+process.env.WMD_DATA_DIR = dir;
 const projects = require('../src/projects');
 const layout = require('../src/asset-layout');
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');

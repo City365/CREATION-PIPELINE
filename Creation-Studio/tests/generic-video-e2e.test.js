@@ -34,11 +34,11 @@ non_diegetic_music:
 N/A`;
 
 test('自定义视频渠道：OpenAI 视频兼容 + 通用任务式', { timeout: 120000 }, async () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'h3-gvideo-'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wmd-gvideo-'));
   const mock = await startMockCloud();
   const child = spawn(process.execPath, [path.join(ROOT, 'src', 'server.js')], {
     cwd: ROOT,
-    env: { ...process.env, APPDATA: path.join(tmp, 'appdata'), H3_PORT: String(PORT), H3_DATA_DIR: path.join(tmp, 'data') },
+    env: { ...process.env, APPDATA: path.join(tmp, 'appdata'), WMD_PORT: String(PORT), WMD_DATA_DIR: path.join(tmp, 'data') },
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   });

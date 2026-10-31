@@ -5,13 +5,14 @@
  *
  *   node evidence/gen-style-previews.cjs [--limit=1]
  *
- * 需要先起一个 H3 实例（默认 17836，临时库），并已注册 stylegen/test123。
+ * 需要先起一个创作台实例（默认 17821，临时库），并已注册 stylegen/test123。
  */
 const fs = require('node:fs');
+const path = require('node:path');
 
-const BASE = (process.env.H3_BASE || 'http://127.0.0.1:17821').replace(/\/+$/, '');
-const STYLES = process.env.H3_STYLES || 'D:/notebook/software/H3-Studio/data/styles.json';
-const OUT_DIR = process.env.H3_STYLE_IMAGE_DIR || 'D:/notebook/software/H3-Studio/data/styles/images';
+const BASE = (process.env.WMD_BASE || 'http://127.0.0.1:17821').replace(/\/+$/, '');
+const STYLES = process.env.WMD_STYLES || path.join(__dirname, '..', 'data', 'styles.json');
+const OUT_DIR = process.env.WMD_STYLE_IMAGE_DIR || path.join(__dirname, '..', 'data', 'styles', 'images');
 const LIMIT = Number((process.argv.find((x) => x.startsWith('--limit=')) || '').split('=')[1] || 0);
 
 let cookie = '';
@@ -42,8 +43,8 @@ function promptFor(style) {
 }
 
 (async () => {
-  const user = process.env.H3_USER || 'stylegen';
-  const pass = process.env.H3_PASS || 'test123';
+  const user = process.env.WMD_USER || 'stylegen';
+  const pass = process.env.WMD_PASS || 'test123';
   try {
     await call('/api/auth/login', { method: 'POST', body: JSON.stringify({ username: user, password: pass }) });
   } catch (err) {

@@ -5,7 +5,7 @@ const crypto = require('node:crypto');
 const config = require('./config');
 function createStore(directory) {
   const dir = () => directory || path.join(config.load().dataDir || config.DATA, 'creative');
-  const key = (kind,project) => { if(!['scene','image','edit','export'].includes(kind)) throw Error('未知文档类型');return path.join(dir(),kind+'-'+crypto.createHash('sha256').update(String(project||'default')).digest('hex').slice(0,24)+'.json'); };
+  const key = (kind,project) => { if(!['scene','image'].includes(kind)) throw Error('未知文档类型');return path.join(dir(),kind+'-'+crypto.createHash('sha256').update(String(project||'default')).digest('hex').slice(0,24)+'.json'); };
   function all(kind,project) {const file=key(kind,project);if(!fs.existsSync(file))return [];return JSON.parse(fs.readFileSync(file,'utf8'));}
   function save(kind,project,doc) {
     const rows=all(kind,project);const index=rows.findIndex(d=>d.id===doc.id);const previous=rows[index];

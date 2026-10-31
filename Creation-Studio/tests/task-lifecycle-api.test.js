@@ -4,9 +4,9 @@ const {spawn}=require('node:child_process');const {startMockCloud,PNG}=require('
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
 async function until(fn){for(let i=0;i<150;i++){try{const v=await fn();if(v)return v;}catch{}await delay(100);}throw Error('等待超时');}
 test('正式HTTP：统一单条与批量、草稿不发送、定时、分页、幂等、SSE和执行归档',{timeout:45000},async()=>{
- const dir=fs.mkdtempSync(path.join(os.tmpdir(),'h3-lifecycle-')),cloud=await startMockCloud();const base='http://127.0.0.1:18971';
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'wmd-lifecycle-')),cloud=await startMockCloud();const base='http://127.0.0.1:18971';
  let badServer;
- const child=spawn(process.execPath,[path.resolve(__dirname,'../src/server.js')],{env:{...process.env,H3_DATA_DIR:dir,H3_PORT:'18971',H3_AGENT_AUTOSTART:'0'},stdio:'ignore',windowsHide:true});
+ const child=spawn(process.execPath,[path.resolve(__dirname,'../src/server.js')],{env:{...process.env,WMD_DATA_DIR:dir,WMD_PORT:'18971',WMD_AGENT_AUTOSTART:'0'},stdio:'ignore',windowsHide:true});
  const api=async(url,body)=>{const res=await fetch(base+url,body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{});const json=await res.json();if(!res.ok||!json.ok)throw Error(JSON.stringify(json));return json.data;};
  const del=async(id)=>{const res=await fetch(base+'/api/events/'+id,{method:'DELETE'});const json=await res.json();if(!res.ok||!json.ok)throw Error(JSON.stringify(json));return json.data;};
  try{

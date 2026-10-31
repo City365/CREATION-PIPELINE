@@ -5,9 +5,11 @@ const fs = require('node:fs');
 const { EventEmitter } = require('node:events');
 const { readJSON, saveJSON } = require('./store');
 const TERMINAL = new Set(['completed', 'failed', 'cancelled', 'interrupted']);
+// 可用账号池里随机取一个，每个号被选中的概率相同。
+function pickRandom(list) { return list.length ? list[Math.floor(Math.random() * list.length)] : undefined; }
 class TaskQueue extends EventEmitter {
-  constructor({ directory, store, execute, concurrency = 3 }) {
-    super(); this.store = store; this.execute = execute; this.concurrency = concurrency;
+  constructor({ directory, store, execute, concurrency = 5, analyzeFailure = null }) {
+    super(); this.store = store; this.execute = execute; this.concurrency = concurrency; this.analyzeFailure = analyzeFailure;
     this.file = path.join(directory, 'tasks.json'); this.tasks = readJSON(this.file, []);
     this.busy = new Set(); this.running = new Map(); this.stopping = false;
     for (const t of this.tasks) {
@@ -82,6 +84,10 @@ class TaskQueue extends EventEmitter {
     if (TERMINAL.has(t.status)) return;
     Object.assign(t, patch, { updatedAt: new Date().toISOString() }); this.persist();
   }
+  /** 终态任务也允许补写诊断信息（失败后 AI 回填原因）。 */
+  annotate(t, patch) {
+    Object.assign(t, patch, { updatedAt: new Date().toISOString() }); this.persist();
+  }
   /** 没有产出成片就退回预扣额度；一个任务最多退一次。 */
   refundQuota(t, accountId) {
     if (!t.quotaCharged || !accountId) return false;
@@ -101,10 +107,10 @@ class TaskQueue extends EventEmitter {
       const usable = a => a.enabled && a.platform === t.platform && !this.busy.has(a.id) && this.store.canUse(a)
         && (!a.cooldownUntil || a.cooldownUntil <= Date.now()) && !excluded.has(a.id);
       const candidates = this.store.list().filter(usable);
-      // 指定的账号优先；其余账号里先挑今日剩余配额最多的，把负载摊开。
-      const remaining = a => Math.max(0, (a.quota?.limit ?? 0) - (a.quota?.used ?? 0));
+      // 指定了账号就优先用它；没指定时在可用账号池里随机取一个，
+      // 避免每次都按固定顺序落到同一个号上。
       const a = candidates.find(x => x.id === wanted)
-        || candidates.sort((x, y) => remaining(y) - remaining(x))[0];
+        || pickRandom(candidates);
       if (!a){if(t.message!=='等待可用账号：今日配额、冷却或占用限制')this.update(t,{message:'等待可用账号：今日配额、冷却或占用限制'});continue;}
       const switched = Boolean(wanted) && a.id !== wanted;
       this.busy.add(a.id); const controller = new AbortController(); this.running.set(t.id, controller);
@@ -113,7 +119,7 @@ class TaskQueue extends EventEmitter {
         if (controller.signal.aborted) return;
         if (!result || !path.isAbsolute(result.path) || !fs.existsSync(result.path)) throw new Error('任务没有返回真实本地文件');
         this.update(t, { status: 'completed', message: '已下载并校验', progress: 100, result });
-      }).catch(error => {
+      }).catch(async error => {
         if(error.code==='ACCOUNT_QUOTA_EXHAUSTED' && !controller.signal.aborted){
           // 平台判定这个号今日额度用完：拉黑它，把任务放回队列换下一个号。
           const next=[...new Set([...(t.excludedAccounts||[]),a.id])];
@@ -126,7 +132,25 @@ class TaskQueue extends EventEmitter {
         }
         if (!controller.signal.aborted) {
           this.refundQuota(t, a.id);
-          this.update(t, { status: 'failed', error: String(error.message || error), message: String(error.message || error), ...(error.uploadDiagnostics ? { uploadDiagnostics: error.uploadDiagnostics } : {}) });
+          const raw = String(error.message || error);
+          let analysis = null;
+          if (typeof this.analyzeFailure === 'function') {
+            try { analysis = await this.analyzeFailure(t, a, error); } catch { analysis = null; }
+          }
+          const extra = analysis ? {
+            failureAnalysis: analysis,
+            failureCategory: analysis.category,
+            failureReason: analysis.reason,
+            failureAdvice: analysis.advice,
+            failureAnalyzedAt: new Date().toISOString(),
+          } : {};
+          this.update(t, {
+            status: 'failed',
+            error: raw,
+            message: analysis?.reason || raw,
+            ...(error.uploadDiagnostics ? { uploadDiagnostics: error.uploadDiagnostics } : {}),
+            ...extra,
+          });
         }
       }).finally(() => { this.busy.delete(a.id); this.running.delete(t.id); this.kick(); });
     }

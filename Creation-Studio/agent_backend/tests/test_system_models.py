@@ -6,7 +6,7 @@ from app.models import factory
 
 @pytest.fixture
 def system_config(tmp_path, monkeypatch):
-    monkeypatch.setenv('H3_DATA_DIR', str(tmp_path))
+    monkeypatch.setenv('WMD_DATA_DIR', str(tmp_path))
     monkeypatch.setattr(settings, 'SETTINGS_PATH', tmp_path / 'agent.json')
     channels = [
         dict(id='gpt', name='GPT 渠道', model='gpt-test', type='openai-responses', active=True, enabled=True, baseUrl='http://127.0.0.1:12345/v1', apiKey='private-key', contextWindow=123456, maxTokens=1234),

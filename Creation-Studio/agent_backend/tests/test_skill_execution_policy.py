@@ -7,12 +7,12 @@ from app.harness.model_gateway import ModelGateway
 from app.models import factory
 
 def test_skill_profile_is_bounded_and_chat_unchanged(monkeypatch):
-    for key in ('H3_SKILL_RUN_TIMEOUT','H3_SKILL_MODEL_TIMEOUT','H3_MODEL_TIMEOUT'):monkeypatch.delenv(key,raising=False)
+    for key in ('WMD_SKILL_RUN_TIMEOUT','WMD_SKILL_MODEL_TIMEOUT','WMD_MODEL_TIMEOUT'):monkeypatch.delenv(key,raising=False)
     chat=policy.profile(SimpleNamespace(skill='',skill_id=None));skill=policy.profile(SimpleNamespace(skill='资产提取',skill_id='asset'))
     assert chat['seconds']==180 and chat['model_timeout']==120 and chat['model_calls']==8
     assert skill['seconds']==600 and skill['model_timeout']==300 and skill['model_calls']==16 and skill['tool_calls']==32
-    monkeypatch.setenv('H3_SKILL_RUN_TIMEOUT','999999');assert policy.profile(SimpleNamespace(skill='x'))['seconds']==1800
-    monkeypatch.setenv('H3_SKILL_MODEL_TIMEOUT','999999');assert policy.profile(SimpleNamespace(skill='x'))['model_timeout']==1800
+    monkeypatch.setenv('WMD_SKILL_RUN_TIMEOUT','999999');assert policy.profile(SimpleNamespace(skill='x'))['seconds']==1800
+    monkeypatch.setenv('WMD_SKILL_MODEL_TIMEOUT','999999');assert policy.profile(SimpleNamespace(skill='x'))['model_timeout']==1800
 
 def test_factory_uses_harness_timeout_without_sdk_retry(monkeypatch):
     captured={}
