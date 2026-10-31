@@ -127,3 +127,15 @@
 /* Tools 展开行也用同一个尾部箭头，别再出现前后两个 */
 .ask-ctx-tools summary::before { display: none; content: none; }
 .ask-ctx-tools summary { gap: 0; }
+
+/* Connectors / Outputs / Changes 的小图标与空值 */
+.ask-conn-badge { flex:none; width:16px; height:16px; display:inline-flex; align-items:center; justify-content:center; border:1px solid var(--wmd-border,#dde2e8); border-radius:4px; font-size:9.5px; line-height:1; color:var(--wmd-text-3,#8993a0); }
+.ask-file-ico { flex:none; width:16px; height:16px; display:inline-flex; align-items:center; justify-content:center; color:var(--wmd-text-3,#8993a0); }
+.ask-file-ico svg { width:15px; height:15px; }
+.ask-summary-file { display:flex; align-items:center; gap:8px; }
+.ask-file-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ask-output-empty { padding:6px 0; font-size:12px; color:var(--wmd-text-3,#8993a0); }
+.ask-changes { gap:10px; }
+.ask-changes-ico { flex:none; width:16px; height:16px; display:inline-flex; align-items:center; justify-content:center; color:var(--wmd-text-3,#8993a0); }
+.ask-changes-ico svg { width:15px; height:15px; }
+.ask-changes-text { flex:1; min-width:0; font-size:12px; color:var(--wmd-text-3,#8993a0); }

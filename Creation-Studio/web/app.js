@@ -6836,20 +6836,82 @@ function askEnvironmentHtml() {
     + `<div class="ask-env-row"><span class="ask-env-ico">${icon('branch')}</span><span class="ask-env-text is-muted">${esc(branch)}</span></div>`;
 }
 
+/* ---------- Connectors / Outputs / Changes 的小图标 ---------- */
+const ASK_FILE_SHAPES = {
+  folder: '<path d="M3 7a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/>',
+  text: '<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9Z"/><path d="M14 3v6h6M8 13h8M8 17h5"/>',
+  sheet: '<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9ZM14 3v6h6"/><path d="M8 13h8M8 17h8M12 13v5"/>',
+  code: '<path d="m9 8-4 4 4 4M15 8l4 4-4 4"/>',
+  image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="m4 18 5-5 4 4 3-3 4 4"/>',
+  video: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m10 9 5 3-5 3z"/>',
+  audio: '<path d="M9 18V6l10-2v12"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="16" r="2"/>',
+  pdf: '<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9ZM14 3v6h6"/><path d="M8 16c3-4 5 3 8-2"/>',
+  file: '<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9ZM14 3v6h6"/>',
+};
+
+// 按扩展名挑图标：文本 / 表格 / 代码 / 图片 / 视频 / 音频 / PDF / 其它
+function askFileKind(name) {
+  const ext = String(name || '').split('.').pop().toLowerCase();
+  if (!name || !ext || ext === String(name).toLowerCase()) return 'file';
+  if (['md', 'txt', 'markdown', 'log', 'rtf'].includes(ext)) return 'text';
+  if (['xlsx', 'xls', 'csv', 'tsv'].includes(ext)) return 'sheet';
+  if (['js', 'mjs', 'ts', 'tsx', 'jsx', 'py', 'json', 'html', 'css', 'sh', 'yml', 'yaml', 'sql'].includes(ext)) return 'code';
+  if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'svg'].includes(ext)) return 'image';
+  if (['mp4', 'webm', 'mov', 'mkv'].includes(ext)) return 'video';
+  if (['mp3', 'wav', 'm4a', 'ogg', 'flac'].includes(ext)) return 'audio';
+  if (ext === 'pdf') return 'pdf';
+  return 'file';
+}
+
+function askFileIcon(name, kind) {
+  const shape = ASK_FILE_SHAPES[kind || askFileKind(name)] || ASK_FILE_SHAPES.file;
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">${shape}</svg>`;
+}
+
+function askConnectorsHtml() {
+  const a = askState();
+  const toolsOk = a.toolsSupported !== false;
+  const skill = a.skillId ? askSkill(a.skillId).name : '';
+  const row = (badge, text, muted) => `<div class="ask-env-row"><span class="ask-conn-badge">${badge}</span><span class="ask-env-text${muted ? ' is-muted' : ''}">${esc(text)}</span></div>`;
+  return row('T', 'Tools · ' + (toolsOk ? 'available' : 'unavailable'), !toolsOk)
+    + row('S', 'Skill · ' + (skill || 'null'), !skill)
+    + row('C', 'MCP · null', true);
+}
+
+function askOutputsHtml(files, indexed) {
+  const list = files || [];
+  if (!list.length) return '<div class="ask-output-empty">null</div>';
+  const rows = list.slice(-10).map((item) => {
+    const name = item.type === 'artifact' ? (item.file && item.file.name) || '文件' : item.name || '文件';
+    const isFolder = !!(item.file && item.file.kind === 'folder');
+    const ico = `<span class="ask-file-ico">${askFileIcon(name, isFolder ? 'folder' : undefined)}</span>`;
+    return item.type === 'artifact'
+      ? `<button class="ask-summary-file" data-act="ask-preview" data-id="${esc(item.file.id)}">${ico}<span class="ask-file-name">${esc(name)}</span></button>`
+      : `<button class="ask-summary-file" data-act="ask-open-media" data-index="${item.mi}" data-media="${item.fi}">${ico}<span class="ask-file-name">${esc(name)}</span></button>`;
+  }).join('');
+  const more = (indexed && indexed.total ? indexed.total : list.length) > 10 ? '<small>展示最近 10 项，全部文件可在工作区查看。</small>' : '';
+  return rows + more;
+}
+
+// 改动统计还没有 GitHub 逻辑：固定一个小图标，值为 null
+function askChangesHtml() {
+  return '<div class="ask-changes"><span class="ask-changes-ico">'
+    + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M8 7v4M6 9h4M14 15h4"/></svg>'
+    + '</span><span class="ask-changes-text">null</span>'
+    + '<button type="button" class="ask-changes-pr" disabled title="尚未接入 GitHub">Create PR</button></div>'
+    + '<p class="ask-changes-note">GitHub 改动统计待接入，框位保留。</p>';
+}
+
 function askSummaryHtml(chat) {
   const a=askState(),stats=askContextStats();
   const indexed=a.summaryFiles?.project===askProjectId()&&a.summaryFiles?.sid===a.activeId?a.summaryFiles:null;
   const files=indexed?indexed.items.map(file=>({type:'artifact',file})):askSessionFiles(chat);
-  const outputs=files.length?files.slice(-10).map(f=>f.type==='artifact'
-    ?'<button class="ask-summary-file" data-act="ask-preview" data-id="'+esc(f.file.id)+'">'+esc(f.file.name)+'</button>'
-    :'<button class="ask-summary-file" data-act="ask-open-media" data-index="'+f.mi+'" data-media="'+f.fi+'">'+esc(f.name)+'</button>').join('')
-    :'<p>暂无已交付文件</p>';
   return '<aside class="ask-summary" aria-label="Summary"><header><b>Summary</b><button class="ask-icon-btn" data-act="ask-summary" aria-label="关闭摘要">×</button></header>'+
     '<details open class="ask-summary-sec"><summary>Environment</summary>'+askEnvironmentHtml()+'</details>'+
     '<details open class="ask-summary-sec"><summary>Context</summary>'+askContextBlockHtml(chat,stats)+'</details>'+
-    '<details open class="ask-summary-sec"><summary>Connectors</summary><p>Local tools · '+(a.toolsSupported===false?'当前模型不支持工具调用':'工具调用可用')+'</p><p>Skill · '+esc(a.skillId?askSkill(a.skillId).name:'未选择')+'</p></details>'+
-    '<details open class="ask-summary-sec"><summary>Outputs</summary>'+outputs+((indexed?.total||files.length)>10?'<small>展示最近 10 项，全部文件可在工作区查看。</small>':'')+'</details>'+
-    '<details open class="ask-summary-sec"><summary>Changes</summary><div class="ask-changes"><span class="ask-changes-diff"><b>+0</b><i>−0</i></span><button type="button" class="ask-changes-pr" disabled title="尚未接入 GitHub">Create PR</button></div><p class="ask-changes-note">GitHub 改动统计待接入，框位保留。</p></details></aside>';
+    '<details open class="ask-summary-sec"><summary>Connectors</summary>'+askConnectorsHtml()+'</details>'+
+    '<details open class="ask-summary-sec"><summary>Outputs</summary>'+askOutputsHtml(files,indexed)+'</details>'+
+    '<details open class="ask-summary-sec"><summary>Changes</summary>'+askChangesHtml()+'</details></aside>';
 }
 
 /* 知识库 / 插件管理 */

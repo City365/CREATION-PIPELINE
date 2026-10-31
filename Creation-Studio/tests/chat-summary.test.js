@@ -15,6 +15,9 @@ new Function('module', 'exports', `
 const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const state = { project: { name: '我的同桌测试', dir: 'D:\\\\notebook\\\\AIGC\\\\WENYUN.M-DESKTOP-Projects\\\\我的同桌测试-643a02' } };
 const askProjectId = () => 'proj-b1a9643a02';
+let CURRENT = { toolsSupported: true, skillId: '' };
+const askState = () => CURRENT;
+const askSkill = () => ({ name: '小说创作' });
 const askFmtTokens = (value) => {
   const n = Math.max(0, Math.round(Number(value) || 0));
   if (n >= 1000000) return (n / 1000000).toFixed(n % 1000000 ? 1 : 0) + 'm';
@@ -22,10 +25,10 @@ const askFmtTokens = (value) => {
   return String(n);
 };
 ${source.slice(start, end)}
-module.exports = { askContextReport, askContextBlockHtml, askEnvironmentHtml, askFolderName };
+module.exports = { askContextReport, askContextBlockHtml, askEnvironmentHtml, askFolderName, askConnectorsHtml, askOutputsHtml, askChangesHtml, askFileKind, setConn: (v) => { CURRENT = { ...CURRENT, ...v }; } };
 `)(box, box.exports);
 
-const { askContextReport, askContextBlockHtml, askEnvironmentHtml, askFolderName } = box.exports;
+const { askContextReport, askContextBlockHtml, askEnvironmentHtml, askFolderName, askConnectorsHtml, askOutputsHtml, askChangesHtml, askFileKind, setConn } = box.exports;
 
 const REPORT = {
   schema_version: 'context-report/1',
@@ -115,4 +118,50 @@ test('折叠箭头在文字后面（简单 ›），不用系统自带的黑色�
   assert.match(css, /\.ask-summary summary::marker \{ content: ''; \}/);
   assert.match(css, /\.ask-summary summary::after \{ content: '›'/);
   assert.match(css, /\.ask-summary details\[open\] > summary::after \{ transform: rotate\(90deg\); \}/);
+});
+
+test('Connectors 用 T / S / C 小徽标，没有的显示 null', () => {
+  setConn({ toolsSupported: true, skillId: '' });
+  const html = askConnectorsHtml();
+  assert.equal((html.match(/ask-conn-badge/g) || []).length, 3);
+  assert.match(html, />T</);
+  assert.match(html, />S</);
+  assert.match(html, />C</);
+  assert.match(html, /Tools · available/);
+  assert.match(html, /Skill · null/);
+  assert.match(html, /MCP · null/);
+  setConn({ toolsSupported: false, skillId: 'novel' });
+  const on = askConnectorsHtml();
+  assert.match(on, /Tools · unavailable/);
+  assert.match(on, /Skill · 小说创作/);
+});
+
+test('输出文件按类型给图标：md 文本、xlsx 表格、py 代码…', () => {
+  assert.equal(askFileKind('夹层·档案员系列开篇（定稿）.md'), 'text');
+  assert.equal(askFileKind('分集表.xlsx'), 'sheet');
+  assert.equal(askFileKind('render.js'), 'code');
+  assert.equal(askFileKind('build.py'), 'code');
+  assert.equal(askFileKind('封面.png'), 'image');
+  assert.equal(askFileKind('成片.mp4'), 'video');
+  assert.equal(askFileKind('配音.mp3'), 'audio');
+  assert.equal(askFileKind('合同.pdf'), 'pdf');
+  assert.equal(askFileKind('包.bin'), 'file');
+  const html = askOutputsHtml([{ type: 'artifact', file: { id: 'f1', name: '分集表.xlsx' } }, { type: 'artifact', file: { id: 'f2', name: '第一集.md' } }]);
+  assert.match(html, /ask-file-ico/);
+  assert.match(html, /<span class="ask-file-name">分集表.xlsx<\/span>/);
+  assert.equal((html.match(/<svg/g) || []).length, 2);
+});
+
+test('没有输出文件就显示灰色的 null', () => {
+  const html = askOutputsHtml([], null);
+  assert.equal(html, '<div class="ask-output-empty">null</div>');
+});
+
+test('Changes 固定一个小图标 + null，不再摆 +0 −0', () => {
+  const html = askChangesHtml();
+  assert.match(html, /ask-changes-ico/);
+  assert.match(html, /<span class="ask-changes-text">null<\/span>/);
+  assert.match(html, /Create PR/);
+  assert.match(html, /disabled/);
+  assert.equal(html.includes('+0'), false);
 });
