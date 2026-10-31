@@ -7158,6 +7158,7 @@ function askFilePaneHtml(embedded = false) {
     <header class="ask-file-head">
       <span class="ask-file-icon">${kind === 'video' ? '🎬' : kind === 'image' ? '🖼' : '📄'}</span>
       <div><b title="${esc(name)}">${esc(name)}</b><small>${kindLabel}预览${bytes ? ' · ' + fmtBytes(bytes) : ''}</small></div>
+      ${file && data && ['text', 'markdown', 'html'].includes(data.kind) ? `<button type="button" class="ask-icon-btn" data-act="ask-copy-file-content" data-id="${esc(file.id)}" title="复制文件内容" aria-label="复制文件内容"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></svg></button>` : ''}
       ${downloadUrl ? `<a class="ask-icon-btn" href="${esc(downloadUrl)}" download="${esc(name)}" title="下载原件">⇩</a>` : ''}
       ${file ? `<button type="button" class="ask-icon-btn" data-act="ask-reveal-pane" data-id="${esc(file.id)}" title="打开文件所在文件夹"><span class="ask-icon-folder">📁</span></button>` : ''}
       <button type="button" class="ask-icon-btn" data-act="ask-expand-preview" title="${expanded ? '缩小预览' : '展开预览'}">${expanded ? '⤡' : '⤢'}</button>
@@ -9080,6 +9081,18 @@ function bindAsk(root) {
       if (act === 'ask-expand-preview') {
         a.previewExpanded = !a.previewExpanded;
         return askRenderAll();
+      }
+      if (act === 'ask-copy-file-content') {
+        if (!btn.dataset.id || btn.disabled) return;
+        btn.disabled = true;
+        try {
+          const response = await askApi('/workspace/files/' + encodeURIComponent(btn.dataset.id) + '/raw');
+          if (!response.ok) throw new Error('读取文件失败');
+          await navigator.clipboard.writeText(await response.text());
+          toast('已复制文件完整内容');
+        } catch (err) { toast(err.message || '复制失败', true); }
+        finally { btn.disabled = false; }
+        return;
       }
       if (act === 'ask-reveal-pane') {
         const id = btn.dataset.id;
