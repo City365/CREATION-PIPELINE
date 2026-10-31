@@ -108,3 +108,11 @@ test('项目文件夹名取目录最后一段，不同项目不同', () => {
   assert.equal(askFolderName('D:\\x\\骨灯短剧'), '骨灯短剧');
   assert.equal(askFolderName(''), '');
 });
+
+test('折叠箭头在文字后面（简单 ›），不用系统自带的黑色三角', () => {
+  const css = fs.readFileSync(path.join(__dirname, '../web/agent-workspace.css'), 'utf8');
+  assert.match(css, /\.ask-summary summary::-webkit-details-marker \{ display: none; \}/);
+  assert.match(css, /\.ask-summary summary::marker \{ content: ''; \}/);
+  assert.match(css, /\.ask-summary summary::after \{ content: '›'/);
+  assert.match(css, /\.ask-summary details\[open\] > summary::after \{ transform: rotate\(90deg\); \}/);
+});

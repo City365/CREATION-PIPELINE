@@ -116,3 +116,14 @@
 .ask-env-ico svg { width:15px; height:15px; }
 .ask-env-text { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--wmd-text,#1f2328); }
 .ask-env-text.is-muted { color:var(--wmd-text-3,#8993a0); }
+
+/* 折叠箭头放到文字后面：简单的 ›，不要系统自带的黑色三角 */
+.ask-summary summary { list-style: none; display: flex; align-items: center; gap: 4px; }
+.ask-summary summary::-webkit-details-marker { display: none; }
+.ask-summary summary::marker { content: ''; }
+.ask-summary summary::after { content: '›'; margin-left: 2px; color: var(--wmd-text-3, #8993a0); font-weight: 400; transition: transform .15s ease; }
+.ask-summary details[open] > summary::after { transform: rotate(90deg); }
+
+/* Tools 展开行也用同一个尾部箭头，别再出现前后两个 */
+.ask-ctx-tools summary::before { display: none; content: none; }
+.ask-ctx-tools summary { gap: 0; }
