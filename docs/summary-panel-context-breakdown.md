@@ -9,7 +9,7 @@
 | 区块 | 内容 |
 | --- | --- |
 | `Environment` | Workspace（此计算机）/ Project / Path（项目目录，只显示尾两段）/ Model / Permission |
-| `Context` | `N% used` + `已用 / 窗口`；彩色堆叠条；五个固定环节逐行 `tokens + %`；`22 messages · 26 tools · 4 skills`；`› Tools · 26` 可展开看工具名；估算口径说明 |
+| `Context` | `N% used` + `已用 / 窗口`；彩色堆叠条；六个固定环节逐行 `tokens + %`；`› Tools · 26` 可展开看工具名（面板上不解释 token 怎么算的） |
 | `Connectors` | 本地工具是否可用、当前技能 |
 | `Outputs` | 最近 10 份交付文件 |
 | `Changes` | `+0 −0` + 灰掉的 `Create PR`，下方一行说明「GitHub 改动统计待接入，框位保留」 |

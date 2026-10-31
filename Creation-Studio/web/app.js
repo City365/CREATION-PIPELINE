@@ -6792,7 +6792,7 @@ function askContextBlockHtml(chat, stats) {
     const ratio = Math.max(0, Math.min(1, stats.ratio || 0));
     return `<div class="ask-summary-usage"><b>${Math.round(ratio * 100)}% used</b><span>${askFmtTokens(stats.used)} / ${askFmtTokens(stats.total)}</span></div>
       <div class="ask-ctx-bar"><i class="ask-ctx-seg is-messages" style="width:${(ratio * 100).toFixed(2)}%"></i></div>
-      <p class="ask-summary-hint">这个会话还没跑过：分项统计在第一次运行后出现。</p>`;
+      <p class="ask-summary-hint">这个会话还没跑过</p>`;
   }
   const total = Math.max(1, Number(report.window) || stats.total || 1);
   const items = report.items || [];
@@ -6804,18 +6804,15 @@ function askContextBlockHtml(chat, stats) {
       <span class="ask-ctx-tokens">${askFmtTokens(item.tokens)}</span>
       <span class="ask-ctx-pct">${(Number(item.percent) || 0).toFixed(1)}%</span>
     </div>`).join('');
-  const meta = [report.messages ? report.messages + ' messages' : '', report.tool_count ? report.tool_count + ' tools' : '',
-    report.skill_count ? report.skill_count + ' skills' : ''].filter(Boolean).join(' · ');
   const names = Array.isArray(report.tool_names) ? report.tool_names : [];
   const toolsMore = (report.tool_count || names.length)
     ? `<details class="ask-ctx-tools"><summary>Tools · ${report.tool_count || names.length}</summary><div class="ask-ctx-tool-list">${names.length ? names.map((name) => `<span>${esc(name)}</span>`).join('') : '<span>未记录工具名</span>'}</div></details>`
     : '';
+  // 只留固定模块的用量：不讲口径，也不摆额外的计数行
   return `<div class="ask-summary-usage"><b>${(Number(report.used_percent) || 0).toFixed(0)}% used</b><span>${askFmtTokens(report.used)} / ${askFmtTokens(total)}</span></div>
     <div class="ask-ctx-bar">${segments}</div>
     ${rows}
-    ${meta ? `<div class="ask-ctx-meta">${esc(meta)}</div>` : ''}
-    ${toolsMore}
-    <small class="ask-summary-hint">估算口径：ASCII 4 字符≈1 token、中文 1.5 字符≈1 token；Autocompact buffer 是给输出与压缩预留的 15%。</small>`;
+    ${toolsMore}`;
 }
 
 

@@ -74,8 +74,9 @@ test('有运行回执时六个固定环节各一行，标题为英文', () => {
   }
   assert.match(html, /14% used/);
   assert.match(html, /75400|75\.4k/);
-  assert.match(html, /22 messages · 26 tools · 4 skills/);
-  assert.match(html, /Autocompact buffer 是给输出与压缩预留的 15%/);
+  assert.equal(html.includes('messages ·'), false, '只要固定模块，不加额外计数行');
+  assert.equal(html.includes('估算口径'), false, '面板不该解释 token 怎么算的');
+  assert.equal(html.includes('这是给输出'), false);
   // 每项占比例挂在堆叠条上，宽度按窗口归一
   assert.match(html, /class="ask-ctx-seg is-messages" style="width:7\.54%"/);
   assert.match(html, /class="ask-ctx-seg is-free" style="width:71\.06%"/);
