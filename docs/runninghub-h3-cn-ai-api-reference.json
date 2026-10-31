@@ -1,0 +1,878 @@
+{
+  "schemaVersion": 1,
+  "checkedDate": "2026-10-31",
+  "scope": "Read-only public metadata and account verification; no generation submitted",
+  "credentialVerification": {
+    "cn": "Previously verified via accountStatus",
+    "ai": "Verified via accountStatus"
+  },
+  "endpoints": {
+    "metadata": {
+      "method": "POST",
+      "path": "/api/webapp/detail",
+      "body": {
+        "webappId": "APPLICATION_ID"
+      },
+      "auth": false
+    },
+    "account": {
+      "method": "POST",
+      "path": "/uc/openapi/accountStatus",
+      "body": {
+        "apikey": "API_KEY"
+      },
+      "auth": "Bearer"
+    },
+    "upload": {
+      "method": "POST",
+      "path": "/openapi/v2/media/upload/binary",
+      "multipartField": "file",
+      "auth": "Bearer"
+    },
+    "submit": {
+      "method": "POST",
+      "path": "/openapi/v2/run/ai-app/{applicationId}",
+      "auth": "Bearer"
+    },
+    "query": {
+      "method": "POST",
+      "path": "/openapi/v2/query",
+      "body": {
+        "taskId": "TASK_ID"
+      },
+      "auth": "Bearer"
+    }
+  },
+  "workflows": [
+    {
+      "site": "cn",
+      "baseUrl": "https://www.runninghub.cn",
+      "applicationId": "2107825677151068161",
+      "screenshotLabel": "1080P 二采12+4",
+      "currentName": "H3｜1080p 多参・二采12+4 HyperVAE",
+      "sourceUrl": "https://www.runninghub.cn/call-api/api-detail/2107825677151068161?apiType=4",
+      "metadataEndpoint": "/api/webapp/detail",
+      "verified": true,
+      "prompt": {
+        "nodeId": "263",
+        "fieldName": "text"
+      },
+      "duration": {
+        "nodeId": "259",
+        "fieldName": "value",
+        "type": "FLOAT",
+        "observedDefault": 15,
+        "businessMin": null,
+        "businessMax": null
+      },
+      "aspectRatio": {
+        "nodeId": "252",
+        "fieldName": "aspect_ratio",
+        "observedDefault": "16:9 (Widescreen)",
+        "options": [
+          "1:1 (Square)",
+          "2:3 (Portrait Photo)",
+          "3:2 (Photo)",
+          "3:4 (Portrait Standard)",
+          "4:3 (Standard)",
+          "9:16 (Portrait Widescreen)",
+          "16:9 (Widescreen)",
+          "21:9 (Ultrawide)"
+        ]
+      },
+      "referenceImages": {
+        "count": 9,
+        "publicInputOrder": [
+          {
+            "nodeId": "51",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "333",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "335",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "350",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "337",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "339",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "341",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "348",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "349",
+            "fieldName": "image"
+          }
+        ],
+        "pictureSemanticOrderVerified": false
+      },
+      "referenceAudioCount": 0,
+      "referenceVideoCount": 0,
+      "finalOutputNode": null,
+      "credentialRequiredForMetadata": false
+    },
+    {
+      "site": "cn",
+      "baseUrl": "https://www.runninghub.cn",
+      "applicationId": "2108112692224544769",
+      "screenshotLabel": "1024P",
+      "currentName": "H3｜1080P 多参·INT8解码（原1024P）",
+      "sourceUrl": "https://www.runninghub.cn/call-api/api-detail/2108112692224544769?apiType=4",
+      "metadataEndpoint": "/api/webapp/detail",
+      "verified": true,
+      "prompt": {
+        "nodeId": "176",
+        "fieldName": "prompt"
+      },
+      "duration": {
+        "nodeId": "151",
+        "fieldName": "value",
+        "type": "INT",
+        "observedDefault": 15,
+        "businessMin": null,
+        "businessMax": null
+      },
+      "aspectRatio": {
+        "nodeId": "177",
+        "fieldName": "aspect_ratio",
+        "observedDefault": "9:16 (Portrait Widescreen)",
+        "options": [
+          "1:1 (Square)",
+          "2:3 (Portrait Photo)",
+          "3:2 (Photo)",
+          "3:4 (Portrait Standard)",
+          "4:3 (Standard)",
+          "9:16 (Portrait Widescreen)",
+          "16:9 (Widescreen)",
+          "21:9 (Ultrawide)"
+        ]
+      },
+      "referenceImages": {
+        "count": 9,
+        "publicInputOrder": [
+          {
+            "nodeId": "150",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "152",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "155",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "156",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "178",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "179",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "180",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "181",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "182",
+            "fieldName": "image"
+          }
+        ],
+        "pictureSemanticOrderVerified": false
+      },
+      "referenceAudioCount": 0,
+      "referenceVideoCount": 0,
+      "finalOutputNode": null,
+      "credentialRequiredForMetadata": false
+    },
+    {
+      "site": "cn",
+      "baseUrl": "https://www.runninghub.cn",
+      "applicationId": "2107126425336766466",
+      "screenshotLabel": "720P",
+      "currentName": "H3｜720p 多参·双采加强（10+4）",
+      "sourceUrl": "https://www.runninghub.cn/call-api/api-detail/2107126425336766466?apiType=4",
+      "metadataEndpoint": "/api/webapp/detail",
+      "verified": true,
+      "prompt": {
+        "nodeId": "848",
+        "fieldName": "prompt"
+      },
+      "duration": {
+        "nodeId": "259",
+        "fieldName": "value",
+        "type": "FLOAT",
+        "observedDefault": 15,
+        "businessMin": null,
+        "businessMax": null
+      },
+      "aspectRatio": {
+        "nodeId": "252",
+        "fieldName": "aspect_ratio",
+        "observedDefault": "16:9 (Widescreen)",
+        "options": [
+          "1:1 (Square)",
+          "2:3 (Portrait Photo)",
+          "3:2 (Photo)",
+          "3:4 (Portrait Standard)",
+          "4:3 (Standard)",
+          "9:16 (Portrait Widescreen)",
+          "16:9 (Widescreen)",
+          "21:9 (Ultrawide)"
+        ]
+      },
+      "referenceImages": {
+        "count": 9,
+        "publicInputOrder": [
+          {
+            "nodeId": "854",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "856",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "857",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "858",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "859",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "860",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "861",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "862",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "863",
+            "fieldName": "image"
+          }
+        ],
+        "pictureSemanticOrderVerified": false
+      },
+      "referenceAudioCount": 0,
+      "referenceVideoCount": 0,
+      "finalOutputNode": null,
+      "credentialRequiredForMetadata": false
+    },
+    {
+      "site": "cn",
+      "baseUrl": "https://www.runninghub.cn",
+      "applicationId": "2109183461906014210",
+      "screenshotLabel": "736P",
+      "currentName": "H3｜736P-无损融合单采",
+      "sourceUrl": "https://www.runninghub.cn/call-api/api-detail/2109183461906014210?apiType=4",
+      "metadataEndpoint": "/api/webapp/detail",
+      "verified": true,
+      "prompt": {
+        "nodeId": "248",
+        "fieldName": "text"
+      },
+      "duration": {
+        "nodeId": "227",
+        "fieldName": "value",
+        "type": "FLOAT",
+        "observedDefault": 15,
+        "businessMin": null,
+        "businessMax": null
+      },
+      "aspectRatio": {
+        "nodeId": "228",
+        "fieldName": "aspect_ratio",
+        "observedDefault": "16:9 (Widescreen)",
+        "options": [
+          "1:1 (Square)",
+          "2:3 (Portrait Photo)",
+          "3:2 (Photo)",
+          "3:4 (Portrait Standard)",
+          "4:3 (Standard)",
+          "9:16 (Portrait Widescreen)",
+          "16:9 (Widescreen)",
+          "21:9 (Ultrawide)"
+        ]
+      },
+      "referenceImages": {
+        "count": 9,
+        "publicInputOrder": [
+          {
+            "nodeId": "199",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "188",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "189",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "190",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "191",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "192",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "243",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "244",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "245",
+            "fieldName": "image"
+          }
+        ],
+        "pictureSemanticOrderVerified": false
+      },
+      "referenceAudioCount": 0,
+      "referenceVideoCount": 0,
+      "finalOutputNode": null,
+      "credentialRequiredForMetadata": false
+    },
+    {
+      "site": "cn",
+      "baseUrl": "https://www.runninghub.cn",
+      "applicationId": "2107451561470418946",
+      "screenshotLabel": "736P 48G提升画质",
+      "currentName": "H3｜736p 多参·双阶段通用(48G限制)",
+      "sourceUrl": "https://www.runninghub.cn/call-api/api-detail/2107451561470418946?apiType=4",
+      "metadataEndpoint": "/api/webapp/detail",
+      "verified": true,
+      "prompt": {
+        "nodeId": "28",
+        "fieldName": "prompt"
+      },
+      "duration": {
+        "nodeId": "27",
+        "fieldName": "value",
+        "type": "FLOAT",
+        "observedDefault": 15,
+        "businessMin": null,
+        "businessMax": null
+      },
+      "aspectRatio": {
+        "nodeId": "29",
+        "fieldName": "aspect_ratio",
+        "observedDefault": "16:9 (Widescreen)",
+        "options": [
+          "1:1 (Square)",
+          "2:3 (Portrait Photo)",
+          "3:2 (Photo)",
+          "3:4 (Portrait Standard)",
+          "4:3 (Standard)",
+          "9:16 (Portrait Widescreen)",
+          "16:9 (Widescreen)",
+          "21:9 (Ultrawide)"
+        ]
+      },
+      "referenceImages": {
+        "count": 9,
+        "publicInputOrder": [
+          {
+            "nodeId": "66",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "58",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "65",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "59",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "60",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "61",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "62",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "63",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "64",
+            "fieldName": "image"
+          }
+        ],
+        "pictureSemanticOrderVerified": false
+      },
+      "referenceAudioCount": 0,
+      "referenceVideoCount": 0,
+      "finalOutputNode": null,
+      "credentialRequiredForMetadata": false
+    },
+    {
+      "site": "cn",
+      "baseUrl": "https://www.runninghub.cn",
+      "applicationId": "2112164973278482434",
+      "screenshotLabel": "736P武戏",
+      "currentName": "H3 | 官流736P（武戏/特效）",
+      "sourceUrl": "https://www.runninghub.cn/call-api/api-detail/2112164973278482434?apiType=4",
+      "metadataEndpoint": "/api/webapp/detail",
+      "verified": true,
+      "prompt": {
+        "nodeId": "197",
+        "fieldName": "text"
+      },
+      "duration": {
+        "nodeId": "132",
+        "fieldName": "value",
+        "type": "FLOAT",
+        "observedDefault": 15,
+        "businessMin": null,
+        "businessMax": null
+      },
+      "aspectRatio": {
+        "nodeId": "115",
+        "fieldName": "aspect_ratio",
+        "observedDefault": "16:9 (Widescreen)",
+        "options": [
+          "1:1 (Square)",
+          "2:3 (Portrait Photo)",
+          "3:2 (Photo)",
+          "3:4 (Portrait Standard)",
+          "4:3 (Standard)",
+          "9:16 (Portrait Widescreen)",
+          "16:9 (Widescreen)",
+          "21:9 (Ultrawide)"
+        ]
+      },
+      "referenceImages": {
+        "count": 9,
+        "publicInputOrder": [
+          {
+            "nodeId": "186",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "187",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "188",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "189",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "190",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "191",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "192",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "193",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "194",
+            "fieldName": "image"
+          }
+        ],
+        "pictureSemanticOrderVerified": false
+      },
+      "referenceAudioCount": 0,
+      "referenceVideoCount": 0,
+      "finalOutputNode": null,
+      "credentialRequiredForMetadata": false
+    },
+    {
+      "site": "ai",
+      "baseUrl": "https://www.runninghub.ai",
+      "applicationId": "2108408815590051841",
+      "screenshotLabel": "国际1080P",
+      "currentName": "H3｜1080p 多参・二采12+4 HyperVAE",
+      "sourceUrl": "https://www.runninghub.ai/zh-CN/call-api/api-detail/2108408815590051841?apiType=4",
+      "metadataEndpoint": "/api/webapp/detail",
+      "verified": true,
+      "prompt": {
+        "nodeId": "263",
+        "fieldName": "text"
+      },
+      "duration": {
+        "nodeId": "259",
+        "fieldName": "value",
+        "type": "FLOAT",
+        "observedDefault": 15,
+        "businessMin": null,
+        "businessMax": null
+      },
+      "aspectRatio": {
+        "nodeId": "252",
+        "fieldName": "aspect_ratio",
+        "observedDefault": "16:9 (Widescreen)",
+        "options": [
+          "1:1 (Square)",
+          "2:3 (Portrait Photo)",
+          "3:2 (Photo)",
+          "3:4 (Portrait Standard)",
+          "4:3 (Standard)",
+          "9:16 (Portrait Widescreen)",
+          "16:9 (Widescreen)",
+          "21:9 (Ultrawide)"
+        ]
+      },
+      "referenceImages": {
+        "count": 9,
+        "publicInputOrder": [
+          {
+            "nodeId": "333",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "335",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "350",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "337",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "339",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "51",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "341",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "348",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "349",
+            "fieldName": "image"
+          }
+        ],
+        "pictureSemanticOrderVerified": false
+      },
+      "referenceAudioCount": 0,
+      "referenceVideoCount": 0,
+      "finalOutputNode": null,
+      "credentialRequiredForMetadata": false
+    },
+    {
+      "site": "ai",
+      "baseUrl": "https://www.runninghub.ai",
+      "applicationId": "2108408924982960129",
+      "screenshotLabel": "国际720P",
+      "currentName": "H3｜720p 多参·双采加强（10+4）",
+      "sourceUrl": "https://www.runninghub.ai/zh-CN/call-api/api-detail/2108408924982960129?apiType=4",
+      "metadataEndpoint": "/api/webapp/detail",
+      "verified": true,
+      "prompt": {
+        "nodeId": "848",
+        "fieldName": "prompt"
+      },
+      "duration": {
+        "nodeId": "259",
+        "fieldName": "value",
+        "type": "FLOAT",
+        "observedDefault": 15,
+        "businessMin": null,
+        "businessMax": null
+      },
+      "aspectRatio": {
+        "nodeId": "252",
+        "fieldName": "aspect_ratio",
+        "observedDefault": "16:9 (Widescreen)",
+        "options": [
+          "1:1 (Square)",
+          "2:3 (Portrait Photo)",
+          "3:2 (Photo)",
+          "3:4 (Portrait Standard)",
+          "4:3 (Standard)",
+          "9:16 (Portrait Widescreen)",
+          "16:9 (Widescreen)",
+          "21:9 (Ultrawide)"
+        ]
+      },
+      "referenceImages": {
+        "count": 9,
+        "publicInputOrder": [
+          {
+            "nodeId": "854",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "856",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "857",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "858",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "859",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "860",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "861",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "862",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "863",
+            "fieldName": "image"
+          }
+        ],
+        "pictureSemanticOrderVerified": false
+      },
+      "referenceAudioCount": 0,
+      "referenceVideoCount": 0,
+      "finalOutputNode": null,
+      "credentialRequiredForMetadata": false
+    },
+    {
+      "site": "ai",
+      "baseUrl": "https://www.runninghub.ai",
+      "applicationId": "2113984372448813058",
+      "screenshotLabel": "国际736P提升画质",
+      "currentName": "H3｜736p 多参·（提高画质）_24G防爆版",
+      "sourceUrl": "https://www.runninghub.ai/zh-CN/call-api/api-detail/2113984372448813058?apiType=4",
+      "metadataEndpoint": "/api/webapp/detail",
+      "verified": true,
+      "prompt": {
+        "nodeId": "28",
+        "fieldName": "prompt"
+      },
+      "duration": {
+        "nodeId": "27",
+        "fieldName": "value",
+        "type": "FLOAT",
+        "observedDefault": 15,
+        "businessMin": null,
+        "businessMax": null
+      },
+      "aspectRatio": {
+        "nodeId": "29",
+        "fieldName": "aspect_ratio",
+        "observedDefault": "16:9 (Widescreen)",
+        "options": [
+          "1:1 (Square)",
+          "2:3 (Portrait Photo)",
+          "3:2 (Photo)",
+          "3:4 (Portrait Standard)",
+          "4:3 (Standard)",
+          "9:16 (Portrait Widescreen)",
+          "16:9 (Widescreen)",
+          "21:9 (Ultrawide)"
+        ]
+      },
+      "referenceImages": {
+        "count": 9,
+        "publicInputOrder": [
+          {
+            "nodeId": "66",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "65",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "58",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "59",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "60",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "61",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "62",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "63",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "64",
+            "fieldName": "image"
+          }
+        ],
+        "pictureSemanticOrderVerified": false
+      },
+      "referenceAudioCount": 0,
+      "referenceVideoCount": 0,
+      "finalOutputNode": null,
+      "credentialRequiredForMetadata": false
+    },
+    {
+      "site": "ai",
+      "baseUrl": "https://www.runninghub.ai",
+      "applicationId": "2112481800195305473",
+      "screenshotLabel": "国际736P武戏",
+      "currentName": "H3 _ 官流736P（武戏_特效）",
+      "sourceUrl": "https://www.runninghub.ai/zh-CN/call-api/api-detail/2112481800195305473?apiType=4",
+      "metadataEndpoint": "/api/webapp/detail",
+      "verified": true,
+      "prompt": {
+        "nodeId": "197",
+        "fieldName": "text"
+      },
+      "duration": {
+        "nodeId": "132",
+        "fieldName": "value",
+        "type": "FLOAT",
+        "observedDefault": 15,
+        "businessMin": null,
+        "businessMax": null
+      },
+      "aspectRatio": {
+        "nodeId": "115",
+        "fieldName": "aspect_ratio",
+        "observedDefault": "16:9 (Widescreen)",
+        "options": [
+          "1:1 (Square)",
+          "2:3 (Portrait Photo)",
+          "3:2 (Photo)",
+          "3:4 (Portrait Standard)",
+          "4:3 (Standard)",
+          "9:16 (Portrait Widescreen)",
+          "16:9 (Widescreen)",
+          "21:9 (Ultrawide)"
+        ]
+      },
+      "referenceImages": {
+        "count": 9,
+        "publicInputOrder": [
+          {
+            "nodeId": "186",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "187",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "188",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "189",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "190",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "191",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "192",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "193",
+            "fieldName": "image"
+          },
+          {
+            "nodeId": "194",
+            "fieldName": "image"
+          }
+        ],
+        "pictureSemanticOrderVerified": false
+      },
+      "referenceAudioCount": 0,
+      "referenceVideoCount": 0,
+      "finalOutputNode": null,
+      "credentialRequiredForMetadata": false
+    }
+  ]
+}
