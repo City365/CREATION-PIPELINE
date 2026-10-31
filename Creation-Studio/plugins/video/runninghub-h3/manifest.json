@@ -1,0 +1,44 @@
+{
+  "id": "runninghub-h3",
+  "name": "RunningHub H3 国内站",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "entry": "index.js",
+  "provider": "runninghub",
+  "channelTypes": [
+    {
+      "id": "runninghub-h3-cn",
+      "label": "RunningHub H3 国内站",
+      "hint": "原生 JavaScript 接入；7 个国内 AI 应用，先上传参考图，再按节点映射提交。",
+      "fields": [
+        {
+          "key": "baseUrl",
+          "label": "接口地址",
+          "default": "https://www.runninghub.cn",
+          "required": true
+        },
+        {
+          "key": "apiKey",
+          "label": "API Key",
+          "type": "password"
+        },
+        {
+          "key": "instanceType",
+          "label": "实例类型",
+          "options": [
+            "default",
+            "plus",
+            "ultra"
+          ],
+          "default": "default"
+        },
+        {
+          "key": "maxConcurrent",
+          "label": "并发任务数",
+          "default": "3",
+          "placeholder": "1–16，以账号实际额度为准"
+        }
+      ]
+    }
+  ]
+}
