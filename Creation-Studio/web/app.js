@@ -6723,10 +6723,21 @@ function askOpenWorkspace() {
   const a=askState();
   a.capabilitiesOpen=true;
 }
+
+// 关闭整个工作区：右上角 ✕、以及「关掉最后一个标签」都走这里，效果完全一致
+function askCloseWorkspace() {
+  const a=askState();
+  try { AgentWorkspace?.sync?.(a); } catch { /* 工作区还没建起来时忽略 */ }
+  a.capabilitiesOpen=false;
+  a.previewFile=null;
+  a.previewData=null;
+  a.mediaPreview=null;
+  askRenderAll();
+}
 function askWorkspaceContext() {
   const a=askState();
   return {projectId:askProjectId(),sessionId:a.activeId,projectName:state.project?.name||'项目工作区',expanded:a.previewExpanded,
-    state:()=>a,render:askRenderAll,toast,open:askOpenWorkspace,
+    state:()=>a,render:askRenderAll,toast,open:askOpenWorkspace,close:askCloseWorkspace,
     apply:view=>{a.previewFile=view.file;a.previewData=view.data;a.previewError=view.error;a.previewSheet=view.sheet;a.previewSource=view.source;a.mediaPreview=view.media;},
     previewHtml:()=>askFilePaneHtml(true),trajectoryHtml:askTrajectoryHtml,loadTrajectory:askLoadTrajectory};
 }
@@ -8848,7 +8859,7 @@ function bindAsk(root) {
         return;
       }
       if (act === 'ask-toggle-cap') { a.capabilitiesOpen = !a.capabilitiesOpen; a.previewFile = null; a.previewData = null; a.mediaPreview = null; a.previewExpanded = false; if (a.capabilitiesOpen && a.panelTab === 'trajectory') askLoadTrajectory(); return askRenderAll(); }
-      if (act === 'ask-close-cap') { AgentWorkspace.sync(a);a.capabilitiesOpen=false;a.previewFile=null;a.previewData=null;a.mediaPreview=null;return askRenderAll(); }
+      if (act === 'ask-close-cap') { return askCloseWorkspace(); }
       if (act === 'ask-panel') {
         a.panelTab = btn.dataset.tab;
         if (a.panelTab === 'trajectory') { a.trajectory = null; askRenderAll(); return askLoadTrajectory(); }

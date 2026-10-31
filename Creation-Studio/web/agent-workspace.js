@@ -95,9 +95,16 @@
   function select(id) {sync(context.state());if(!current.tabs.some(t=>t.id===id))return;current.active=id;paint(current,true);}
   function close(id) {
     const s=current,index=s.tabs.findIndex(t=>t.id===id);if(index<0)return;
+    const wasActive=s.active===id;
     s.tabs.splice(index,1);
-    if(!s.tabs.length){s.tabs.push({id:'start',type:'start',name:'新标签页'});s.active='start';}
-    else if(s.active===id)s.active=s.tabs[Math.max(0,index-1)].id;
+    // 和浏览器一致：关掉最后一个标签就等于退出工作区（与右上角 ✕ 完全一样）。
+    // 同时把标签栏复位成一个空白启动页，下次打开不会只剩空壳。
+    if(!s.tabs.length){
+      s.tabs.push({id:'start',type:'start',name:'新标签页'});
+      s.active='start';
+      return context.close ? context.close() : paint(s,true);
+    }
+    if(wasActive)s.active=s.tabs[Math.max(0,index-1)].id;
     paint(s,true);
   }
   function tree(path='',level=0) {
