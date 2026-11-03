@@ -58,3 +58,15 @@ test('界面不再出现旧的空占位文案', () => {
   assert.ok(source.includes('askLoadMessageTrace'), '按运行 id 拉取轨迹');
   assert.ok(source.includes('trajectory?run_id='), '只取这一轮的轨迹');
 });
+
+test('展开数据保留完整命令换行和完整执行结果', () => {
+  const command = 'line one\n' + 'x'.repeat(400);
+  const output = 'first\nsecond\n' + 'y'.repeat(1500);
+  const rows = askTraceRows({ trajectory: [
+    {role:'assistant',tool_calls:[{name:'run_command',arguments:command}]},
+    {role:'tool',tool_name:'run_command',content:output}
+  ]});
+  assert.equal(rows[0].full, command);
+  assert.equal(rows[1].full, output);
+  assert.ok(rows[0].args.length <= 80);
+});

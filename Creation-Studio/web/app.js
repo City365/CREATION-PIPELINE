@@ -5185,27 +5185,25 @@ function askTraceRows(msg) {
       for (const call of calls) {
         let args = '';
         try { args = typeof call.arguments === 'string' ? call.arguments : JSON.stringify(call.arguments || {}); } catch { args = ''; }
-        rows.push({ type: 'tool', name: call.name || 'tool', args: String(args || '').replace(/\s+/g, ' ').slice(0, 80) });
+        rows.push({ type: 'tool', name: call.name || 'tool', full: args, args: String(args || '').replace(/\s+/g, ' ').slice(0, 80) });
       }
       if (text && !calls.length) rows.push({ type: 'think', text });
       continue;
     }
     if (item.role === 'tool') {
-      rows.push({ type: 'result', name: item.tool_name || '', status: item.status || 'success', text: String(item.content || '').replace(/\s+/g, ' ') });
+      rows.push({ type: 'result', name: item.tool_name || '', status: item.status || 'success', full: String(item.content || ''), text: String(item.content || '').replace(/\s+/g, ' ') });
     }
   }
   return rows;
 }
 
-function askTraceRowHtml(row) {
-  if (row.type === 'think') {
-    return `<li class="is-think"><span class="ask-row-ico">✳</span><b>思考</b><em title="${esc(row.text)}">${esc(row.text)}</em></li>`;
-  }
-  if (row.type === 'tool') {
-    return `<li class="is-tool"><span class="ask-row-ico">›_</span><b>运行命令</b><em title="${esc(row.args)}">${esc(row.name)}${row.args ? ' · ' + esc(row.args) : ''}</em></li>`;
-  }
-  const failed = row.status && row.status !== 'success';
-  return `<li class="is-result ${failed ? 'is-failed' : ''}"><span class="ask-row-ico">↳</span><b>${failed ? '失败' : '结果'}</b><em title="${esc(row.text)}">${esc(row.name ? row.name + '：' : '')}${esc(row.text)}</em></li>`;
+function askTraceRowHtml(row, index = 0, expanded = false) {
+  const failed = row.type === 'result' && row.status && row.status !== 'success';
+  const label = row.type === 'think' ? '思考' : row.type === 'tool' ? '运行命令' : failed ? '失败' : '结果';
+  const icon = row.type === 'think' ? '✳' : row.type === 'tool' ? '›_' : '↳';
+  const brief = row.type === 'tool' ? row.name + (row.args ? ' · ' + row.args : '') : (row.name ? row.name + '：' : '') + (row.text || '');
+  const full = row.full ?? (row.type === 'tool' ? row.args : row.text) ?? '';
+  return '<li class="is-'+esc(row.type)+(failed?' is-failed':'')+'"><details class="ask-trace-row-detail"'+(expanded?' open':'')+'><summary data-act="ask-trace-row-toggle" data-row="'+index+'"><span class="ask-row-ico">'+icon+'</span><b>'+label+'</b><em>'+esc(brief)+'</em></summary><pre>'+esc(row.type === 'tool' ? row.name+'\n'+full : full)+'</pre></details></li>';
 }
 
 // 拉取某条回复对应运行的完整轨迹（思考 / 工具调用），用于消息里的“执行过程”
@@ -5284,7 +5282,7 @@ function askTraceHtml(msg, pending) {
   const headText = askHeading(exec, pending, msg);
   const headInner = running ? '<span class="ask-trace-live" data-trace-live data-since="'+since+'"><span class="ask-trace-live-text">'+esc(headText)+'</span><span class="ask-trace-live-time"> · '+esc(askDurationText(Date.now()-since))+'</span></span>' : '<span>'+esc(headText)+'</span>';
   if (loaded && !rows.length && !planHtml && !pending) return '<div class="ask-trace is-static"><div class="ask-trace-head is-static"><span>'+esc(headText)+'</span></div></div>';
-  const toolHtml = rows.map(askTraceRowHtml).join('');
+  const toolHtml = rows.map((row, index) => askTraceRowHtml(row, index, !!msg.traceRowsOpen?.[index])).join('');
   return '<section class="ask-trace '+(pending?'is-running ':'')+(open?'is-open':'')+'" data-trace-run="'+esc(runId)+'"><button type="button" class="ask-trace-head" data-act="ask-trace-toggle" data-run="'+esc(runId)+'" aria-expanded="'+open+'">'+headInner+'<span class="ask-chev">'+(open?'⌄':'›')+'</span></button>'+(open?'<div class="ask-trace-body">'+(toolHtml?'<details class="ask-trace-section ask-trace-fold" aria-label="工具调用轨迹"'+(msg.traceSectionOpen?' open':'')+'><summary data-act="ask-trace-section-toggle" data-section="trace">轨迹</summary><ul class="ask-trace-rows">'+toolHtml+'</ul></details>':'')+planHtml+((loading || (canLoad&&!pending&&!failed))?'<p class="ask-trace-empty">正在加载执行过程…</p>':'')+(failed?'<button type="button" class="ask-trace-load" data-act="ask-load-trace" data-run="'+esc(runId)+'" title="'+esc(msg._traceError)+'">重新加载执行过程</button>':'')+'</div>':'')+'</section>';
 }
 
@@ -8869,6 +8867,16 @@ function bindAsk(root) {
         return;
       }
       if (act === 'ask-send-direct') { await askSendDirect(); return; }
+      if (act === 'ask-trace-row-toggle') {
+        event.preventDefault();
+        const run = btn.closest('[data-trace-run]')?.dataset.traceRun;
+        const target = askActive()?.messages?.find(m => m.execution?.id === run);
+        if (!target) return;
+        const opened = target.traceRowsOpen || (target.traceRowsOpen = {});
+        opened[btn.dataset.row] = !opened[btn.dataset.row];
+        btn.closest('details').open = opened[btn.dataset.row];
+        return;
+      }
       if (act === 'ask-trace-section-toggle') {
         event.preventDefault();
         const run = btn.closest('[data-trace-run]')?.dataset.traceRun;

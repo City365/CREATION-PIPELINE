@@ -3221,3 +3221,11 @@ html[data-theme="studio-mint"] .modal { box-shadow: 0 34px 80px -30px #1d183a4d,
 
 /* Generated workflow conclusions use foreground text for readability. */
 .ask-plan-history .ask-step-output,.ask-plan-history .ask-step-output .ask-md{color:var(--wmd-text,#111)}
+
+/* Per-entry trace disclosure preserves the compact existing summary. */
+.ask-trace-rows .ask-trace-row-detail {width:100%;min-width:0}
+.ask-trace-row-detail > summary {display:flex;align-items:baseline;gap:7px;cursor:pointer;list-style:none}
+.ask-trace-row-detail > summary::-webkit-details-marker {display:none}
+.ask-trace-row-detail > summary::before {content:"›";flex:none;color:var(--ask-muted)}
+.ask-trace-row-detail[open] > summary::before {content:"⌄"}
+.ask-trace-row-detail > pre {white-space:pre-wrap;overflow-wrap:anywhere;max-height:360px;overflow:auto;margin:6px 0 4px;padding:10px;border:1px solid var(--wmd-border,#ddd);border-radius:6px;font:11px/1.65 monospace;color:var(--wmd-text,#111);user-select:text}
