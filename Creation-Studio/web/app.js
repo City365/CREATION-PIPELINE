@@ -4793,6 +4793,7 @@ function askState() {
       capabilitiesOpen: false,
       // 参考出图开关：关掉就不调用图像渠道（省钱），设置跟着浏览器记住
       refImages: (() => { try { return localStorage.getItem('wmd.askRefImages') !== '0'; } catch { return true; } })(),
+      webSearch: (() => { try { return localStorage.getItem('wmd.askWebSearch') === '1'; } catch { return false; } })(),
       // 本地权限档位：仅查看 / 工作区权限 / 完全权限
       permission: (() => { try { return askPermission(localStorage.getItem('wmd.askPermission') || '').id; } catch { return ASK_PERM_DEFAULT; } })(),
       permMenu: false,
@@ -6653,6 +6654,7 @@ function askComposerHtml() {
         <button type="button" class="ask-icon-btn" data-act="ask-skill-picker" title="插入 @视角">@</button>
         <button type="button" class="ask-perm is-${esc(askPermission(a.permission).id)}" data-act="ask-permission" title="本地权限：${esc(askPermission(a.permission).label)}（点击切换）">${askPermission(a.permission).icon} ${esc(askPermission(a.permission).label)}</button>
         <button type="button" class="ask-ref-toggle ${a.refImages ? 'is-on' : ''}" data-act="ask-toggle-refs" aria-pressed="${a.refImages}" title="参考出图开关">出图</button>
+        <button type="button" class="ask-ref-toggle ${a.webSearch ? 'is-on' : ''}" data-act="ask-toggle-web" role="switch" aria-checked="${!!a.webSearch}" title="${a.webSearch ? '联网检索已开启，下次发送可搜索和读取网页' : '联网检索已关闭，下次发送不提供联网工具'}">🌐 联网检索</button>
         <select class="ask-select" id="ask-model" title="模型">
           ${models.map((m) => `<option value="${esc(m.id)}" ${m.id === a.modelId ? 'selected' : ''} title="上下文 ${m.context_tokens ? Math.round(m.context_tokens / 1000) + 'k' : '默认 500k'}">${esc(m.label)}${m.context_tokens ? ' · ' + Math.round(m.context_tokens / 1000) + 'k' : ''}</option>`).join('') || '<option value="">默认模型</option>'}
         </select>
@@ -7394,13 +7396,13 @@ function askSaveQueue(chatId) {
   try { localStorage.setItem(askQueueKey(id), JSON.stringify((a.queues && a.queues[id]) || [])); } catch { /* ignore */ }
 }
 
-function askEnqueue(raw, chatId) {
+function askEnqueue(raw, chatId, webSearch = !!askState().webSearch) {
   const a = askState();
   const id = chatId || a.activeId;
   const text = String(raw || '').trim();
   if (!id || !text) return;
   const list = askLoadQueue(id);
-  list.push({ id: askId(), text, time: Date.now() });
+  list.push({ id: askId(), text, time: Date.now(), webSearch: !!webSearch });
   askSaveQueue(id);
   if (id === a.activeId) {
     a.draft = '';
@@ -7517,7 +7519,7 @@ function askDrainQueue(chatId) {
   const next = list.shift();
   askSaveQueue(id);
   if (a.activeId === id) askRenderAll();
-  setTimeout(() => { askSend(next.text, id).catch(() => {}); }, 150);
+  setTimeout(() => { askSend(next.text, id, !!next.webSearch).catch(() => {}); }, 150);
 }
 
 function askQueueHtml() {
@@ -8238,7 +8240,7 @@ function askApplyEvent(msg, data, chatId) {
   }
 }
 
-async function askQueueReply(chat, question, insertAt, fileIds = [], resumeId = '') {
+async function askQueueReply(chat, question, insertAt, fileIds = [], resumeId = '', webSearch = !!askState().webSearch) {
   const a = askState();
   const controller = new AbortController();
   const requestId = askId();
@@ -8288,6 +8290,7 @@ async function askQueueReply(chat, question, insertAt, fileIds = [], resumeId = 
         file_ids: fileIds,
         model_id: a.modelId || undefined,
         reasoning_effort: a.effort || undefined,
+        web_search: !!webSearch,
         permission: a.permission || ASK_PERM_DEFAULT,
       }),
     });
@@ -8384,7 +8387,7 @@ async function askQueueReply(chat, question, insertAt, fileIds = [], resumeId = 
   }
 }
 
-async function askSend(text, chatId) {
+async function askSend(text, chatId, webSearch = !!askState().webSearch) {
   const a = askState();
   const target = (chatId && (a.conversations || []).find((c) => c.id === chatId)) || askActive();
   let raw = String(text === undefined ? a.draft : text).trim();
@@ -8403,7 +8406,7 @@ async function askSend(text, chatId) {
   }
   // 这一轮还在生成：先排队，结束后依次发送，不会丢
   if (askRunOf(chat.id)) {
-    askEnqueue(raw, chat.id);
+    askEnqueue(raw, chat.id, webSearch);
     return;
   }
   if (raw.length > 1024) {
@@ -8446,7 +8449,7 @@ async function askSend(text, chatId) {
   askRenderPopups();
   askPersist();
   askRenderAll();
-  askQueueReply(chat, raw, undefined, attached.map((f) => f.id));
+  askQueueReply(chat, raw, undefined, attached.map((f) => f.id), '', webSearch);
 }
 
 // 输入框「直发」：有任务在跑就作为补充说明并进当前任务；没有任务时照旧开新一轮
@@ -8808,7 +8811,7 @@ function bindAsk(root) {
         if (idx >= 0) list.splice(idx, 1);
         askSaveQueue(chatId);
         askRenderAll();
-        await askSend(item.text, chatId);
+        await askSend(item.text, chatId, !!item.webSearch);
         return;
       }
       if (act === 'ask-send-direct') { await askSendDirect(); return; }
@@ -8910,6 +8913,12 @@ function bindAsk(root) {
         await navigator.clipboard.writeText(text);
         toast('已复制提示词');
         return;
+      }
+      if (act === 'ask-toggle-web') {
+        a.webSearch = !a.webSearch;
+        try { localStorage.setItem('wmd.askWebSearch', a.webSearch ? '1' : '0'); } catch {}
+        toast(a.webSearch ? '已开启联网检索，对下次发送生效' : '已关闭联网检索，对下次发送生效');
+        return askRenderAll();
       }
       if (act === 'ask-toggle-refs') {
         a.refImages = !a.refImages;

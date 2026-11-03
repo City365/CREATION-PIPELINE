@@ -149,6 +149,7 @@ class ChatRequest(BaseModel):
     reasoning_effort:Literal['none','low','high','max']|None=None
     file_ids:list[str]=Field(default_factory=list,max_length=10)
     permission:str=Field(default='',max_length=20)
+    web_search:bool=False
 @app.get('/agent/health')
 def health(project=Depends(project_id)):
     name=get_active_model_name()
@@ -311,7 +312,7 @@ async def _chat(req,project,authorization):
             supplements.close_run(project,run_id)
             locks.discard(key)
             raise HTTPException(400,'所选技能不存在或已停用，请重新选择')
-    tools += build_web_tools()
+    if req.web_search: tools += build_web_tools()
     tools += build_creation_tools(publish_event, project, req.session_id)
     # 智能推荐：出决策选择卡。只读、不落盘，任何权限档位都保留。
     tools += build_interaction_tools(publish_event, receipt)
@@ -322,6 +323,7 @@ async def _chat(req,project,authorization):
         tools=[tool for tool in tools if tool.name not in ('create_workspace_artifact','publish_artifact','generate_image','submit_video_job','extract_frames')]
     base_prompt=system_prompt(topic,req.skill,project_hint,summary_prompt,[{k:a[k] for k in ('id','name','status','suffix')}|{'excerpt':(a.get('text') or '')[:600]} for a in attachments],bool(checkpoint),permission=permission)
     if any(t.name == 'web_search' for t in tools): base_prompt += WEB_PROMPT
+    else: base_prompt += '\n【联网检索关闭】本轮未启用联网检索，不可声称已搜索或读取网络网页，也不要通过命令工具绕过联网开关。需要实时资料时提示用户开启输入框旁的联网检索。'
     if not tools_ok:
         base_prompt += ('\n\n【渠道能力】当前模型所在渠道不支持工具调用（function calling），所以本地文件工具、命令工具、生图生视频工具都无法执行。'
                        '禁止声称已经调用工具或已经写盘；需要落盘/移动文件时，如实说明是渠道限制，并提示用户把模型切到支持工具调用的渠道（deepseek-flash、gemini-3.8-flash），'
