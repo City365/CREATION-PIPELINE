@@ -83,3 +83,34 @@ async def test_real_langchain_graph_two_model_cycles():
  assert 'file result' in inputs[1]['content']
  assert 'read_sample' in inputs[0]['content']
  assert len([x for x in records if x['kind']=='reasoning'])==2
+
+from test_chat import client,headers,create
+
+def test_sse_and_history_keep_the_same_complete_cycles(client,monkeypatch):
+ from app import main
+ from langchain_core.language_models.chat_models import BaseChatModel
+ from langchain_core.outputs import ChatResult,ChatGeneration
+ class Model(BaseChatModel):
+  @property
+  def _llm_type(self):return 'acceptance'
+  def bind_tools(self,tools,**kwargs):return self
+  def _generate(self,messages,stop=None,run_manager=None,**kwargs):
+   if any(isinstance(m,ToolMessage) for m in messages):
+    msg=AIMessage(content='权限已核对。',additional_kwargs={'reasoning_content':'检查权限工具的返回结果'})
+   else:msg=AIMessage(content='先核对权限。',additional_kwargs={'reasoning_content':'需要读取实际权限'},tool_calls=[{'id':'permission-1','name':'read_permission','args':{}}])
+   return ChatResult(generations=[ChatGeneration(message=msg)])
+ monkeypatch.setattr(main,'create_chat_model',lambda:Model())
+ monkeypatch.setattr(main,'supports_tools',lambda *a:True)
+ create(client)
+ response=client.post('/agent/chat',headers=headers(),json={'session_id':'c1','text':'核对权限'})
+ events=[json.loads(line[6:]) for line in response.text.splitlines() if line.startswith('data: ')]
+ assert events[-1]['execution']['status']=='completed'
+ items=[e['item'] for e in events if e['type']=='trajectory_item']
+ assert len([x for x in items if x['kind']=='model_input'])==2
+ assert len([x for x in items if x['kind']=='reasoning'])==2
+ assert any(x['role']=='tool' and x['tool_call_id']=='permission-1' for x in items)
+ assert next(i for i,e in enumerate(events) if e['type']=='trajectory_item' and e['item']['kind']=='reasoning')<next(i for i,e in enumerate(events) if e['type']=='done')
+ rid=events[-1]['execution']['id']
+ stored=client.get('/agent/sessions/c1/trajectory?run_id='+rid,headers=headers()).json()['items']
+ assert [x['id'] for x in stored]==[x['id'] for x in items]
+ assert events[-1]['execution']['tool_count']==1
