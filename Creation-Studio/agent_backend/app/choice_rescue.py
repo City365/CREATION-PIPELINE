@@ -13,10 +13,10 @@ import uuid
 
 from app.interaction_tools import normalize_questions
 
-WRAPPED = re.compile(r'<ask_choice>(.*?)</ask_choice>', re.S | re.I)
-UNCLOSED = re.compile(r'<ask_choice>.*$', re.S | re.I)
+WRAPPED = re.compile(r'<ask_choice\b[^>]*>(.*?)</ask_choice\s*>', re.S | re.I)
+UNCLOSED = re.compile(r'<ask_choice\b[^>]*>.*$', re.S | re.I)
 QUESTIONS_BLOCK = re.compile(r'<questions>(.*?)</questions>', re.S | re.I)
-TAG_NOISE = re.compile(r'</?ask_choice>|</?questions>|</?question>|</?options>', re.I)
+TAG_NOISE = re.compile(r'</?ask_choice\b[^>]*>|</?questions>|</?question>|</?options>|</?[｜|]DSML[｜|][^>]*>', re.I)
 
 
 def _load(text):
@@ -45,22 +45,21 @@ def _load(text):
 def _first_json(blob):
     """从夹杂说明文字的片段里找出第一个能解析的 JSON 数组或对象。"""
     text = str(blob or '')
-    for opener, closer in (('[', ']'), ('{', '}')):
-        start = text.find(opener)
-        while start >= 0:
-            depth = 0
-            for index in range(start, len(text)):
-                char = text[index]
-                if char == opener:
-                    depth += 1
-                elif char == closer:
-                    depth -= 1
-                    if depth == 0:
-                        parsed = _load(text[start:index + 1])
-                        if parsed is not None:
-                            return parsed
-                        break
-            start = text.find(opener, start + 1)
+    parsed = _load(text)
+    if parsed is not None: return parsed
+    text = re.sub(r',\s*([}\]])', r'\1', text)
+    decoder = json.JSONDecoder()
+    for match in re.finditer(r'[\[{]', text):
+        try:
+            parsed, _ = decoder.raw_decode(text[match.start():])
+            if isinstance(parsed, (list, dict)): return parsed
+        except ValueError:
+            pass
+    for start, end in (('[', ']'), ('{', '}')):
+        first, last = text.find(start), text.rfind(end)
+        if first >= 0 and last > first:
+            parsed = _load(text[first:last + 1])
+            if parsed is not None: return parsed
     return None
 
 
@@ -87,8 +86,8 @@ def extract(text):
         inner = wrapped.group(1)
         body = WRAPPED.sub('', body)
         stripped = True
-    elif re.search(r'<ask_choice>', body, re.I):
-        position = re.search(r'<ask_choice>', body, re.I).start()
+    elif re.search(r'<ask_choice\b[^>]*>', body, re.I):
+        position = re.search(r'<ask_choice\b[^>]*>', body, re.I).start()
         inner = body[position:]
         body = UNCLOSED.sub('', body)
         stripped = True
@@ -144,3 +143,11 @@ def rescue(text, already_asked=False):
     if event is None:
         return body, None
     return body, event
+
+
+def public_text(text):
+    """Suppress serialized tool syntax while streaming, retaining raw text for rescue."""
+    body, _ = extract(text)
+    body = re.sub(r'<[｜|]DSML[｜|][\s\S]*$', '', body)
+    body = re.sub(r'<(?:ask_choice|questions)\b[\s\S]*$', '', body, flags=re.I)
+    return body

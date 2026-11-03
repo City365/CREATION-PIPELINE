@@ -6528,11 +6528,20 @@ function askChoiceSkip() {
   askPersist();
 }
 
+function askVisibleReply(text) {
+  return String(text || '')
+    .replace(/<ask_choice\b[^>]*>[\s\S]*?(?:<\/ask_choice\s*>|$)/gi, '')
+    .replace(/<questions>[\s\S]*?(?:<\/questions>|$)/gi, '')
+    .replace(/<\/?[｜|]DSML[｜|][^>]*>/g, '')
+    .replace(/<(?:ask_choice|questions)\b[^>]*$/gi, '');
+}
+
 function askMessageHtml(m, index, messages, a) {
   const mine = m.role === 'user';
   const pending = a.generating && index === messages.length - 1;
   const usage = m.execution && m.execution.usage;
-  const shown = askShownText(m, index, messages, a);
+  const rawShown = askShownText(m, index, messages, a);
+  const shown = mine ? rawShown : askVisibleReply(rawShown);
   return `<article class="ask-message ${mine ? 'is-user' : 'is-assistant'}" data-msg-index="${index}" data-msg-id="${esc(m.id || '')}">
     <div class="ask-message-body">
       ${mine ? '' : askTraceHtml(m, pending)}

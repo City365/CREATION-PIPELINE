@@ -409,8 +409,9 @@ async def _chat(req,project,authorization):
                     if text and (can_stream or legacy_chunk) and not getattr(chunk,'tool_call_chunks',None):
                         answer+=text
                         # 模型把工具调用写成正文时，先别往屏幕上吐原始标记，收尾时统一救回成面板。
-                        opened=answer.rfind('<ask_choice>');closed=answer.rfind('</ask_choice>')
-                        if not (opened>=0 and opened>closed):yield event({'type':'delta','text':text})
+                        visible=choice_rescue.public_text(answer)
+                        if visible == answer: yield event({'type':'delta','text':text})
+                        else: yield event({'type':'replace','text':visible})
                     # 补充说明「已收到」这类旁路事件不用等模型下一个 updates 才吐出来
                     while pending:yield event(pending.popleft())
                 elif mode=='updates':
@@ -435,7 +436,7 @@ async def _chat(req,project,authorization):
                                             if step and step['status']=='pending':step['status']='running';pending.append({'type':'process','plan':receipt['plan']})
                                 else:
                                     final_observed=True
-                                    if public!=answer:answer=public;yield event({'type':'replace','text':public})
+                                    if public!=answer:answer=public;yield event({'type':'replace','text':choice_rescue.public_text(public)})
                             elif role=='tool':
                                 receipt['tool_count']+=1
                                 tool_name=getattr(msg,'name',None)

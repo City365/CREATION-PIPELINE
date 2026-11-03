@@ -81,3 +81,16 @@ def test_ignores_garbage_payload():
     body, event = choice_rescue.rescue('<ask_choice><questions>不是 JSON</questions></ask_choice>')
     assert event is None
     assert '<ask_choice>' not in body
+
+
+def test_screenshot_malformed_open_and_dsml_tail():
+    text = '正文。\n<ask_choice">\n<question>下一步？</question>\n<questions>' + json.dumps(PAYLOAD,ensure_ascii=False) + '</｜DSML｜parameter>\n</｜DSML｜invoke>\n</｜DSML｜calls>'
+    body,event=choice_rescue.rescue(text)
+    assert body=='正文。' and event and len(event['questions'])==2
+    assert choice_rescue.public_text(text)=='正文。'
+
+
+def test_json_string_brackets_and_escaped_quotes():
+    payload=[{'question':'问题[1]','options':[{'label':'a','value':'他说"[先做]"'},{'label':'b','value':'继续'}]}]
+    body,event=choice_rescue.rescue('<ask_choice">'+json.dumps(payload,ensure_ascii=False)+'</ask_choice>')
+    assert event and event['questions'][0]['question']=='问题[1]'
