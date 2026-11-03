@@ -5238,8 +5238,8 @@ function askTraceHtml(msg, pending) {
   if (!exec) {
     return pending ? '<p class="ask-process-note">执行中…</p>' : '';
   }
-  const planSteps = (exec.plan && Array.isArray(exec.plan.steps)) ? exec.plan.steps : [];
-  const tools = Array.isArray(exec.tools) ? exec.tools : [];
+  const planSteps = (exec.plan && Array.isArray(exec.plan.steps)) ? exec.plan.steps : (exec.steps || []);
+  const tools = msg.liveTools?.length ? msg.liveTools : (Array.isArray(exec.tools) ? exec.tools : []);
   const rows = askTraceRows(msg);
   const loaded = Array.isArray(msg.trajectory);
   const stepHtml = planSteps.map((step, index) => {
@@ -5254,7 +5254,7 @@ function askTraceHtml(msg, pending) {
         ${(step.evidence && step.evidence.length) ? `<details class="ask-evidence"><summary>依据材料 · ${step.evidence.length} 项 ›</summary>${step.evidence.map((s) => `<div><b>${esc(s.title || '')}</b><span>${esc(s.kind === 'guidance' ? '指导文档' : s.kind === 'workspace' ? '工作空间文件' : s.kind === 'artifact' ? '生成的交付文件' : '用户提供')} · ${esc(s.id || '')}</span><p>${esc(String(s.content || '').slice(0, 400))}</p></div>`).join('')}</details>` : ''}
       </div></li>`;
   }).join('');
-  const toolHtml = tools.map((tool) => `<li><span>›</span><b>运行命令</b><em>${esc(tool.name || 'tool')}</em>${tool.status && tool.status !== 'success' ? '<small>失败</small>' : ''}</li>`).join('');
+  const toolHtml = rows.length ? '' : tools.map(tool => '<li><span>' + (tool.status === 'running' ? '◐' : tool.status === 'success' ? '✓' : '!') + '</span><b>' + (tool.status === 'running' ? '执行中' : tool.status === 'success' ? '已完成' : '失败') + '</b><em>' + esc(tool.name || 'tool') + (tool.detail ? ' · ' + esc(tool.detail) : '') + '</em></li>').join('');
   const runId = (exec && exec.id) || '';
   const hasRows = rows.length > 0;
   const hasPlan = planSteps.length > 0;
@@ -8117,6 +8117,21 @@ function askSyncEffort() {
   if (!efforts.includes(a.effort)) a.effort = efforts.includes('high') ? 'high' : (efforts[0] || '');
 }
 
+function askRecordLiveTool(msg, data) {
+  const tools = msg.liveTools || (msg.liveTools = []);
+  const name = data.tool || 'tool';
+  if (data.type === 'tool_call') {
+    if (data.tool_call_id && tools.some(t => t.id === data.tool_call_id)) return;
+    tools.push({ id: data.tool_call_id || '', name, detail: data.detail || '', status: 'running' });
+  } else {
+    const tool = tools.find(t => data.tool_call_id ? t.id === data.tool_call_id : t.name === name && t.status === 'running');
+    const result = tool || { id: data.tool_call_id || '', name };
+    result.status = data.ok === false ? 'failed' : 'success';
+    if (data.detail) result.detail = data.detail;
+    if (!tool) tools.push(result);
+  }
+}
+
 function askApplyEvent(msg, data, chatId) {
   if (data.type === 'start' && data.execution) msg.execution = data.execution;
   if (data.type === 'process' && data.plan) { msg.execution = msg.execution || {}; msg.execution.plan = data.plan; }
@@ -8133,10 +8148,12 @@ function askApplyEvent(msg, data, chatId) {
   }
   if (data.type === 'summary' && msg.execution) msg.execution.summary = data.text;
   if (data.type === 'tool_call') {
+    askRecordLiveTool(msg, data);
     msg.live = { tool: data.tool || '', detail: data.detail || '', phase: 'running', time: Number(data.time) || Date.now() };
     if (msg._t0 == null) msg._t0 = Number(data.time) || Date.now();
   }
   if (data.type === 'tool_result') {
+    askRecordLiveTool(msg, data);
     msg.live = { tool: data.tool || '', detail: data.detail || '', phase: data.ok === false ? 'failed' : 'done', time: Number(data.time) || Date.now() };
   }
   if (data.type === 'media' && Array.isArray(data.files)) {

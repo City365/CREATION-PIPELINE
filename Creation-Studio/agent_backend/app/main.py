@@ -428,7 +428,7 @@ async def _chat(req,project,authorization):
                                     if answer:answer='';yield event({'type':'replace','text':''})
                                     for call in calls:
                                         # 实时状态：前端据此显示「准备运行命令 · npm test」这类文案
-                                        pending.append({'type':'tool_call','tool':call.get('name'),
+                                        pending.append({'type':'tool_call','tool':call.get('name'),'tool_call_id':call.get('id'),
                                                         'detail':tool_detail(call.get('args') or {}),'time':tick()})
                                         if call.get('name')=='record_step_result':
                                             step=next((s for s in (receipt.get('plan') or {}).get('steps',[]) if s['id']==call.get('args',{}).get('step_id')),None)
@@ -443,7 +443,7 @@ async def _chat(req,project,authorization):
                                 tool_body=content_text(msg)
                                 receipt.setdefault('tools',[]).append({'name':tool_name,'status':tool_status,'output':tool_body[:300]})
                                 trajectory('tool',tool_body,kind='tool_result',tool_name=tool_name,tool_call_id=getattr(msg,'tool_call_id',None),status=tool_status)
-                                pending.append({'type':'tool_result','tool':tool_name,'ok':tool_status!='error',
+                                pending.append({'type':'tool_result','tool':tool_name,'tool_call_id':getattr(msg,'tool_call_id',None),'ok':tool_status!='error',
                                                 'detail':tool_result_detail(tool_body),'time':tick()})
                     while pending:yield event(pending.popleft())
             # 有些模型会把 ask_choice 写成正文标记：剥掉标记并补发一次真正的面板事件。
