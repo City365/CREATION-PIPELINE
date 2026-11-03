@@ -4,3 +4,5 @@ test('expanded receipt contains both trace and full workflow evidence',()=>{cons
 test('both sections stay hidden until expanded',()=>{const m=msg();m.traceOpen=false;const html=askTraceHtml(m,false);assert.doesNotMatch(html,/ask-trace-body|资产提取规范|发现两位人物/);});
 test('workflow survives even when no tool trajectory is available',()=>{const m=msg();m.execution.tools=[];m.trajectory=[];assert.match(askTraceHtml(m,false),/计划流程与依据/);});
 test('live step output and evidence update before completion',()=>{const m=msg();m.execution.status='running';m._streaming=true;const html=askTraceHtml(m,true);assert.match(html,/发现两位人物/);assert.match(html,/资产提取规范/);});
+
+test('audit sections use independent disclosure controls instead of headings',()=>{const html=askTraceHtml(msg(),false);assert.ok(html.includes('ask-trace-fold'));assert.ok(html.includes('>轨迹</summary>'));assert.ok(html.includes('>计划流程</summary>'));assert.doesNotMatch(html,/<h4>/);});

@@ -5248,7 +5248,7 @@ function askExecutionTools(msg) {
   return tools;
 }
 
-function askPlanHistoryHtml(exec) {
+function askPlanHistoryHtml(exec, expanded = false) {
   const planSteps = exec.plan?.steps?.length ? exec.plan.steps : (exec.steps || []);
   if (!planSteps.length) return '';
   const stepHtml = planSteps.map((step, index) => {
@@ -5263,13 +5263,13 @@ function askPlanHistoryHtml(exec) {
         ${(step.evidence && step.evidence.length) ? `<details class="ask-evidence"><summary>依据材料 · ${step.evidence.length} 项 ›</summary>${step.evidence.map((s) => `<div><b>${esc(s.title || '')}</b><span>${esc(s.kind === 'guidance' ? '指导文档' : s.kind === 'workspace' ? '工作空间文件' : s.kind === 'artifact' ? '生成的交付文件' : '用户提供')} · ${esc(s.id || '')}</span><p>${esc(String(s.content || ''))}</p></div>`).join('')}</details>` : ''}
       </div></li>`;
   }).join('');
-  return '<section class="ask-trace-section ask-plan-history" aria-label="计划流程与依据"><h4>计划流程</h4>'+(exec.plan?.goal?'<p class="ask-goal">'+esc(exec.plan.goal)+'</p>':'')+'<ol class="ask-steps">'+stepHtml+'</ol></section>';
+  return '<details class="ask-trace-section ask-plan-history ask-trace-fold" aria-label="计划流程与依据"'+(expanded?' open':'')+'><summary data-act="ask-trace-section-toggle" data-section="plan">计划流程</summary>'+(exec.plan?.goal?'<p class="ask-goal">'+esc(exec.plan.goal)+'</p>':'')+'<ol class="ask-steps">'+stepHtml+'</ol></details>';
 }
 
 function askTraceHtml(msg, pending) {
   const exec = msg.execution;
   if (!exec) return pending ? '<p class="ask-process-note">执行中…</p>' : '';
-  const planHtml = askPlanHistoryHtml(exec);
+  const planHtml = askPlanHistoryHtml(exec, msg.planSectionOpen === true);
   const rows = askTraceRows(msg);
   if (!rows.length) for (const tool of msg.execution?.tools || []) { rows.push({type:'tool',name:tool.name,args:''}); rows.push({type:'result',name:tool.name,status:tool.status,text:tool.output || ''}); }
   const runId = exec.id || '';
@@ -5285,7 +5285,7 @@ function askTraceHtml(msg, pending) {
   const headInner = running ? '<span class="ask-trace-live" data-trace-live data-since="'+since+'"><span class="ask-trace-live-text">'+esc(headText)+'</span><span class="ask-trace-live-time"> · '+esc(askDurationText(Date.now()-since))+'</span></span>' : '<span>'+esc(headText)+'</span>';
   if (loaded && !rows.length && !planHtml && !pending) return '<div class="ask-trace is-static"><div class="ask-trace-head is-static"><span>'+esc(headText)+'</span></div></div>';
   const toolHtml = rows.map(askTraceRowHtml).join('');
-  return '<section class="ask-trace '+(pending?'is-running ':'')+(open?'is-open':'')+'" data-trace-run="'+esc(runId)+'"><button type="button" class="ask-trace-head" data-act="ask-trace-toggle" data-run="'+esc(runId)+'" aria-expanded="'+open+'">'+headInner+'<span class="ask-chev">'+(open?'⌄':'›')+'</span></button>'+(open?'<div class="ask-trace-body">'+(toolHtml?'<section class="ask-trace-section" aria-label="工具调用轨迹"><h4>轨迹</h4><ul class="ask-trace-rows">'+toolHtml+'</ul></section>':'')+planHtml+((loading || (canLoad&&!pending&&!failed))?'<p class="ask-trace-empty">正在加载执行过程…</p>':'')+(failed?'<button type="button" class="ask-trace-load" data-act="ask-load-trace" data-run="'+esc(runId)+'" title="'+esc(msg._traceError)+'">重新加载执行过程</button>':'')+'</div>':'')+'</section>';
+  return '<section class="ask-trace '+(pending?'is-running ':'')+(open?'is-open':'')+'" data-trace-run="'+esc(runId)+'"><button type="button" class="ask-trace-head" data-act="ask-trace-toggle" data-run="'+esc(runId)+'" aria-expanded="'+open+'">'+headInner+'<span class="ask-chev">'+(open?'⌄':'›')+'</span></button>'+(open?'<div class="ask-trace-body">'+(toolHtml?'<details class="ask-trace-section ask-trace-fold" aria-label="工具调用轨迹"'+(msg.traceSectionOpen?' open':'')+'><summary data-act="ask-trace-section-toggle" data-section="trace">轨迹</summary><ul class="ask-trace-rows">'+toolHtml+'</ul></details>':'')+planHtml+((loading || (canLoad&&!pending&&!failed))?'<p class="ask-trace-empty">正在加载执行过程…</p>':'')+(failed?'<button type="button" class="ask-trace-load" data-act="ask-load-trace" data-run="'+esc(runId)+'" title="'+esc(msg._traceError)+'">重新加载执行过程</button>':'')+'</div>':'')+'</section>';
 }
 
 function askPlanDockHtml(chat) {
@@ -8869,6 +8869,15 @@ function bindAsk(root) {
         return;
       }
       if (act === 'ask-send-direct') { await askSendDirect(); return; }
+      if (act === 'ask-trace-section-toggle') {
+        event.preventDefault();
+        const run = btn.closest('[data-trace-run]')?.dataset.traceRun;
+        const target = askActive()?.messages?.find(m => m.execution?.id === run);
+        if (!target) return;
+        const key = btn.dataset.section === 'plan' ? 'planSectionOpen' : 'traceSectionOpen';
+        target[key] = !target[key];
+        return askRenderMessages();
+      }
       if (act === 'ask-trace-toggle') {
         const run = btn.dataset.run || '';
         const chat = askActive();
