@@ -5176,22 +5176,25 @@ function askTraceRows(msg) {
   const rows = [];
   for (const item of items) {
     const kind = item.kind || '';
+    if (item.kind === 'model_input') { rows.push({type:'input',name:'第 '+item.cycle+' 轮输入',text:'实际上下文',full:item.content,key:item.id}); continue; }
+    if (item.kind === 'model_end' || item.kind === 'model_failed') { rows.push({type:'cycle',name:'第 '+item.cycle+' 轮'+(item.kind === 'model_failed'?'失败':'结束'),text:item.kind === 'model_failed'?item.content:(JSON.parse(item.content || '{}').reasoning_available?'':'未返回推理文本'),full:item.content,key:item.id}); continue; }
+    if (item.kind === 'reasoning') { rows.push({type:'think',text:item.content,key:item.id}); continue; }
     if (item.role === 'user') continue;
     if (item.role === 'assistant' && kind === 'final') continue;
     if (item.role === 'assistant') {
       const calls = Array.isArray(item.tool_calls) ? item.tool_calls : [];
       const text = String(item.content || '').trim();
-      if (text && calls.length) rows.push({ type: 'think', text });
+      if (text && calls.length) rows.push({ type: 'explanation', text, key:item.id });
       for (const call of calls) {
         let args = '';
         try { args = typeof call.arguments === 'string' ? call.arguments : JSON.stringify(call.arguments || {}); } catch { args = ''; }
-        rows.push({ type: 'tool', name: call.name || 'tool', full: args, args: String(args || '').replace(/\s+/g, ' ').slice(0, 80) });
+        rows.push({ key:call.id, type: 'tool', name: call.name || 'tool', full: args, args: String(args || '').replace(/\s+/g, ' ').slice(0, 80) });
       }
-      if (text && !calls.length) rows.push({ type: 'think', text });
+      if (text && !calls.length) rows.push({ type: 'explanation', text, key:item.id });
       continue;
     }
     if (item.role === 'tool') {
-      rows.push({ type: 'result', name: item.tool_name || '', status: item.status || 'success', full: String(item.content || ''), text: String(item.content || '').replace(/\s+/g, ' ') });
+      rows.push({ key:item.id || ('result:'+item.tool_call_id), type: 'result', name: item.tool_name || '', status: item.status || 'success', full: String(item.content || ''), text: String(item.content || '').replace(/\s+/g, ' ') });
     }
   }
   return rows;
@@ -5199,11 +5202,11 @@ function askTraceRows(msg) {
 
 function askTraceRowHtml(row, index = 0, expanded = false) {
   const failed = row.type === 'result' && row.status && row.status !== 'success';
-  const label = row.type === 'think' ? '思考' : row.type === 'tool' ? '运行命令' : failed ? '失败' : '结果';
+  const label = row.type === 'think' ? '思考' : row.type === 'explanation' ? '说明' : row.type === 'input' ? '输入' : row.type === 'cycle' ? '循环' : row.type === 'tool' ? '运行命令' : failed ? '失败' : '结果';
   const icon = row.type === 'think' ? '✳' : row.type === 'tool' ? '›_' : '↳';
   const brief = row.type === 'tool' ? row.name + (row.args ? ' · ' + row.args : '') : (row.name ? row.name + '：' : '') + (row.text || '');
   const full = row.full ?? (row.type === 'tool' ? row.args : row.text) ?? '';
-  return '<li class="is-'+esc(row.type)+(failed?' is-failed':'')+'"><details class="ask-trace-row-detail"'+(expanded?' open':'')+'><summary data-act="ask-trace-row-toggle" data-row="'+index+'"><span class="ask-row-ico">'+icon+'</span><b>'+label+'</b><em>'+esc(brief)+'</em></summary><pre>'+esc(row.type === 'tool' ? row.name+'\n'+full : full)+'</pre></details></li>';
+  return '<li class="is-'+esc(row.type)+(failed?' is-failed':'')+'"><details class="ask-trace-row-detail"'+(expanded?' open':'')+'><summary data-act="ask-trace-row-toggle" data-row="'+esc(row.key || String(index))+'"><span class="ask-row-ico">'+icon+'</span><b>'+label+'</b><em>'+esc(brief)+'</em></summary><pre>'+esc(row.type === 'tool' ? row.name+'\n'+full : full)+'</pre></details></li>';
 }
 
 // 拉取某条回复对应运行的完整轨迹（思考 / 工具调用），用于消息里的“执行过程”
@@ -5219,7 +5222,16 @@ async function askLoadMessageTrace(msg, runId, chatId) {
   if (state.route === 'script') askRenderMessages();
   try {
     const data = await askApi('/sessions/' + encodeURIComponent(sid) + '/trajectory?run_id=' + encodeURIComponent(id)).then((r) => r.json());
-    msg.trajectory = (data && data.items) || [];
+    const items=[];
+    items.push(...((data && data.items) || []));
+    let next=data?.next_offset;
+    while (next != null) {
+      const page=await askApi('/sessions/'+encodeURIComponent(sid)+'/trajectory?run_id='+encodeURIComponent(id)+'&offset='+next+'&limit=100').then(r=>r.json());
+      items.push(...(page.items || []));
+      if (page.next_offset === next) break;
+      next=page.next_offset;
+    }
+    msg.trajectory = items;
   } catch (err) {
     // 失败不要留空数组：留着未加载状态，用户还能重试
     msg.trajectory = undefined;
@@ -5282,7 +5294,7 @@ function askTraceHtml(msg, pending) {
   const headText = askHeading(exec, pending, msg);
   const headInner = running ? '<span class="ask-trace-live" data-trace-live data-since="'+since+'"><span class="ask-trace-live-text">'+esc(headText)+'</span><span class="ask-trace-live-time"> · '+esc(askDurationText(Date.now()-since))+'</span></span>' : '<span>'+esc(headText)+'</span>';
   if (loaded && !rows.length && !planHtml && !pending) return '<div class="ask-trace is-static"><div class="ask-trace-head is-static"><span>'+esc(headText)+'</span></div></div>';
-  const toolHtml = rows.map((row, index) => askTraceRowHtml(row, index, !!msg.traceRowsOpen?.[index])).join('');
+  const toolHtml = rows.map((row, index) => askTraceRowHtml(row, index, !!msg.traceRowsOpen?.[row.key || String(index)])).join('');
   return '<section class="ask-trace '+(pending?'is-running ':'')+(open?'is-open':'')+'" data-trace-run="'+esc(runId)+'"><button type="button" class="ask-trace-head" data-act="ask-trace-toggle" data-run="'+esc(runId)+'" aria-expanded="'+open+'">'+headInner+'<span class="ask-chev">'+(open?'⌄':'›')+'</span></button>'+(open?'<div class="ask-trace-body">'+(toolHtml?'<details class="ask-trace-section ask-trace-fold" aria-label="工具调用轨迹"'+(msg.traceSectionOpen?' open':'')+'><summary data-act="ask-trace-section-toggle" data-section="trace">轨迹</summary><ul class="ask-trace-rows">'+toolHtml+'</ul></details>':'')+planHtml+((loading || (canLoad&&!pending&&!failed))?'<p class="ask-trace-empty">正在加载执行过程…</p>':'')+(failed?'<button type="button" class="ask-trace-load" data-act="ask-load-trace" data-run="'+esc(runId)+'" title="'+esc(msg._traceError)+'">重新加载执行过程</button>':'')+'</div>':'')+'</section>';
 }
 
@@ -8154,7 +8166,7 @@ function askRecordLiveTool(msg, data) {
   if (data.type === 'tool_call') {
     if (data.tool_call_id && tools.some(t => t.id === data.tool_call_id)) return;
     tools.push({ id: data.tool_call_id || '', name, detail: data.detail || '', status: 'running' });
-    (msg.liveTrajectory || (msg.liveTrajectory = [])).push({role:'assistant',tool_calls:[{id:data.tool_call_id,name,arguments:data.arguments || {detail:data.detail || ''}}]});
+    if (!msg.hasCycleTrace) (msg.liveTrajectory || (msg.liveTrajectory = [])).push({role:'assistant',tool_calls:[{id:data.tool_call_id,name,arguments:data.arguments || {detail:data.detail || ''}}]});
   } else {
     const tool = tools.find(t => data.tool_call_id ? t.id === data.tool_call_id : t.name === name && t.status === 'running');
     const result = tool || { id: data.tool_call_id || '', name };
@@ -8165,7 +8177,20 @@ function askRecordLiveTool(msg, data) {
   }
 }
 
+function askRecordTrajectory(msg, data) {
+  msg.hasCycleTrace = true;
+  const items=msg.liveTrajectory || (msg.liveTrajectory=[]);
+  const item=data.item;
+  if (item?.id) {
+    const at=items.findIndex(x=>x.id===item.id);
+    if (at<0) items.push(item); else items[at]=item;
+  }
+}
+
 function askApplyEvent(msg, data, chatId) {
+  if (data.type === 'trajectory_item' || data.type === 'trajectory_delta') {
+    askRecordTrajectory(msg, data);
+  }
   if (data.type === 'start' && data.execution) msg.execution = data.execution;
   if (data.type === 'process' && data.plan) { msg.execution = msg.execution || {}; msg.execution.plan = data.plan; }
   if (data.type === 'trace') {

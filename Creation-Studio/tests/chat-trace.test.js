@@ -25,7 +25,7 @@ const TRAJ = [
 
 test('思考与工具调用都进执行过程，最终回答不重复展示', () => {
   const rows = askTraceRows({ trajectory: TRAJ });
-  assert.deepEqual(rows.map((r) => r.type), ['think', 'tool', 'result', 'tool', 'result']);
+  assert.deepEqual(rows.map((r) => r.type), ['explanation', 'tool', 'result', 'tool', 'result']);
   assert.equal(rows[0].text, '我先看有哪些图像渠道。');
   assert.equal(rows[1].name, 'list_creation_models');
   assert.equal(rows[3].name, 'generate_image');
@@ -69,4 +69,15 @@ test('展开数据保留完整命令换行和完整执行结果', () => {
   assert.equal(rows[0].full, command);
   assert.equal(rows[1].full, output);
   assert.ok(rows[0].args.length <= 80);
+});
+
+test('循环轨迹区分实际输入、接口思考与公开说明', () => {
+ const rows=askTraceRows({trajectory:[
+  {id:'input',role:'system',kind:'model_input',cycle:2,content:'{"messages":[]}'},
+  {id:'reason',role:'assistant',kind:'reasoning',content:'provider reasoning'},
+  {id:'explain',role:'assistant',kind:'tool_selection',content:'read next',tool_calls:[]},
+  {id:'end',role:'system',kind:'model_end',cycle:2,content:'{"reasoning_available":false}'}
+ ]});
+ assert.deepEqual(rows.map(r=>r.type),['input','think','explanation','cycle']);
+ assert.equal(rows[0].key,'input');assert.match(rows[3].text,/未返回推理文本/);
 });
