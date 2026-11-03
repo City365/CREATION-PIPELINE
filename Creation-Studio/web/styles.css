@@ -1841,17 +1841,19 @@ html[data-theme^="anim-"] .wmd-app::after {
 .ask-modal-body.is-media { display: flex; align-items: center; justify-content: center; background: var(--wmd-bg-0); }
 .ask-media-video { max-width: 100%; max-height: 44vh; display: block; }
 
-/* 用户消息：无气泡框，靠右 */
+/* 用户消息：无气泡框，正文与助手回复统一左对齐 */
 .ask-message.is-user .ask-message-body {
   background: transparent !important;
   border: 0 !important;
   border-radius: 0 !important;
   padding: 0 !important;
-  max-width: 78%;
-  margin-left: auto;
+  max-width: 100%;
+  margin-left: 0;
+  margin-right: 0;
 }
 .ask-message.is-user .ask-message-text {
-  text-align: right;
+  text-align: left;
+  overflow-wrap: anywhere;
   color: var(--wmd-text);
   font-size: 13px;
   line-height: 1.7;
@@ -1859,7 +1861,7 @@ html[data-theme^="anim-"] .wmd-app::after {
 .ask-message.is-user .ask-files,
 .ask-message.is-user .ask-media-grid,
 .ask-message.is-user .ask-reply-actions {
-  justify-content: flex-end;
+  justify-content: flex-start;
 }
 
 /* 智能体右侧文件/媒体预览面板（对齐原 AgentFilePreview） */
