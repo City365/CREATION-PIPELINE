@@ -5267,8 +5267,10 @@ function askTraceHtml(msg, pending) {
   const toolHtml = tools.map(tool => {
     const status = tool.status === 'running' && running ? 'running' : tool.status === 'success' ? 'success' : tool.status === 'running' ? 'stopped' : 'failed';
     const label = {running:'执行中',success:'已完成',stopped:'已停止',failed:'失败'}[status];
-    const detail = String(tool.detail || '').replace(/\s+/g,' ').slice(0,160);
-    return '<li class="is-'+status+'"><span>'+(status==='running'?'◐':status==='success'?'✓':'!')+'</span><b>'+label+'</b><em>'+esc(tool.name || 'tool')+(detail?' · '+esc(detail):'')+'</em></li>';
+    const action = ASK_TOOL_ACTIONS[tool.name];
+    const actionLabel = action ? action[status === 'running' ? 0 : status === 'success' ? 1 : 2] : (tool.name || '工具调用');
+    const detail = ['read_analysis_guidance','create_task_plan','record_step_result','ask_choice'].includes(tool.name) ? '' : String(tool.detail || '').replace(/\s+/g,' ').slice(0,160);
+    return '<li class="is-'+status+'"><span>'+(status==='running'?'◐':status==='success'?'✓':'!')+'</span><b>'+label+'</b><em>'+esc(actionLabel)+(detail?' · '+esc(detail):'')+'</em></li>';
   }).join('');
   return '<section class="ask-trace '+(pending?'is-running ':'')+(open?'is-open':'')+'" data-trace-run="'+esc(runId)+'"><button type="button" class="ask-trace-head" data-act="ask-trace-toggle" data-run="'+esc(runId)+'" aria-expanded="'+open+'">'+headInner+'<span class="ask-chev">'+(open?'⌄':'›')+'</span></button>'+(open?'<div class="ask-trace-body">'+(toolHtml?'<ul class="ask-tool-runs">'+toolHtml+'</ul>':'')+((loading || (canLoad&&!pending&&!failed))?'<p class="ask-trace-empty">正在加载执行过程…</p>':'')+(failed?'<button type="button" class="ask-trace-load" data-act="ask-load-trace" data-run="'+esc(runId)+'" title="'+esc(msg._traceError)+'">重新加载执行过程</button>':'')+'</div>':'')+'</section>';
 }
@@ -5281,7 +5283,7 @@ function askPlanDockHtml(chat) {
   const completed = steps.filter(s => s.status === 'completed').length;
   const labels = {pending:'待执行',running:'执行中',completed:'已完成',blocked:'待补充',failed:'失败',cancelled:'已取消'};
   const ended = msg.execution.status !== 'running' && !msg._streaming;
-  const open = msg.planCollapsed !== true;
+  const open = msg.planCollapsed === false;
   return '<section class="ask-plan-dock" aria-label="任务计划"><button type="button" class="ask-plan-head" data-act="ask-plan-toggle" aria-expanded="'+open+'"><b>任务计划</b><span>'+completed+' / '+steps.length+' 已完成'+(ended?' · 本轮已结束':'')+'</span><span class="ask-plan-chevron">'+(open?'⌄':'›')+'</span></button>'+(open?'<div class="ask-plan-scroll">'+(plan.goal?'<p>'+esc(plan.goal)+'</p>':'')+'<ol>'+steps.map((step,i)=>'<li class="is-'+esc(step.status || 'pending')+'"><span class="ask-plan-index">'+(step.status==='completed'?'✓':step.status==='running'?'◐':i+1)+'</span><b>'+esc(step.title || '')+'</b><small>'+esc(labels[step.status]||'待执行')+'</small></li>').join('')+'</ol></div>':'')+'</section>';
 }
 
@@ -8952,7 +8954,7 @@ function bindAsk(root) {
       }
       if (act === 'ask-plan-toggle') {
         const msg = [...(askActive()?.messages || [])].reverse().find(m => m.role === 'assistant');
-        if (msg) msg.planCollapsed = msg.planCollapsed !== true;
+        if (msg) msg.planCollapsed = msg.planCollapsed === false;
         askSyncPlanDock();
         return;
       }

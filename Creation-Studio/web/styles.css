@@ -3195,3 +3195,9 @@ html[data-theme="studio-mint"] .modal { box-shadow: 0 34px 80px -30px #1d183a4d,
 /* Keep the task plan beside the composer, separate from tool execution history. */
 .ask-plan-dock{margin:0 0 8px;border:1px solid var(--wmd-border);border-radius:10px;background:var(--wmd-bg-1);color:var(--wmd-text);overflow:hidden;font-family:var(--wmd-font,inherit)}
 .ask-plan-head{display:flex;align-items:center;gap:10px;width:100%;padding:10px 12px;border:0;background:none;color:inherit;text-align:left;cursor:pointer;font:inherit;font-size:12px}.ask-plan-head>span{color:var(--wmd-text-2);font-size:11px}.ask-plan-chevron{margin-left:auto}.ask-plan-scroll{max-height:180px;overflow:auto;padding:0 12px 10px}.ask-plan-scroll>p{margin:0 0 8px;font-size:11px;color:var(--wmd-text-2);line-height:1.5}.ask-plan-scroll ol{list-style:none;margin:0;padding:0}.ask-plan-scroll li{display:flex;align-items:center;gap:8px;padding:6px 0;font-size:12px}.ask-plan-index{flex:none;width:18px;color:var(--wmd-text-3);text-align:center}.ask-plan-scroll li>b{font-weight:500;min-width:0;overflow-wrap:anywhere}.ask-plan-scroll small{margin-left:auto;flex:none;color:var(--wmd-text-2);font-size:11px}.ask-plan-scroll .is-completed .ask-plan-index,.ask-plan-scroll .is-running .ask-plan-index{color:var(--wmd-accent)}.ask-plan-head:focus-visible{outline:2px solid var(--wmd-accent);outline-offset:-3px}
+
+/* Compact plan dock follows the same column as the composer. */
+#ask-plan-dock{max-width:860px;margin:0 auto;box-sizing:border-box;min-width:0}
+.ask-plan-dock{width:100%;box-sizing:border-box;margin-bottom:6px;border-radius:8px}
+.ask-plan-head{min-height:32px;padding:6px 10px;line-height:20px}
+.ask-plan-scroll{max-height:112px;padding:0 10px 6px}.ask-plan-scroll>p{display:none}.ask-plan-scroll li{min-height:24px;padding:2px 0;line-height:20px}.ask-plan-scroll li>b{font-size:11px}.ask-plan-scroll small{font-size:10px}
