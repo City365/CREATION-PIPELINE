@@ -6,6 +6,7 @@ from collections import deque
 from app.task_tools import build_task_tools
 from app.create_tools import build_creation_tools, _http
 from app.execution import content_text, tick
+from app.cycle_trace import CycleTrace
 from app.web_tools import build_web_tools, WEB_PROMPT
 from app.fs_tools import build_local_tools
 from app.interaction_tools import build_interaction_tools
@@ -343,6 +344,8 @@ async def _chat(req,project,authorization):
             guard=ToolGuard()
             middlewares.append(guard)
             middlewares.append(supplement_middleware)
+        cycle_trace=CycleTrace()
+        middlewares.append(cycle_trace)
         graph=create_agent(model=model,tools=tools,middleware=middlewares,system_prompt=base_prompt)
     except Exception:
         supplements.close_run(project,run_id)
@@ -354,8 +357,11 @@ async def _chat(req,project,authorization):
         def trajectory(role,content,**extra):
             nonlocal sequence
             sequence+=1
-            item={'id':str(uuid.uuid4()),'run_id':run_id,'seq':sequence,'role':role,'content':content,'time':tick(),**extra}
+            item={'id':str(uuid.uuid4()),'run_id':run_id,'seq':sequence,'role':role,'content':content,'time':tick(),'cycle':cycle_trace.cycle,'model_call_id':cycle_trace.call_id,**extra}
             store.append_trajectory(project,req.session_id,run_id,sequence,item)
+            pending.append({'type':'trajectory_item','item':item})
+        cycle_trace.record=trajectory
+        cycle_trace.publish=pending.append
         try:
             trajectory('user',req.text,kind='instruction')
             # 直发进来立刻让前端看到「已收到，等下一个检查点生效」
@@ -400,6 +406,7 @@ async def _chat(req,project,authorization):
                     usage=getattr(chunk,'usage_metadata',None)
                     if usage and not ctx:receipt['usage']={k:usage[k] for k in ('input_tokens','output_tokens','total_tokens') if k in usage}
                     if getattr(chunk,'type','ai')=='tool':continue
+                    cycle_trace.chunk(chunk)
                     text=content_text(chunk)
                     if text and first:
                         first=False;receipt['first_token_ms']=tick()-receipt['started_at']
@@ -504,6 +511,7 @@ async def _chat(req,project,authorization):
             else:failure='模型请求失败：'+type(exc).__name__+(' / HTTP '+str(status) if status else '')+'，请检查渠道或切换模型后重试。'
             receipt['status']='failed';receipt['error']=failure
             trajectory('assistant',failure,kind='error',tool_calls=[])
+            while pending:yield event(pending.popleft())
             yield event({'type':'error','message':failure})
         finally:
             try:receipt['workspace_scan']=await asyncio.to_thread(project_files.scan_session,project,req.session_id)
@@ -617,8 +625,7 @@ def trajectory(sid:str,offset:int|None=None,limit:int=50,run_id:str|None=None,pr
     if (offset is not None and offset<0) or not 1<=limit<=100:raise HTTPException(400,'分页参数不正确')
     if run_id:
         # 单次运行的完整轨迹（用于消息里的“执行过程”）
-        result=store.session_trajectory(project,sid,None,200)
-        result['items']=[item for item in result.get('items',[]) if item.get('run_id')==run_id]
+        result=store.run_trajectory(project,sid,run_id,offset or 0,limit)
     else:
         result=store.session_trajectory(project,sid,offset,limit)
     result['session_id']=sid

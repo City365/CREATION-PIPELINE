@@ -3,7 +3,7 @@ import os
 import json
 import time
 import urllib.request
-from langchain_openai import ChatOpenAI
+from app.models.observable_openai import ObservableChatOpenAI as ChatOpenAI
 from app.configs.settings import get_active_model_name, get_provider_config, load_settings
 CONFIGURED_MODELS = {"deepseek": {}, "minimax": {}, "openai": {}}
 # 模型客户端超时：流式回答按“两次数据之间”的时间算，调大这里主要是给首字前的排队留余量。

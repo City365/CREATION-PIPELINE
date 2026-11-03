@@ -34,7 +34,7 @@ def test_stream_and_history(client,monkeypatch):
   r=client.post('/agent/chat',headers=headers(),json={'session_id':'c1','text':text})
   assert r.status_code==200
   events=[json.loads(line[6:]) for line in r.text.splitlines() if line.startswith('data: ')]
-  assert [e['type'] for e in events if e['type']!='trace']==['start','delta','delta','done']
+  assert [e['type'] for e in events if e['type'] not in ('trace','trajectory_item','trajectory_delta')]==['start','delta','delta','done']
   assert events[-1]['execution']['status']=='completed'
   receipt=client.get('/agent/executions/'+events[-1]['execution']['id'],headers=headers()).json()
   assert receipt['tool_count']==0

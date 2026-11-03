@@ -67,3 +67,13 @@ def save_compaction(project, sid, payload):
     with connect() as db:
         db.execute('CREATE TABLE IF NOT EXISTS compactions (project TEXT NOT NULL, session_id TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(project,session_id))')
         db.execute('INSERT INTO compactions VALUES (?,?,?) ON CONFLICT(project,session_id) DO UPDATE SET payload=excluded.payload',(project,sid,json.dumps(payload,ensure_ascii=False)))
+
+
+def run_trajectory(project,sid,run_id,offset=0,limit=50):
+    with connect() as db:
+        trajectory_table(db)
+        args=(project,sid,run_id)
+        total=db.execute('SELECT COUNT(*) FROM trajectory_events WHERE project=? AND session_id=? AND run_id=?',args).fetchone()[0]
+        rows=db.execute('SELECT payload FROM trajectory_events WHERE project=? AND session_id=? AND run_id=? ORDER BY seq LIMIT ? OFFSET ?',(*args,limit,offset)).fetchall()
+        items=[{**json.loads(row[0]),'position':offset+i} for i,row in enumerate(rows)]
+        return {'items':items,'total':total,'offset':offset,'next_offset':offset+len(items) if offset+len(items)<total else None}
