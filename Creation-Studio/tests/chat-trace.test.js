@@ -54,7 +54,7 @@ test('界面不再出现旧的空占位文案', () => {
   assert.equal(source.includes('本轮没有调用工具'), false);
   assert.equal(source.includes('本轮没有计划步骤'), false);
   assert.equal(source.includes('完整用户 / 助手 / 工具记录可在右侧'), false);
-  assert.ok(source.includes('ask-trace-rows'), '用真实步骤列表渲染');
+  assert.ok(source.includes('ask-tool-runs'), '用真实步骤列表渲染');
   assert.ok(source.includes('askLoadMessageTrace'), '按运行 id 拉取轨迹');
   assert.ok(source.includes('trajectory?run_id='), '只取这一轮的轨迹');
 });

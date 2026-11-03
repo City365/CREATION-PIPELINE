@@ -10,7 +10,7 @@ function load(name,end,extra={}) {
 }
 test('error event preserves stream until terminal receipt',()=>{
  let aborted=false;const state={generating:true,controller:{abort(){aborted=true;}}};
- const c=load('askApplyEvent','async function askQueueReply',{askState:()=>state});
+ const c=load('askApplyEvent','async function askQueueReply',{askState:()=>state,askSyncPlanDock:()=>{}});
  const msg={text:''};c.askApplyEvent(msg,{type:'error',message:'403'});
  assert.equal(aborted,false);assert.equal(state.generating,true);
  c.askApplyEvent(msg,{type:'run_finished',execution:{status:'failed'}});

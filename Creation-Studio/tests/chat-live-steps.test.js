@@ -22,7 +22,7 @@ test('parallel same-name tools pair by call id and replayed starts do not duplic
  askRecordLiveTool(msg,{type:'tool_result',tool:'web_fetch',tool_call_id:'b',ok:false});
  assert.equal(msg.liveTools.length,2);assert.equal(msg.liveTools[0].status,'running');assert.equal(msg.liveTools[1].status,'failed');
 });
-test('complete loaded trajectory replaces live rows without duplicate lists',()=>{
+test('completed trajectory keeps the same concise execution list',()=>{
  const msg={execution:{id:'r',status:'completed'},liveTools:[{name:'web_search',status:'success'}],trajectory:[{role:'assistant',tool_calls:[{name:'web_search',arguments:{}}]}],traceOpen:true};
- const html=askTraceHtml(msg,false);assert.match(html,/ask-trace-rows/);assert.doesNotMatch(html,/ask-tool-runs/);
+ const html=askTraceHtml(msg,false);assert.match(html,/ask-tool-runs/);assert.doesNotMatch(html,/ask-trace-rows/);
 });
