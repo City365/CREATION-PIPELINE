@@ -3205,3 +3205,6 @@ html[data-theme="studio-mint"] .modal { box-shadow: 0 34px 80px -30px #1d183a4d,
 /* User bubbles stay on the right; their wrapped text starts at the left edge. */
 .ask-message.is-user .ask-message-body{max-width:78%;margin-left:auto;margin-right:0}.ask-message.is-user .ask-message-text{text-align:left}.ask-message.is-user .ask-files,.ask-message.is-user .ask-media-grid,.ask-message.is-user .ask-reply-actions{justify-content:flex-end}
 .ask-composer-bar>.ask-ref-toggle,.ask-composer-bar>.ask-perm{flex-shrink:0;white-space:nowrap}.ask-composer-context{flex-shrink:0}.ask-qpanel{max-height:36vh;overflow:auto}
+
+/* Only one stop control while a reply is running; sending uses Enter and the queue. */
+.ask-composer-bar .ask-send.is-stop{width:32px;min-width:32px;height:32px;padding:0;flex:none;white-space:nowrap;display:inline-flex;align-items:center;justify-content:center}

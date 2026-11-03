@@ -9,7 +9,7 @@ const box = {};
 new Function('module', 'const esc=String; const askMarkdown=String; '+render+record+'; module.exports={askRecordLiveTool,askTraceHtml};')(box);
 const {askRecordLiveTool,askTraceHtml}=box.exports;
 test('tool starts and completes visibly before task completion',()=>{
- const msg={execution:{id:'run',status:'running',tools:[]},_streaming:true};
+ const msg={execution:{id:'run',status:'running',tools:[]},_streaming:true,traceOpen:true};
  askRecordLiveTool(msg,{type:'tool_call',tool:'web_search',tool_call_id:'a',detail:'搜索官方文档'});
  let html=askTraceHtml(msg,true);
  assert.match(html,/ask-trace-body/); assert.match(html,/web_search/); assert.match(html,/运行命令/);
@@ -26,3 +26,5 @@ test('completed trajectory keeps the same concise execution list',()=>{
  const msg={execution:{id:'r',status:'completed'},liveTools:[{name:'web_search',status:'success'}],trajectory:[{role:'assistant',tool_calls:[{name:'web_search',arguments:{}}]}],traceOpen:true};
  const html=askTraceHtml(msg,false);assert.match(html,/ask-trace-rows/);assert.doesNotMatch(html,/ask-tool-runs/);
 });
+
+test('trace defaults closed and stays closed during tool events after manual collapse',()=>{const msg={execution:{id:'r',status:'running',tools:[]}};askRecordLiveTool(msg,{type:'tool_call',tool:'read_file',tool_call_id:'a'});assert.doesNotMatch(askTraceHtml(msg,true),/ask-trace-body/);msg.traceOpen=true;assert.match(askTraceHtml(msg,true),/ask-trace-body/);msg.traceOpen=false;askRecordLiveTool(msg,{type:'tool_result',tool:'read_file',tool_call_id:'a',ok:true});assert.doesNotMatch(askTraceHtml(msg,true),/ask-trace-body/);});

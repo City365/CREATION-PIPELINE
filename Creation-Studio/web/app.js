@@ -5258,7 +5258,7 @@ function askTraceHtml(msg, pending) {
   const failed = !!msg._traceError;
   const loaded = Array.isArray(msg.trajectory);
   const canLoad = !loaded && !!runId;
-  const open = !!msg.traceOpen || (!!pending && rows.length > 0);
+  const open = msg.traceOpen === true;
   const running = !!pending || exec.status === 'running';
   if (running && msg._t0 == null) msg._t0 = Date.now();
   const since = running ? Number(msg._t0) || Date.now() : 0;
@@ -6662,7 +6662,7 @@ function askComposerHtml() {
     <div class="ask-composer">
       ${askQueueHtml()}
       <div class="ask-popups" id="ask-popups"></div>
-      <textarea id="ask-input" class="ask-input" rows="2" maxlength="3000" placeholder="${a.generating ? '当前回复生成中：Enter 加入队列 · 直发＝补充要求给当前任务' : '聊聊你的想法，或输入 @ 选择技能'}">${esc(a.draft)}</textarea>
+      <textarea id="ask-input" class="ask-input" rows="2" maxlength="3000" placeholder="${a.generating ? '当前回复生成中：Enter 加入队列，队首 ↑ 可补充给当前任务' : '聊聊你的想法，或输入 @ 选择技能'}">${esc(a.draft)}</textarea>
       <div class="ask-composer-bar">
         <button type="button" class="ask-icon-btn" data-act="ask-attach" title="添加附件（最多 5 个，单文件 10MB）">📎</button>
         <button type="button" class="ask-icon-btn" data-act="ask-skill-picker" title="插入 @视角">@</button>
@@ -6677,7 +6677,7 @@ function askComposerHtml() {
         <span class="grow"></span>
         ${askContextMeterHtml()}
         ${a.generating
-          ? `<button type="button" class="ask-send ask-send-queue" data-act="ask-send" ${a.draft.trim() ? '' : 'disabled'} title="普通发送：加入队列，当前回复结束后依次发送">排队 ↑</button><button type="button" class="ask-send ask-send-direct" data-act="ask-send-direct" ${a.draft.trim() ? '' : 'disabled'} title="直接发送：作为补充说明交给正在执行的任务，不中断执行">直发 ⚡</button><button type="button" class="ask-send is-stop" data-act="ask-stop" title="停止生成">■ 停止</button>`
+          ? `<button type="button" class="ask-send is-stop" data-act="ask-stop" aria-label="停止生成" title="停止生成">■</button>`
           : `<button type="button" class="ask-send" data-act="ask-send" ${a.draft.trim() ? '' : 'disabled'}>发送 ↑</button>`}
       </div>
     </div>
@@ -7545,10 +7545,10 @@ function askQueueHtml() {
       <span class="ask-queue-idx">${i + 1}</span>
       <span class="ask-queue-text" title="${esc(item.text)}">${esc(item.text)}</span>
       ${item.sup ? `<span class="ask-queue-state">${item.sup.state === 'applied' ? '已并入' : '等检查点'}</span>` : ''}
-      ${(i === 0 && !item.sup) ? `<button type="button" class="ask-queue-btn is-direct" data-act="ask-queue-now" data-id="${esc(item.id)}" title="${running ? '直接发送：作为补充说明交给正在执行的任务，不中断执行' : '马上发送这条'}">${running ? '直发' : '↑'}</button>` : ''}
+      ${(i === 0 && !item.sup) ? `<button type="button" class="ask-queue-btn is-direct" data-act="ask-queue-now" data-id="${esc(item.id)}" title="${running ? '直接发送：作为补充说明交给正在执行的任务，不中断执行' : '马上发送这条'}">↑</button>` : ''}
       <button type="button" class="ask-queue-btn is-danger" data-act="ask-queue-cancel" data-id="${esc(item.id)}" title="从队列里取消这条">×</button>
     </div>`).join('');
-  const hint = running ? '直发＝补充给当前任务，不中断执行' : '当前没有任务在跑，点 ↑ 立即发送';
+  const hint = running ? '队首 ↑：补充给当前任务，不中断执行' : '当前没有任务在跑，点 ↑ 立即发送';
   return `<div class="ask-queue" role="region" aria-label="待发送队列">
     <div class="ask-queue-head"><span>待发送 <b>${list.length}</b> 条</span><span class="ask-queue-hint">${hint}</span></div>
     ${rows}

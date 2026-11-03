@@ -55,12 +55,12 @@ function state(patch) {
   return value;
 }
 
-test('运行中：队首按钮是「直发」，提示说明不中断', () => {
+test('运行中：队首箭头发送补充说明，不中断', () => {
   state({ queue: [{ id: 'a', text: '第二集改成横屏' }], run: { runId: 'run-1' } });
   const html = askQueueHtml();
   assert.match(html, /data-act="ask-queue-now"/);
-  assert.match(html, />直发</);
-  assert.match(html, /直发＝补充给当前任务，不中断执行/);
+  assert.match(html, />↑</);
+  assert.match(html, /队首 ↑：补充给当前任务，不中断执行/);
   assert.doesNotMatch(html, /中断当前回复并马上发送这条/);
 });
 
