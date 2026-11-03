@@ -172,7 +172,7 @@ test('事件落地与位置：questions 数组进消息，面板挂在输入框�
   assert.match(apply, /page: 0/);
 
   const composer = source.slice(source.indexOf('function askComposerHtml()'), source.indexOf('function askEfforts()'));
-  assert.match(composer, /\$\{askChoicePanelHtml\(\)\}\s*<div class="ask-composer">/);
+  assert.match(composer, /\$\{askChoicePanelHtml\(\)\}\s*<div class="ask-composer-context">/);
 
   const send = source.slice(source.indexOf('async function askSend('), source.indexOf('async function askStop('));
   assert.match(send, /stale\.choiceSkipped = a\.choice\.card\.id/);

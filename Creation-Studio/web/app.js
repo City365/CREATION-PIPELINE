@@ -5172,7 +5172,7 @@ function askMarkdown(text) {
 
 // 把一次运行的真实轨迹（思考 / 工具调用 / 结果）整理成可折叠的行
 function askTraceRows(msg) {
-  const items = (msg && msg.trajectory) || [];
+  const items = (msg && (msg.trajectory || msg.liveTrajectory)) || [];
   const rows = [];
   for (const item of items) {
     const kind = item.kind || '';
@@ -5251,28 +5251,22 @@ function askExecutionTools(msg) {
 function askTraceHtml(msg, pending) {
   const exec = msg.execution;
   if (!exec) return pending ? '<p class="ask-process-note">执行中…</p>' : '';
-  const tools = askExecutionTools(msg);
+  const rows = askTraceRows(msg);
+  if (!rows.length) for (const tool of msg.execution?.tools || []) { rows.push({type:'tool',name:tool.name,args:''}); rows.push({type:'result',name:tool.name,status:tool.status,text:tool.output || ''}); }
   const runId = exec.id || '';
   const loading = !!msg._traceLoading;
   const failed = !!msg._traceError;
   const loaded = Array.isArray(msg.trajectory);
   const canLoad = !loaded && !!runId;
-  const open = !!msg.traceOpen || (!!pending && tools.length > 0);
+  const open = !!msg.traceOpen || (!!pending && rows.length > 0);
   const running = !!pending || exec.status === 'running';
   if (running && msg._t0 == null) msg._t0 = Date.now();
   const since = running ? Number(msg._t0) || Date.now() : 0;
   const headText = askHeading(exec, pending, msg);
   const headInner = running ? '<span class="ask-trace-live" data-trace-live data-since="'+since+'"><span class="ask-trace-live-text">'+esc(headText)+'</span><span class="ask-trace-live-time"> · '+esc(askDurationText(Date.now()-since))+'</span></span>' : '<span>'+esc(headText)+'</span>';
-  if (loaded && !tools.length && !pending) return '<div class="ask-trace is-static"><div class="ask-trace-head is-static"><span>'+esc(headText)+'</span></div></div>';
-  const toolHtml = tools.map(tool => {
-    const status = tool.status === 'running' && running ? 'running' : tool.status === 'success' ? 'success' : tool.status === 'running' ? 'stopped' : 'failed';
-    const label = {running:'执行中',success:'已完成',stopped:'已停止',failed:'失败'}[status];
-    const action = ASK_TOOL_ACTIONS[tool.name];
-    const actionLabel = action ? action[status === 'running' ? 0 : status === 'success' ? 1 : 2] : (tool.name || '工具调用');
-    const detail = ['read_analysis_guidance','create_task_plan','record_step_result','ask_choice'].includes(tool.name) ? '' : String(tool.detail || '').replace(/\s+/g,' ').slice(0,160);
-    return '<li class="is-'+status+'"><span>'+(status==='running'?'◐':status==='success'?'✓':'!')+'</span><b>'+label+'</b><em>'+esc(actionLabel)+(detail?' · '+esc(detail):'')+'</em></li>';
-  }).join('');
-  return '<section class="ask-trace '+(pending?'is-running ':'')+(open?'is-open':'')+'" data-trace-run="'+esc(runId)+'"><button type="button" class="ask-trace-head" data-act="ask-trace-toggle" data-run="'+esc(runId)+'" aria-expanded="'+open+'">'+headInner+'<span class="ask-chev">'+(open?'⌄':'›')+'</span></button>'+(open?'<div class="ask-trace-body">'+(toolHtml?'<ul class="ask-tool-runs">'+toolHtml+'</ul>':'')+((loading || (canLoad&&!pending&&!failed))?'<p class="ask-trace-empty">正在加载执行过程…</p>':'')+(failed?'<button type="button" class="ask-trace-load" data-act="ask-load-trace" data-run="'+esc(runId)+'" title="'+esc(msg._traceError)+'">重新加载执行过程</button>':'')+'</div>':'')+'</section>';
+  if (loaded && !rows.length && !pending) return '<div class="ask-trace is-static"><div class="ask-trace-head is-static"><span>'+esc(headText)+'</span></div></div>';
+  const toolHtml = rows.map(askTraceRowHtml).join('');
+  return '<section class="ask-trace '+(pending?'is-running ':'')+(open?'is-open':'')+'" data-trace-run="'+esc(runId)+'"><button type="button" class="ask-trace-head" data-act="ask-trace-toggle" data-run="'+esc(runId)+'" aria-expanded="'+open+'">'+headInner+'<span class="ask-chev">'+(open?'⌄':'›')+'</span></button>'+(open?'<div class="ask-trace-body">'+(toolHtml?'<ul class="ask-trace-rows">'+toolHtml+'</ul>':'')+((loading || (canLoad&&!pending&&!failed))?'<p class="ask-trace-empty">正在加载执行过程…</p>':'')+(failed?'<button type="button" class="ask-trace-load" data-act="ask-load-trace" data-run="'+esc(runId)+'" title="'+esc(msg._traceError)+'">重新加载执行过程</button>':'')+'</div>':'')+'</section>';
 }
 
 function askPlanDockHtml(chat) {
@@ -5280,6 +5274,7 @@ function askPlanDockHtml(chat) {
   const plan = msg?.execution?.plan;
   if (!plan?.steps?.length) return '';
   const steps = plan.steps;
+  if (steps.every(step => step.status === 'pending' || !step.status)) return '';
   const completed = steps.filter(s => s.status === 'completed').length;
   const labels = {pending:'待执行',running:'执行中',completed:'已完成',blocked:'待补充',failed:'失败',cancelled:'已取消'};
   const ended = msg.execution.status !== 'running' && !msg._streaming;
@@ -6657,13 +6652,13 @@ function askComposerHtml() {
   const efforts = askEfforts();
   return `<div class="ask-composer-area">
     <div id="ask-plan-dock">${askPlanDockHtml(askActive())}</div>
+    ${askChoicePanelHtml()}
     <div class="ask-composer-context">
       <button type="button" class="ask-project-trigger" data-act="ask-project-picker" aria-label="选择项目"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7V5a1 1 0 0 1 1-1h5l2 3h9a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7Z"/></svg><span class="ask-project-name">${esc(state.project?.name || '选择项目')}</span><svg class="ask-project-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></button><span>▰ 此计算机</span>
       ${state.styleDetail ? `<span>🎨 ${esc(state.styleDetail.name)}</span>` : ''}
       <span class="ask-skill-context">✧ ${esc(skill.name)}${a.skillId ? ' <button type="button" data-act="ask-clear-skill" title="移除技能，返回普通聊天">×</button>' : ''}</span>
       ${(a.attachments || []).map((f) => `<span class="ask-attach" data-act="ask-preview" data-id="${esc(f.id)}" title="点击预览">📎 ${esc(f.name)}<small>${askAttachStatusText(f)}</small><button type="button" data-act="ask-detach" data-id="${esc(f.id)}">×</button></span>`).join('')}
     </div>
-    ${askChoicePanelHtml()}
     <div class="ask-composer">
       ${askQueueHtml()}
       <div class="ask-popups" id="ask-popups"></div>
@@ -8142,12 +8137,14 @@ function askRecordLiveTool(msg, data) {
   if (data.type === 'tool_call') {
     if (data.tool_call_id && tools.some(t => t.id === data.tool_call_id)) return;
     tools.push({ id: data.tool_call_id || '', name, detail: data.detail || '', status: 'running' });
+    (msg.liveTrajectory || (msg.liveTrajectory = [])).push({role:'assistant',tool_calls:[{id:data.tool_call_id,name,arguments:data.arguments || {detail:data.detail || ''}}]});
   } else {
     const tool = tools.find(t => data.tool_call_id ? t.id === data.tool_call_id : t.name === name && t.status === 'running');
     const result = tool || { id: data.tool_call_id || '', name };
     result.status = data.ok === false ? 'failed' : 'success';
     if (!result.detail && data.ok === false) result.detail = String(data.detail || '').slice(0,160);
     if (!tool) tools.push(result);
+    (msg.liveTrajectory || (msg.liveTrajectory = [])).push({role:'tool',tool_name:name,tool_call_id:data.tool_call_id,status:data.ok === false ? 'error' : 'success',content:data.output || data.detail || ''});
   }
 }
 

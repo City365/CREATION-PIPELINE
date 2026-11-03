@@ -12,9 +12,9 @@ test('tool starts and completes visibly before task completion',()=>{
  const msg={execution:{id:'run',status:'running',tools:[]},_streaming:true};
  askRecordLiveTool(msg,{type:'tool_call',tool:'web_search',tool_call_id:'a',detail:'搜索官方文档'});
  let html=askTraceHtml(msg,true);
- assert.match(html,/ask-trace-body/); assert.match(html,/web_search/); assert.match(html,/执行中/);
+ assert.match(html,/ask-trace-body/); assert.match(html,/web_search/); assert.match(html,/运行命令/);
  askRecordLiveTool(msg,{type:'tool_result',tool:'web_search',tool_call_id:'a',ok:true});
- html=askTraceHtml(msg,true); assert.match(html,/已完成/); assert.equal(msg.execution.status,'running');
+ html=askTraceHtml(msg,true); assert.match(html,/结果/); assert.equal(msg.execution.status,'running');
 });
 test('parallel same-name tools pair by call id and replayed starts do not duplicate',()=>{
  const msg={};
@@ -24,5 +24,5 @@ test('parallel same-name tools pair by call id and replayed starts do not duplic
 });
 test('completed trajectory keeps the same concise execution list',()=>{
  const msg={execution:{id:'r',status:'completed'},liveTools:[{name:'web_search',status:'success'}],trajectory:[{role:'assistant',tool_calls:[{name:'web_search',arguments:{}}]}],traceOpen:true};
- const html=askTraceHtml(msg,false);assert.match(html,/ask-tool-runs/);assert.doesNotMatch(html,/ask-trace-rows/);
+ const html=askTraceHtml(msg,false);assert.match(html,/ask-trace-rows/);assert.doesNotMatch(html,/ask-tool-runs/);
 });

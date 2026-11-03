@@ -18,9 +18,11 @@ test('plan reflects status changes and supports collapse',()=>{
 test('a new reply without a plan does not inherit the old plan',()=>{
  assert.equal(askPlanDockHtml({messages:[{role:'assistant',execution:{plan}},{role:'user'},{role:'assistant',execution:{id:'new'}}]}),'');
 });
-test('historical raw JSON is not rendered as command output',()=>{
+test('historical trace retains tool parameters and results separately from plan',()=>{
  const msg={execution:{id:'r',status:'completed'},traceOpen:true,trajectory:[{role:'assistant',tool_calls:[{id:'a',name:'create_task_plan',arguments:{goal:'SECRET_JSON'}}]},{role:'tool',tool_call_id:'a',tool_name:'create_task_plan',content:'RAW_JSON',status:'success'}]};
- const html=askTraceHtml(msg,false);assert.match(html,/已制定计划/);assert.doesNotMatch(html,/SECRET_JSON|RAW_JSON|运行命令/);
+ const html=askTraceHtml(msg,false);assert.match(html,/create_task_plan/);assert.match(html,/SECRET_JSON/);assert.match(html,/RAW_JSON/);
 });
 
 test('plan is collapsed by default and matches composer width',()=>{const html=askPlanDockHtml({messages:[{role:'assistant',execution:{status:'completed',plan}}]});assert.doesNotMatch(html,/ask-plan-scroll/);assert.match(html,/aria-expanded="false"/);const css=fs.readFileSync(path.join(__dirname,'../web/styles.css'),'utf8');assert.match(css,/#ask-plan-dock\{max-width:860px/);});
+
+test('unstarted plan is hidden and choice appears above fixed context labels',()=>{assert.equal(askPlanDockHtml({messages:[{role:'assistant',execution:{status:'completed',plan:{steps:[{title:'未执行',status:'pending'}]}}}]}),'');const composer=source.slice(source.indexOf('function askComposerHtml('));assert.ok(composer.indexOf('askChoicePanelHtml()')<composer.indexOf('ask-composer-context'));assert.ok(composer.indexOf('ask-composer-context')<composer.indexOf('id="ask-input"'));});

@@ -3201,3 +3201,7 @@ html[data-theme="studio-mint"] .modal { box-shadow: 0 34px 80px -30px #1d183a4d,
 .ask-plan-dock{width:100%;box-sizing:border-box;margin-bottom:6px;border-radius:8px}
 .ask-plan-head{min-height:32px;padding:6px 10px;line-height:20px}
 .ask-plan-scroll{max-height:112px;padding:0 10px 6px}.ask-plan-scroll>p{display:none}.ask-plan-scroll li{min-height:24px;padding:2px 0;line-height:20px}.ask-plan-scroll li>b{font-size:11px}.ask-plan-scroll small{font-size:10px}
+
+/* User bubbles stay on the right; their wrapped text starts at the left edge. */
+.ask-message.is-user .ask-message-body{max-width:78%;margin-left:auto;margin-right:0}.ask-message.is-user .ask-message-text{text-align:left}.ask-message.is-user .ask-files,.ask-message.is-user .ask-media-grid,.ask-message.is-user .ask-reply-actions{justify-content:flex-end}
+.ask-composer-bar>.ask-ref-toggle,.ask-composer-bar>.ask-perm{flex-shrink:0;white-space:nowrap}.ask-composer-context{flex-shrink:0}.ask-qpanel{max-height:36vh;overflow:auto}
