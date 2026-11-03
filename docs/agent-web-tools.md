@@ -1,6 +1,6 @@
 # 智能体联网检索
 
-接入 DDGS 搜索与 Jina Reader 正文读取；直接使用现有智能体工具调用及 Harness 轨迹，无需运行 deer-flow。
+接入 Serper / Tavily / DDGS 搜索与 Jina Reader 正文读取；直接使用现有智能体工具调用及 Harness 轨迹，无需运行 deer-flow。
 
 默认启用，使用支持工具调用的模型即可搜索和读取公开网页。回答要求引用真实返回的网址。权限只读档也可检索，不授予文件写入或命令执行权限。
 
@@ -9,7 +9,7 @@
 在 Creation-Studio/agent_backend/data/agent_settings.json 中增加 web 对象（保留已有内容）：
 
 ```json
-{"web":{"enabled":true,"max_results":5,"timeout":30,"max_chars":12000,"proxy":"","jina_api_key":""}}
+{"web":{"enabled":true,"providers":["serper","tavily","ddgs"],"serper_api_key":"<本地填写>","tavily_api_keys":["<本地密钥1>","<本地密钥2>"],"gl":"us","hl":"zh-cn","max_results":5,"timeout":30,"max_chars":12000,"proxy":"","jina_api_key":""}}
 ```
 
 Jina 密钥可通过 JINA_API_KEY 环境变量提供。配置每次请求重新读取，停用会阻止已绑定工具的新调用；重新开始对话请求后工具列表同步变化。当前配置通过文件维护，尚无独立前端设置表单。
@@ -18,8 +18,16 @@ web_search 返回标题、URL、摘要；空结果与网络错误分开。web_fe
 
 网页内容只作资料，不可覆盖用户要求。拒绝本机、内网、凭据 URL 与非标准端口；对域名解析得到的 198.18.0.0/15 兼容本机代理 Fake-IP 模式（实际页面由 Jina 远程读取），直接输入保留 IP 仍拒绝。第三方读取服务具有自己的网络边界，不能将此校验视为直接抓取器的完整 SSRF 防护。
 
-Harness 工具超时 40 秒；搜索线程使用最多 30 秒的网络超时，取消后不再等待结果，底层线程可能在其网络超时前结束。网页 HTTP 使用异步请求，可传播取消。运行轨迹沿用现有工具日志。
+Harness 工具超时 40 秒；DDGS 搜索线程使用最多 7 秒的网络超时，取消后不再等待结果，底层线程可能在其网络超时前结束。网页 HTTP 使用异步请求，可传播取消。运行轨迹沿用现有工具日志。
 
 ## 验证
 
 2026-11-02：后端 208 项测试通过。真实 DDGS 搜索获得 3 个 Python 官方文档结果；Jina 读取 https://www.python.org/ 返回 12000 字符及后续读取位置。未执行模型驱动的完整对话验收。
+
+## 主备搜索路由（2026-11-02）
+
+当前本地设置为 Serper 主用 → Tavily 第一备用 → DDGS 最后备用。Tavily 使用 basic，不请求模型生成答案，避免额外生成；每次备用请求轮换起始密钥，401/403/429/432 尝试下一枚。429 冷却60秒，鉴权及额度类错误冷却1小时；冷却仅在进程内，不修改账户额度、不假设四枚密钥对应四个独立额度池，实际额度以服务商账户为准。
+
+单次外部API超时7秒；总搜索预算34秒，Harness40秒。成功返回provider、key_slot和attempts（只包含渠道、编号、错误类别），不返回密钥或服务商原始错误体。无结果会转备用，所有渠道均为空时返回成功空列表；渠道错误不会伪装为空结果。API密钥在现有gitignored配置维护，Serper也支持SERPER_API_KEY环境变量。Jina正文读取不变。
+
+遵循 https://tavily.com/agent-setup/SKILL.md 的应用集成路径：直接REST，不将CLI作为应用运行时，不额外安装全局客户端。四枚Tavily密钥各一次真实搜索均HTTP200；Serper真实请求返回5条、Python官网首条；Tavily经绑定工具ainvoke真实返回3条。212项后端测试通过，包含模拟额度错误的密钥切换和主备降级。并未故意耗尽真实账户额度，未完成模型驱动的端到端对话验收。

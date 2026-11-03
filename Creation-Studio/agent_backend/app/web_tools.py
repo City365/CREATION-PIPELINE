@@ -1,5 +1,7 @@
 """Read-only web tools; search snippets and remote pages are untrusted evidence."""
 import asyncio
+import hashlib
+import time
 import ipaddress
 import os
 import socket
@@ -8,7 +10,7 @@ import httpx
 from langchain.tools import tool
 from app.configs.settings import load_settings
 
-DEFAULTS = {'enabled': True, 'max_results': 5, 'timeout': 30, 'max_chars': 12000, 'proxy': '', 'jina_api_key': ''}
+DEFAULTS = {'enabled': True, 'max_results': 5, 'timeout': 30, 'max_chars': 12000, 'proxy': '', 'jina_api_key': '', 'providers': ['ddgs'], 'serper_api_key': '', 'tavily_api_keys': [], 'gl': 'us', 'hl': 'zh-cn'}
 
 def config():
     return {**DEFAULTS, **(load_settings().get('web') or {})}
@@ -38,20 +40,90 @@ def search_sync(query, limit, proxy, timeout):
     from ddgs import DDGS
     return list(DDGS(proxy=proxy or None, timeout=timeout).text(query, max_results=limit))
 
+_tavily_cursor = 0
+_key_cooldowns = {}
+
+class SearchError(Exception):
+    def __init__(self, code, rotate=False):
+        self.code, self.rotate = code, rotate
+
+async def search_api(provider, query, limit, cfg, key):
+    if provider == 'serper':
+        url = 'https://google.serper.dev/search'
+        headers = {'X-API-KEY': key}
+        body = {'q': query, 'num': limit, 'gl': cfg.get('gl', 'us'), 'hl': cfg.get('hl', 'zh-cn')}
+    else:
+        url = 'https://api.tavily.com/search'
+        headers = {}
+        body = {'api_key': key, 'query': query, 'max_results': limit, 'search_depth': 'basic', 'include_answer': False}
+    try:
+        async with httpx.AsyncClient(proxy=cfg.get('proxy') or None, timeout=7, follow_redirects=False) as client:
+            response = await client.post(url, headers=headers, json=body)
+        if response.status_code in (401, 403, 429, 432):
+            raise SearchError('http_' + str(response.status_code), rotate=True)
+        if response.status_code != 200: raise SearchError('http_' + str(response.status_code))
+        data = response.json()
+        rows = data.get('organic' if provider == 'serper' else 'results')
+        if not isinstance(rows, list): raise SearchError('invalid_response')
+        return [{'title': str(r.get('title', ''))[:500], 'url': str(r.get('link') or r.get('url') or ''), 'snippet': str(r.get('snippet') or r.get('content') or '')[:2000]} for r in rows[:limit] if isinstance(r, dict) and (r.get('link') or r.get('url'))]
+    except httpx.TimeoutException: raise SearchError('timeout') from None
+    except httpx.RequestError: raise SearchError('network_error') from None
+    except ValueError: raise SearchError('invalid_response') from None
+
+async def _search_routes(query, limit, cfg):
+    global _tavily_cursor
+    attempts = []
+    for provider in cfg.get('providers', ['ddgs']):
+        if provider not in ('serper', 'tavily', 'ddgs'):
+            attempts.append({'provider': 'unknown', 'error': 'unsupported_provider'})
+            continue
+        if provider == 'ddgs':
+            try:
+                rows = await asyncio.wait_for(asyncio.to_thread(search_sync, query, limit, cfg.get('proxy', ''), 7), 8)
+                results = [{'title': str(r.get('title', ''))[:500], 'url': str(r.get('href') or r.get('link') or ''), 'snippet': str(r.get('body') or r.get('snippet') or '')[:2000]} for r in rows[:limit]]
+                if results: return {'ok': True, 'query': query, 'provider': provider, 'results': results, 'total_results': len(results), 'attempts': attempts}
+                attempts.append({'provider': provider, 'error': 'no_results'})
+            except asyncio.TimeoutError: attempts.append({'provider': provider, 'error': 'timeout'})
+            except ImportError: attempts.append({'provider': provider, 'error': 'dependency_missing'})
+            except Exception: attempts.append({'provider': provider, 'error': 'search_failed'})
+            continue
+        keys = [cfg.get('serper_api_key') or os.getenv('SERPER_API_KEY', '')] if provider == 'serper' else cfg.get('tavily_api_keys', [])
+        keys = list(dict.fromkeys(k.strip() for k in keys if isinstance(k, str) and k.strip()))
+        if not keys:
+            attempts.append({'provider': provider, 'error': 'not_configured'})
+            continue
+        offset = _tavily_cursor % len(keys) if provider == 'tavily' else 0
+        if provider == 'tavily': _tavily_cursor += 1
+        for n in range(len(keys)):
+            slot = (offset + n) % len(keys)
+            fingerprint = hashlib.sha256(keys[slot].encode()).hexdigest()
+            if _key_cooldowns.get(fingerprint, 0) > time.monotonic():
+                attempts.append({'provider': provider, 'key_slot': slot + 1, 'error': 'cooldown'})
+                continue
+            try:
+                results = await search_api(provider, query, limit, cfg, keys[slot])
+                if results: return {'ok': True, 'query': query, 'provider': provider, 'results': results, 'total_results': len(results), 'attempts': attempts, 'key_slot': slot + 1}
+                attempts.append({'provider': provider, 'error': 'no_results'})
+                break
+            except SearchError as err:
+                attempts.append({'provider': provider, 'key_slot': slot + 1, 'error': err.code})
+                if err.rotate:
+                    _key_cooldowns[fingerprint] = time.monotonic() + (60 if err.code == 'http_429' else 3600)
+                    continue
+                break
+    if attempts and all(a['error'] == 'no_results' for a in attempts):
+        return {'ok': True, 'query': query, 'provider': 'none', 'results': [], 'total_results': 0, 'attempts': attempts}
+    return {**failure('search_failed', '搜索渠道均未成功，请检查网络、密钥或额度'), 'attempts': attempts}
+
 async def search_web(query, max_results=5):
     cfg = config()
     if not cfg['enabled']: return failure('disabled', '联网检索已关闭')
     query = query.strip()
     if not query or len(query) > 2000: return failure('invalid_query', '搜索词不能为空且最多 2000 字符')
     limit = max(1, min(10, int(max_results), int(cfg['max_results'])))
-    timeout = max(5, min(30, int(cfg['timeout'])))
     try:
-        rows = await asyncio.wait_for(asyncio.to_thread(search_sync, query, limit, cfg['proxy'], timeout), timeout + 2)
-        results = [{'title': str(r.get('title', ''))[:500], 'url': str(r.get('href') or r.get('link') or ''), 'snippet': str(r.get('body') or r.get('snippet') or '')[:2000]} for r in rows[:limit]]
-        return {'ok': True, 'query': query, 'provider': 'ddgs', 'results': results, 'total_results': len(results)}
-    except (asyncio.TimeoutError, httpx.TimeoutException): return failure('timeout', '搜索超时，可以缩短关键词后重试')
-    except ImportError: return failure('dependency_missing', '缺少 ddgs，请安装后端 requirements.txt')
-    except Exception: return failure('search_failed', '搜索服务请求失败，请检查网络或代理后重试')
+        return await asyncio.wait_for(_search_routes(query, limit, cfg), 34)
+    except asyncio.TimeoutError: return failure('timeout', '搜索总等待时间已达上限，请稍后重试')
 
 async def fetch_web(url, start=0, max_chars=12000):
     cfg = config()
