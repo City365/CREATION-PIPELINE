@@ -3,6 +3,7 @@ import hashlib,json
 from .runtime import RunStopped
 from app.skill_library import LIMIT as SKILL_LIMIT
 CAPABILITIES={name:('workspace_write' if name=='create_workspace_artifact' else 'read_or_plan') for name in ('create_task_plan','read_analysis_guidance','record_step_result','search_workspace_documents','read_workspace_document','create_workspace_artifact')}
+CAPABILITIES.update({'web_search': 'read_or_plan', 'web_fetch': 'read_or_plan'})
 CAPABILITIES.update({
     'list_creation_models': 'read_or_plan',
     'generate_image': 'media_write',
@@ -32,7 +33,7 @@ CAPABILITIES.update({
 })
 
 # Match the underlying HTTP operations, including video polling's caller budget.
-TOOL_TIMEOUTS = {'generate_image': 310, 'submit_video_job': 70, 'probe_video': 70,
+TOOL_TIMEOUTS = {'web_search': 40, 'web_fetch': 40, 'generate_image': 310, 'submit_video_job': 70, 'probe_video': 70,
                  'extract_frames': 250, 'describe_image': 190,
                  'read_permission': 20, 'list_dir': 60, 'read_file': 60, 'write_file': 120,
                  'make_dir': 30, 'move_file': 300, 'copy_file': 300, 'delete_file': 120,

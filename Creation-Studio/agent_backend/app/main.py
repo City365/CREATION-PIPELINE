@@ -6,6 +6,7 @@ from collections import deque
 from app.task_tools import build_task_tools
 from app.create_tools import build_creation_tools, _http
 from app.execution import content_text, tick
+from app.web_tools import build_web_tools, WEB_PROMPT
 from app.fs_tools import build_local_tools
 from app.interaction_tools import build_interaction_tools
 from app import choice_rescue, supplements, context_report
@@ -152,7 +153,7 @@ class ChatRequest(BaseModel):
 def health(project=Depends(project_id)):
     name=get_active_model_name()
     cfg=get_provider_config(name)
-    return {'status':'ok','model':cfg.get('model'),'provider':name,'workspace_search':True,'planning':True,'mcp_runtime':False,'local_tools':True,'permissions':list(perms.MODE_ORDER),'default_permission':perms.DEFAULT_MODE,'harness_runtime':runtime.enabled(project),'engine_version':'harness/2.0' if runtime.enabled(project) else 'legacy'}
+    return {'status':'ok','model':cfg.get('model'),'provider':name,'workspace_search':True,'web_search':bool(build_web_tools()),'web_fetch':bool(build_web_tools()),'planning':True,'mcp_runtime':False,'local_tools':True,'permissions':list(perms.MODE_ORDER),'default_permission':perms.DEFAULT_MODE,'harness_runtime':runtime.enabled(project),'engine_version':'harness/2.0' if runtime.enabled(project) else 'legacy'}
 @app.get('/agent/models')
 def models(project=Depends(project_id)):
     data=model_options()
@@ -302,7 +303,7 @@ async def _chat(req,project,authorization):
     if not topic and not checkpoint:
         tools=[tool for tool in tools if tool.name not in ('create_task_plan','read_analysis_guidance','record_step_result')]
     # 本产品不再绑定数据集/策略包（那套来自业务分析项目，已移除）。
-    summary_prompt='本轮未绑定外部数据资源；项目风格、附件和对话历史就是全部材料。'
+    summary_prompt='本轮未绑定外部数据资源；项目风格、附件和对话历史是本地材料；外部资料需通过联网工具实际检索并引用来源。'
     if checkpoint:summary_prompt+='恢复例外：沿用已有计划，禁止重建计划或重复已完成步骤与交付文件，只继续未完成部分；本轮恢复仅允许读取和记录步骤，不允许新文件写入。已有任务状态：'+json.dumps({'plan':receipt['plan'],'artifacts':receipt['artifacts']},ensure_ascii=False)
     if req.skill_id:
         available=skill_snapshot if skill_snapshot is not None else plugins(project,'skill')
@@ -310,6 +311,7 @@ async def _chat(req,project,authorization):
             supplements.close_run(project,run_id)
             locks.discard(key)
             raise HTTPException(400,'所选技能不存在或已停用，请重新选择')
+    tools += build_web_tools()
     tools += build_creation_tools(publish_event, project, req.session_id)
     # 智能推荐：出决策选择卡。只读、不落盘，任何权限档位都保留。
     tools += build_interaction_tools(publish_event, receipt)
@@ -319,6 +321,7 @@ async def _chat(req,project,authorization):
         # 仅查看档不落盘：生成图片/视频、抽帧、交付文件都会写盘，一律不挂给模型。
         tools=[tool for tool in tools if tool.name not in ('create_workspace_artifact','publish_artifact','generate_image','submit_video_job','extract_frames')]
     base_prompt=system_prompt(topic,req.skill,project_hint,summary_prompt,[{k:a[k] for k in ('id','name','status','suffix')}|{'excerpt':(a.get('text') or '')[:600]} for a in attachments],bool(checkpoint),permission=permission)
+    if any(t.name == 'web_search' for t in tools): base_prompt += WEB_PROMPT
     if not tools_ok:
         base_prompt += ('\n\n【渠道能力】当前模型所在渠道不支持工具调用（function calling），所以本地文件工具、命令工具、生图生视频工具都无法执行。'
                        '禁止声称已经调用工具或已经写盘；需要落盘/移动文件时，如实说明是渠道限制，并提示用户把模型切到支持工具调用的渠道（deepseek-flash、gemini-3.8-flash），'
