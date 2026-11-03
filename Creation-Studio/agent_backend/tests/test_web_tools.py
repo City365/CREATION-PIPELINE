@@ -67,3 +67,24 @@ def test_api_uses_fixed_endpoints_and_normalizes():
     with patch.object(web.httpx,'AsyncClient',Client):
         rows=run(web.search_api('serper','query',5,web.DEFAULTS,'test-key'))
     assert rows[0]['url']=='https://example.com'
+
+def test_serper_pool_round_robin_and_quota_rotation():
+    cfg={**web.DEFAULTS,'providers':['serper','tavily'],'serper_api_keys':['s-a','s-b'],'tavily_api_keys':['t-a']}
+    good=[{'title':'ok','url':'https://example.com','snippet':''}]
+    api=AsyncMock(return_value=good)
+    with patch.object(web,'config',return_value=cfg), patch.object(web,'search_api',api), patch.object(web,'_serper_cursor',0), patch.object(web,'_key_cooldowns',{}):
+        a=run(web.search_web('one'));b=run(web.search_web('two'))
+    assert [a['key_slot'],b['key_slot']]==[1,2]
+    api=AsyncMock(side_effect=[web.SearchError('http_402',True),good])
+    with patch.object(web,'config',return_value=cfg), patch.object(web,'search_api',api), patch.object(web,'_serper_cursor',0), patch.object(web,'_key_cooldowns',{}):
+        result=run(web.search_web('three'))
+    assert result['provider']=='serper' and result['key_slot']==2
+    assert result['attempts'][0]['error']=='http_402'
+
+def test_serper_pool_exhausted_uses_tavily():
+    cfg={**web.DEFAULTS,'providers':['serper','tavily'],'serper_api_keys':['s-a','s-b'],'tavily_api_keys':['t-a']}
+    api=AsyncMock(side_effect=[web.SearchError('http_403',True),web.SearchError('http_429',True),[{'url':'https://example.com'}]])
+    with patch.object(web,'config',return_value=cfg), patch.object(web,'search_api',api), patch.object(web,'_serper_cursor',0), patch.object(web,'_key_cooldowns',{}):
+        result=run(web.search_web('query'))
+    assert result['provider']=='tavily' and len(result['attempts'])==2
+    assert 's-a' not in str(result) and 's-b' not in str(result)
