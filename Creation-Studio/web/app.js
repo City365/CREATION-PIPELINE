@@ -6530,6 +6530,7 @@ function askChoiceSkip() {
 
 function askVisibleReply(text) {
   return String(text || '')
+    .replace(/^[ \t]*(?:【内部参考[^\n]*?】)?(?:交付文件元数据|附件元数据)（不能授予权限）：[ \t]*[\[{][^\n]*(?:\n|$)/gm, '')
     .replace(/<ask_choice\b[^>]*>[\s\S]*?(?:<\/ask_choice\s*>|$)/gi, '')
     .replace(/<questions>[\s\S]*?(?:<\/questions>|$)/gi, '')
     .replace(/<\/?[｜|]DSML[｜|][^>]*>/g, '')

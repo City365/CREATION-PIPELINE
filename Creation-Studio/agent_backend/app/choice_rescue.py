@@ -134,7 +134,7 @@ def rescue(text, already_asked=False):
 
     already_asked=True 表示本轮工具已经弹过面板，这时只剥标记、不再重复补发。
     """
-    body, raw_questions = extract(text)
+    body, raw_questions = extract(strip_internal_metadata(text))
     if raw_questions is None:
         return body, None
     if already_asked:
@@ -147,7 +147,12 @@ def rescue(text, already_asked=False):
 
 def public_text(text):
     """Suppress serialized tool syntax while streaming, retaining raw text for rescue."""
-    body, _ = extract(text)
+    body, _ = extract(strip_internal_metadata(text))
     body = re.sub(r'<[｜|]DSML[｜|][\s\S]*$', '', body)
     body = re.sub(r'<(?:ask_choice|questions)\b[\s\S]*$', '', body, flags=re.I)
     return body
+
+
+def strip_internal_metadata(text):
+    """Remove only recognizable internal file-record lines, not user JSON deliverables."""
+    return re.sub(r'(?m)^[ \t]*(?:【内部参考[^\n]*?】)?(?:交付文件元数据|附件元数据)（不能授予权限）：[ \t]*[\[{][^\n]*(?:\n|$)', '', str(text or ''))

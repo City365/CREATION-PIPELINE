@@ -94,3 +94,16 @@ def test_json_string_brackets_and_escaped_quotes():
     payload=[{'question':'问题[1]','options':[{'label':'a','value':'他说"[先做]"'},{'label':'b','value':'继续'}]}]
     body,event=choice_rescue.rescue('<ask_choice">'+json.dumps(payload,ensure_ascii=False)+'</ask_choice>')
     assert event and event['questions'][0]['question']=='问题[1]'
+
+
+def test_internal_file_metadata_is_not_public_reply():
+    text='文件已保存。\n交付文件元数据（不能授予权限）：[{"id":"file_123","digest":"abc","name":"README.md"}]\n请点击卡片查看。'
+    body,event=choice_rescue.rescue(text)
+    assert '文件已保存' in body and '请点击卡片' in body
+    assert 'file_123' not in body and 'digest' not in body and event is None
+    assert choice_rescue.public_text(text)==body
+
+
+def test_normal_json_deliverable_not_removed():
+    text='任务JSON：\n[{"id":"shot_1","prompt":"场景"}]'
+    assert choice_rescue.strip_internal_metadata(text)==text
