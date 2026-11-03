@@ -5248,9 +5248,28 @@ function askExecutionTools(msg) {
   return tools;
 }
 
+function askPlanHistoryHtml(exec) {
+  const planSteps = exec.plan?.steps?.length ? exec.plan.steps : (exec.steps || []);
+  if (!planSteps.length) return '';
+  const stepHtml = planSteps.map((step, index) => {
+    const stateText = { pending: '待执行', running: '执行中', completed: '已完成', blocked: '待补充' }[step.status] || step.status;
+    const icon = step.status === 'completed' ? '✓' : step.status === 'running' ? '◐' : step.status === 'blocked' ? '!' : index + 1;
+    return `<li class="${esc(step.status || '')}">
+      <span class="ask-node">${icon}</span>
+      <div class="ask-step">
+        <div class="ask-step-title"><b>${esc(step.title || '')}</b><span>${esc(stateText)}</span></div>
+        <p class="ask-step-purpose">${esc(step.purpose || '')}</p>
+        ${step.output ? `<div class="ask-step-output"><small>本步产出 <span>模型分析</span></small><div class="ask-md">${askMarkdown(step.output)}</div></div>` : ''}
+        ${(step.evidence && step.evidence.length) ? `<details class="ask-evidence"><summary>依据材料 · ${step.evidence.length} 项 ›</summary>${step.evidence.map((s) => `<div><b>${esc(s.title || '')}</b><span>${esc(s.kind === 'guidance' ? '指导文档' : s.kind === 'workspace' ? '工作空间文件' : s.kind === 'artifact' ? '生成的交付文件' : '用户提供')} · ${esc(s.id || '')}</span><p>${esc(String(s.content || ''))}</p></div>`).join('')}</details>` : ''}
+      </div></li>`;
+  }).join('');
+  return '<section class="ask-trace-section ask-plan-history" aria-label="计划流程与依据"><h4>计划流程</h4>'+(exec.plan?.goal?'<p class="ask-goal">'+esc(exec.plan.goal)+'</p>':'')+'<ol class="ask-steps">'+stepHtml+'</ol></section>';
+}
+
 function askTraceHtml(msg, pending) {
   const exec = msg.execution;
   if (!exec) return pending ? '<p class="ask-process-note">执行中…</p>' : '';
+  const planHtml = askPlanHistoryHtml(exec);
   const rows = askTraceRows(msg);
   if (!rows.length) for (const tool of msg.execution?.tools || []) { rows.push({type:'tool',name:tool.name,args:''}); rows.push({type:'result',name:tool.name,status:tool.status,text:tool.output || ''}); }
   const runId = exec.id || '';
@@ -5264,9 +5283,9 @@ function askTraceHtml(msg, pending) {
   const since = running ? Number(msg._t0) || Date.now() : 0;
   const headText = askHeading(exec, pending, msg);
   const headInner = running ? '<span class="ask-trace-live" data-trace-live data-since="'+since+'"><span class="ask-trace-live-text">'+esc(headText)+'</span><span class="ask-trace-live-time"> · '+esc(askDurationText(Date.now()-since))+'</span></span>' : '<span>'+esc(headText)+'</span>';
-  if (loaded && !rows.length && !pending) return '<div class="ask-trace is-static"><div class="ask-trace-head is-static"><span>'+esc(headText)+'</span></div></div>';
+  if (loaded && !rows.length && !planHtml && !pending) return '<div class="ask-trace is-static"><div class="ask-trace-head is-static"><span>'+esc(headText)+'</span></div></div>';
   const toolHtml = rows.map(askTraceRowHtml).join('');
-  return '<section class="ask-trace '+(pending?'is-running ':'')+(open?'is-open':'')+'" data-trace-run="'+esc(runId)+'"><button type="button" class="ask-trace-head" data-act="ask-trace-toggle" data-run="'+esc(runId)+'" aria-expanded="'+open+'">'+headInner+'<span class="ask-chev">'+(open?'⌄':'›')+'</span></button>'+(open?'<div class="ask-trace-body">'+(toolHtml?'<ul class="ask-trace-rows">'+toolHtml+'</ul>':'')+((loading || (canLoad&&!pending&&!failed))?'<p class="ask-trace-empty">正在加载执行过程…</p>':'')+(failed?'<button type="button" class="ask-trace-load" data-act="ask-load-trace" data-run="'+esc(runId)+'" title="'+esc(msg._traceError)+'">重新加载执行过程</button>':'')+'</div>':'')+'</section>';
+  return '<section class="ask-trace '+(pending?'is-running ':'')+(open?'is-open':'')+'" data-trace-run="'+esc(runId)+'"><button type="button" class="ask-trace-head" data-act="ask-trace-toggle" data-run="'+esc(runId)+'" aria-expanded="'+open+'">'+headInner+'<span class="ask-chev">'+(open?'⌄':'›')+'</span></button>'+(open?'<div class="ask-trace-body">'+(toolHtml?'<section class="ask-trace-section" aria-label="工具调用轨迹"><h4>轨迹</h4><ul class="ask-trace-rows">'+toolHtml+'</ul></section>':'')+planHtml+((loading || (canLoad&&!pending&&!failed))?'<p class="ask-trace-empty">正在加载执行过程…</p>':'')+(failed?'<button type="button" class="ask-trace-load" data-act="ask-load-trace" data-run="'+esc(runId)+'" title="'+esc(msg._traceError)+'">重新加载执行过程</button>':'')+'</div>':'')+'</section>';
 }
 
 function askPlanDockHtml(chat) {

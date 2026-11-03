@@ -3208,3 +3208,6 @@ html[data-theme="studio-mint"] .modal { box-shadow: 0 34px 80px -30px #1d183a4d,
 
 /* Only one stop control while a reply is running; sending uses Enter and the queue. */
 .ask-composer-bar .ask-send.is-stop{width:32px;min-width:32px;height:32px;padding:0;flex:none;white-space:nowrap;display:inline-flex;align-items:center;justify-content:center}
+
+/* Expanded execution retains both tool trace and evidence-backed workflow history. */
+.ask-trace-section>h4{margin:8px 0;font-size:12px;font-weight:600;color:var(--wmd-text-2)}.ask-plan-history .ask-evidence p{max-height:240px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
