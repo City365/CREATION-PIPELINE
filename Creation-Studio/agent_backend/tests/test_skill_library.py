@@ -88,6 +88,21 @@ def test_migrate_database_item_to_folder(tmp_path, monkeypatch):
     assert skill_library.migrate_item(item) == 'exists'
 
 
+def test_nested_examples_and_scripts_stay_out_of_composed_text(tmp_path, monkeypatch):
+    """Skill packaging puts paired cases in references/examples; only references/ itself may be composed."""
+    monkeypatch.setattr(skill_library, 'ROOT', tmp_path / 'lib')
+    folder = make_skill(tmp_path / 'lib', '案例技能')
+    (folder / 'references' / 'examples').mkdir(parents=True, exist_ok=True)
+    (folder / 'scripts').mkdir(parents=True, exist_ok=True)
+    (folder / 'references' / 'examples' / 'case.txt').write_text('案例正文' * 100, encoding='utf-8')
+    (folder / 'scripts' / 'run.mjs').write_text('console.log(1)', encoding='utf-8')
+    item = skill_library.scan()[0]
+    text = item['config']['instructions']
+    assert '格式说明。' in text
+    assert '案例正文' not in text
+    assert '未加载的附件' not in text
+
+
 def test_plugin_api_reads_and_writes_the_folder(tmp_path, monkeypatch):
     monkeypatch.setattr(store, 'DB', tmp_path / 'db.sqlite')
     monkeypatch.setattr(skill_library, 'ROOT', tmp_path / 'lib')

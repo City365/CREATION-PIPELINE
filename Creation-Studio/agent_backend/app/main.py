@@ -152,7 +152,10 @@ class ChatRequest(BaseModel):
     permission:str=Field(default='',max_length=20)
     web_search:bool=False
 @app.get('/agent/health')
-def health(project=Depends(project_id)):
+def health(x_project_id: str = Header(default='wmd-local')):
+    # 健康检查只返回模型/能力信息，不碰项目数据；启动器在 controller 模式下
+    # 还没有可用的真实项目，不能让归属校验把健康检查卡住。
+    project = (x_project_id or 'wmd-local').strip()[:100] or 'wmd-local'
     name=get_active_model_name()
     cfg=get_provider_config(name)
     return {'status':'ok','model':cfg.get('model'),'provider':name,'workspace_search':True,'web_search':bool(build_web_tools()),'web_fetch':bool(build_web_tools()),'planning':True,'mcp_runtime':False,'local_tools':True,'permissions':list(perms.MODE_ORDER),'default_permission':perms.DEFAULT_MODE,'harness_runtime':runtime.enabled(project),'engine_version':'harness/2.0' if runtime.enabled(project) else 'legacy'}

@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -147,6 +147,31 @@ test('Excel 空表与空行处理', () => {
   const result = taskImport.parseFile({ name: 'blank.xlsx', data: withBlank });
   assert.equal(result.items.length, 1);
   assert.equal(result.items[0].line, 3);
+});
+
+test('短视频模型：JSON 与 Excel 都能带 model，留空为 null 之外的空串', () => {
+  const json = taskImport.parseFile({
+    name: 'm.json',
+    data: jsonBuffer({ items: [
+      { prompt: 'a', model: 'Seedance 2.0 Fast' },
+      { prompt: 'b', 模型: 'Seedance 2.0 Mini' },
+      { prompt: 'c' },
+    ] }),
+  });
+  assert.deepEqual(json.items.map((item) => item.model), ['Seedance 2.0 Fast', 'Seedance 2.0 Mini', '']);
+  assert.deepEqual(json.items[0].extra, {}, 'model 是已知字段，不能落进 extra');
+
+  const xlsx = taskImport.buildXlsx([{ name: '任务', rows: [
+    taskImport.HEADERS,
+    ['镜头 01', '提示词', '', '', '9:16', '10', 'Seedance 2.0 Fast'],
+    ['镜头 02', '提示词', '', '', '16:9', '10', ''],
+  ] }]);
+  const parsed = taskImport.parseFile({ name: 'm.xlsx', data: xlsx });
+  assert.deepEqual(parsed.errors, []);
+  assert.equal(parsed.items[0].model, 'Seedance 2.0 Fast');
+  assert.equal(parsed.items[0].ratio, '9:16');
+  assert.equal(parsed.items[1].model, '');
+  assert.deepEqual(parsed.items[0].extra, {}, '表头的「视频模型」不能算多余列');
 });
 
 test('只接受 .json 与 .xlsx', () => {

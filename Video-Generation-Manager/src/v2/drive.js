@@ -287,7 +287,8 @@ async function typeAndSend(page, text) {
     await page.waitForTimeout(200);
   }
   await page.waitForTimeout(120);
-  await page.keyboard.insertText(String(text));
+  // 原生 @ 图片引用已停用：统一走纯文本「图n」（见 ../adapters/doubao-mentions.js 顶部说明）
+  await page.keyboard.insertText(require('../adapters/doubao-mentions').pictureTagsToText(text));
   await page.waitForTimeout(300);
   const typed = await editable.evaluate((el) => String(el.innerText || el.textContent || '').trim().length).catch(() => 0);
   if (typed < 2) throw new Error('提示词没有输入到输入框（可能被页面浮层挡住）');

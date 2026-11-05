@@ -4,22 +4,31 @@ const path=require('node:path');
 const config=require('./config');
 const crypto=require('node:crypto');
 const {store}=require('./workbench-store');
+const tenantContext=require('./tenant-context');
 const read=(file,fallback)=>{try{return JSON.parse(fs.readFileSync(file,'utf8'));}catch{return fallback;}};
 function importHistory() {
-  const db=store(),dir=config.load().dataDir||config.DATA;
-  for(const batch of read(path.join(dir,'image-history.json'),[])) {
+  const db=store();
+  // 图像历史已入库（按租户）；只导入当前租户，避免把别的租户的记录带进工作台。
+  const imageHistory=require('./image-history');
+  for(const batch of imageHistory.list()) {
     db.migrate('image-history:'+batch.id,()=>{
       const id=db.begin({...batch,recordId:'legacy-image:'+batch.id,kind:'image',status:'success'});
       db.finish(id,'success',batch.items||[]);return {count:(batch.items||[]).length};
     });
   }
-  for(const job of read(path.join(config.DATA,'jobs.json'),{jobs:[]}).jobs||[]) {
+  const dir=config.load().dataDir||config.DATA;
+  // jobs.json 会被新的 jobs 表导入器改名为 jobs.imported.json；两个名字都读，避免旧成片记录漏迁。
+  const legacyJobs = read(path.join(dir,'jobs.json'),null) || read(path.join(dir,'jobs.imported.json'),{jobs:[]});
+  for(const job of (legacyJobs && legacyJobs.jobs) || []) {
     db.migrate('legacy-job:'+job.id,()=>{db.syncJob(job);return {jobId:job.id};});
   }
 }
 let imported=false;
+const importedTenants = new Set();
 function details(file) {
-  if(!imported){importHistory();imported=true;}
+  // 图像历史按租户；每个租户第一次查媒体详情时导入自己的历史。
+  const tenant = tenantContext.current() || 'tnt_default';
+  if (!importedTenants.has(tenant)) { importHistory(); importedTenants.add(tenant); imported = true; }
   const db=store();let record=db.detail(file);if(record)return record;
   // Legacy video folders have a separate full prompt, not params.prompt.
   const dir=path.dirname(file),params=read(path.join(dir,'params.json'),null);

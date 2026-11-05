@@ -55,3 +55,14 @@ test('界面上有删除入口，并且会持久化', () => {
   assert.ok(handler.includes('askPersist()'), '删完要同步到服务端');
   assert.ok(handler.includes('generating'), '生成中应挡住删除');
 });
+
+test('用户消息靠右且宽度贴合内容，不再撑成整行', () => {
+  const css = fs.readFileSync(path.join(__dirname, '../web/styles.css'), 'utf8');
+  const bodies = [...css.matchAll(/\.ask-message\.is-user \.ask-message-body\{([^}]*)\}/g)].map((m) => m[1]);
+  assert.ok(bodies.some((rule) => /width:fit-content/.test(rule)), '短句不该撑满整行，宽度要贴合内容');
+  assert.ok(bodies.some((rule) => /margin-left:auto/.test(rule)), '用户消息要靠右');
+  assert.ok(bodies.some((rule) => /max-width:min\(78%,640px\)/.test(rule)), '长段落最多占 78%、640px');
+  assert.match(css, /\.ask-message\.is-user \.ask-message-text\{text-align:left\}/, '正文仍左对齐');
+  assert.match(css, /\.ask-message\.is-user \.ask-files,[^{]*\.ask-reply-actions\{justify-content:flex-end\}/, '删除/时间那一行贴在这条消息的右下角');
+  assert.ok(source.includes('ask-reply-actions is-user-row'), '删除这一轮和时间的操作行要在用户消息里');
+});

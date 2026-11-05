@@ -65,7 +65,11 @@ def build_creation_tools(publish=None, project=None, session_id=None):
     def media_item(item, kind='image'):
         path = str(item.get('path') or '')
         url = str(item.get('url') or '')
-        if not url and path:
+        rel = str(item.get('rel') or '')
+        if rel and project:
+            # 项目相对路径地址：换过项目根目录也还能打开
+            url = '/api/file?rel=' + quote(rel) + '&projectId=' + quote(str(project))
+        elif not url and path:
             url = '/api/file?path=' + quote(path)
         registration = {}
         if project and session_id and path and Path(path).is_file():
@@ -79,6 +83,7 @@ def build_creation_tools(publish=None, project=None, session_id=None):
             **registration,
             'name': str(item.get('name') or os.path.basename(path)),
             'path': path,
+            'rel': rel,
             'url': url,
             'kind': kind,
             'bytes': int(item.get('bytes') or 0),
@@ -115,16 +120,27 @@ def build_creation_tools(publish=None, project=None, session_id=None):
             return {'ok': False, 'error': str(err)}
 
     @tool
-    def generate_image(prompt: str, count: int = 1, size: str = '', refs: list[str] = []) -> dict:
-        """调用本机图像生成模型出图（会真实计费）。prompt 必填；count 1-4；size 可留空；refs 是可选的本地参考图绝对路径。返回图片路径，可用于后续视频的首帧。"""
+    def generate_image(prompt: str, count: int = 1, size: str = '', refs: list[str] = [], target_path: str = '') -> dict:
+        """调用本机图像生成模型出图（会真实计费）。prompt 必填；count 1-4；size 可留空；refs 是可选的本地参考图绝对路径。返回图片路径，可用于后续视频的首帧。
+
+        target_path：只有在「这张图要当项目资产」时才填，写**项目内的相对路径**（相对项目根目录，不带盘符、不以 / 开头、不用 ..），
+        例如 assets/素材/人物/第1集-错过，也是彼此成全/林清栀-三视图.png。填了就固定存到这个位置，同名文件覆盖、旧图自动留档到 assets/.版本/。
+        聊天里随手生成的图不要填，系统会放到项目的 media/images/<日期>/。
+        """
         try:
-            data = _http('POST', '/api/images/generate', {
+            body = {
                 'prompt': prompt,
                 'count': max(1, min(4, int(count or 1))),
                 'size': size or '',
                 'refs': [{'path': p, 'name': os.path.basename(p)} for p in (refs or [])],
-            }, timeout=300)
-            imgs = [{'path': i.get('path'), 'name': i.get('name'), 'url': i.get('url')} for i in data.get('items', [])]
+            }
+            if project:
+                body['projectId'] = project
+            target = str(target_path or '').strip()
+            if target:
+                body['targetPath'] = target
+            data = _http('POST', '/api/images/generate', body, timeout=300)
+            imgs = [{'path': i.get('path'), 'rel': i.get('rel') or '', 'name': i.get('name'), 'url': i.get('url')} for i in data.get('items', [])]
             emit_media([media_item(i, 'image') for i in data.get('items', [])])
             return {'ok': True, 'id': data.get('id'), 'images': imgs}
         except Exception as err:

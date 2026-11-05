@@ -321,6 +321,14 @@ def build_local_tools(project=None, session_id=None, mode=None, roots=None, publ
             return _fail('工作目录不存在：' + workdir)
         timeout = max(5, min(600, int(timeout_seconds or 60)))
         env = {k: v for k, v in os.environ.items() if not k.upper().startswith(('WMD_', 'AGENT_'))}
+        # 把当前项目位置显式传给脚本：技能脚本据此找 assets/素材，不用再问用户路径。
+        try:
+            project_dir = str(perms.project_dir(project) or '') if project else ''
+        except Exception:
+            project_dir = ''
+        if project_dir:
+            env['WMD_PROJECT_DIR'] = project_dir
+            env['WMD_ASSETS_DIR'] = str(Path(project_dir) / 'assets' / '素材')
         bash = os.getenv('WMD_GIT_BASH') or r'D:\notebook\software\git\Git\bin\bash.exe'
         if not Path(bash).is_file():return _fail('Git Bash 不可用：' + bash)
         argv = [bash, '--noprofile', '--norc', '-c', text]

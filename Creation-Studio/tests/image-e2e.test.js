@@ -84,6 +84,36 @@ test('图像渠道：新增渠道 → 生成 → 落盘', { timeout: 60000 }, as
     assert.match(mock.state.imageRequests[1].contentType, /multipart\/form-data/);
     const media = await fetch(base + '/api/media?kind=image').then((r) => r.json());
     assert.ok(media.data.items.some((m) => m.path === item.path), '媒体库没有收录生成的图像');
+
+    // 项目资产图：带 targetPath（项目相对路径）就固定落在素材库那个位置
+    const dataDir = path.join(tmp, 'data');
+    fs.mkdirSync(dataDir, { recursive: true });
+    fs.writeFileSync(path.join(dataDir, 'projects.json'), JSON.stringify([{
+      id: 'proj-e2e', folder: 'proj-e2e', name: '端到端项目', description: '', styleId: '',
+      sourceFolders: [], createdAt: 1, updatedAt: 1,
+    }]));
+    const assetRel = 'assets/素材/人物/第1集-错过，也是彼此成全/林清栀-三视图.png';
+    const asset = await fetch(base + '/api/images/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: 'role sheet', count: 1, projectId: 'proj-e2e', targetPath: assetRel }),
+    }).then((r) => r.json());
+    assert.ok(asset.ok, JSON.stringify(asset));
+    const assetPath = path.join(dataDir, 'projects', 'proj-e2e', 'assets', '素材', '人物', '第1集-错过，也是彼此成全', '林清栀-三视图.png');
+    assert.equal(asset.data.items[0].path, assetPath, '应该写到 targetPath 指定的位置');
+    assert.equal(asset.data.items[0].rel, assetRel);
+    assert.ok(fs.existsSync(assetPath));
+    const served = await fetch(base + '/api/file?rel=' + encodeURIComponent(assetRel) + '&projectId=proj-e2e');
+    assert.equal(served.status, 200, 'rel 地址要能读回来');
+
+    // 绝对路径的 targetPath 直接 400，不落盘
+    const rejected = await fetch(base + '/api/images/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: 'bad path', count: 1, projectId: 'proj-e2e', targetPath: path.join(tmp, 'escape.png') }),
+    }).then((r) => r.json());
+    assert.equal(rejected.ok, false);
+    assert.match(String(rejected.error), /相对路径/);
   } finally {
     child.kill();
     mock.server.close();

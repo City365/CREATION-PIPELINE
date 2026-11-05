@@ -131,6 +131,8 @@ const state = {
   batch: null,
   busy: false,
   lastJobId: null,
+  // 舞台上正在回看哪一版：{ [itemId]: jobId }，点历史缩略图时写入，只在空闲时生效
+  stagePick: {},
   image: {
     channelId: '',
     tab: 'generate',
@@ -156,6 +158,7 @@ const state = {
     megapixels2: 0,
     duration: 10,
     seed: '',
+    model: '',
     count: 1,
     promptMode: 'tags',
     warnings: [],
@@ -173,7 +176,7 @@ function studioSnapshot() {
     images: s.images || [], audios: s.audios || [], videos: s.videos || [],
     aspectRatio: s.aspectRatio, resolution: s.resolution,
     megapixels: s.megapixels, megapixels2: s.megapixels2,
-    duration: s.duration, seed: s.seed, count: s.count,
+    duration: s.duration, seed: s.seed, count: s.count, model: s.model || '',
     updated: Date.now(),
   };
 }
@@ -189,7 +192,7 @@ function studioApply(saved) {
   if (Array.isArray(saved.images)) s.images = saved.images.filter(Boolean);
   s.videos = Array.isArray(saved.videos) ? saved.videos.filter(Boolean) : [];
   if (Array.isArray(saved.audios)) s.audios = saved.audios.filter(Boolean);
-  for (const key of ['aspectRatio', 'resolution', 'seed']) if (saved[key] !== undefined) s[key] = saved[key];
+  for (const key of ['aspectRatio', 'resolution', 'seed', 'model']) if (saved[key] !== undefined) s[key] = saved[key];
   for (const key of ['megapixels', 'megapixels2', 'duration', 'count']) if (Number.isFinite(saved[key])) s[key] = saved[key];
   s._restored = true;
 }
@@ -1321,12 +1324,36 @@ function studioOwnJobs() {
   return (state.jobs || []).filter((j) => j.itemId === itemId);
 }
 
+/** 当前分镜出过片的那些任务，最新的在前：舞台上面那排「生成历史」用它抽卡对比。 */
+function studioHistoryJobs(limit = 4) {
+  return studioOwnJobs()
+    .filter((j) => (j.outputs || []).some((o) => o.type === 'video'))
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+    .slice(0, limit);
+}
+
+function studioPickedJobId() {
+  const itemId = WB.context('video').itemId;
+  return (state.stagePick && state.stagePick[itemId]) || '';
+}
+
+/**
+ * 舞台看的是「当前分镜最新的一条任务」：有在跑的就看正在跑的，没有才看最新的那条。
+ * 以前优先用 state.lastJobId，那个值是上次会话/上次点选留下的，会把好几天前的成片
+ * 钉在舞台上——明明还在生成，舞台却显示「完成 · 100%」。
+ * 点过上面的历史缩略图后，空闲时优先看用户点的那一版；一有新任务在跑就回到实时任务。
+ */
 function studioStageJob() {
   const ownJobs = studioOwnJobs();
-  return ownJobs.find((j) => j.id === state.lastJobId)
-    || ownJobs.find((j) => j.status === 'running')
-    || ownJobs.slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).find((j) => (j.outputs || []).length)
-    || null;
+  if (!ownJobs.length) return null;
+  const active = ownJobs
+    .filter((j) => j.status === 'running' || j.status === 'queued')
+    .sort((a, b) => (Number(b.status === 'running') - Number(a.status === 'running')) || ((b.createdAt || 0) - (a.createdAt || 0)))[0];
+  if (active) return active;
+  const picked = studioPickedJobId();
+  const hit = picked ? ownJobs.find((j) => j.id === picked) : null;
+  if (hit && (hit.outputs || []).some((o) => o.type === 'video')) return hit;
+  return ownJobs.slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0] || null;
 }
 
 // 结构签名：只有“任务集合或状态”变了才值得整页重画，进度百分比变化不算
@@ -1412,7 +1439,8 @@ function renderStudio() {
   const progress = lastJob ? lastJob.progress || 0 : 0;
   const keyCount = (state.config.autodlKeys || []).filter((k) => k.enabled !== false).length;
   const channel = (state.channels.video || []).find((c) => c.id === wf.channelId) || null;
-  const recent = ownJobs.slice(0, 5);
+  // 最近任务：最新的排前面（state.jobs 是创建顺序，直接 slice 会拿到最老的五条）
+  const recent = ownJobs.slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).slice(0, 5);
 
   const videoChannels = (state.channels.video || []).filter((c) => c.enabled !== false);
   const autodlWorkflows = state.workflows.filter((w) => w.provider === 'autodl' && (!wf.channelId || w.channelId===wf.channelId));
@@ -1469,8 +1497,25 @@ function renderStudio() {
         </select><span class="wmd-select-caret">${ICON.caret}</span></div>
       </div>`;
 
+  // 生成历史：抽卡要能对比前几版，一排放四个，点哪个舞台就回看哪个
+  const historyJobs = studioHistoryJobs(4);
+  const historyStrip = historyJobs.length ? `<div class="stage-history">
+        <div class="stage-history-head"><span>生成历史</span><span class="hint">点缩略图回看这一版</span></div>
+        <div class="stage-history-grid">${historyJobs.map((job, index) => {
+          const out = [...(job.outputs || [])].reverse().find((o) => o.type === 'video');
+          const on = lastJob && job.id === lastJob.id;
+          const label = index === 0 ? '最新' : '第 ' + (historyJobs.length - index) + ' 版';
+          const time = new Date(job.createdAt || 0).toLocaleString('zh-CN', { hour12: false });
+          return `<button type="button" class="stage-history-card${on ? ' is-on' : ''}" data-act="stage-pick" data-id="${esc(job.id)}" title="${esc(label)} · ${esc(time)} 生成 · 点一下在舞台回看">
+            <video src="/api/file?path=${enc(out.path)}#t=0.5" preload="metadata" muted playsinline></video>
+            <span class="stage-history-tag">${esc(label)}</span>
+          </button>`;
+        }).join('')}</div>
+      </div>` : '';
+
   const stage = lastJob
     ? `<div class="stage-live">
+        ${historyStrip}
         <div class="stage-video">${video
           ? `<video src="/api/file?path=${enc(video.path)}" controls playsinline></video>`
           : `<div class="stage-wait"><span class="wmd-spinner"></span><span>${esc(lastJob.stage || '生成中')} · ${progress}%</span></div>`}</div>
@@ -1573,13 +1618,14 @@ function renderStudio() {
         </div>
 
         <div class="wmd-compose">
-          <div class="wmd-compose-params">
+          <div class="wmd-compose-params${Array.isArray(wf.models) && wf.models.length ? ' is-with-name' : ''}">
             <div class="wmd-field wmd-compose-field is-model">
               <div class="wmd-field-head"><span class="wmd-field-label">视频模型</span></div>
               <div class="wmd-select-wrap"><select class="wmd-select" id="p-model" title="${esc(wf.note || '')}">
                 ${modelOptions}
               </select><span class="wmd-select-caret">${ICON.caret}</span></div>
             </div>
+            ${studioModelFieldHtml(wf, s)}
             ${aspectField}
             <div class="wmd-field wmd-compose-field is-duration" ${!wf.durationKey ? 'style="display:none"' : ''}>
               <div class="wmd-field-head"><span class="wmd-field-label">时长</span></div>
@@ -1604,7 +1650,7 @@ function renderStudio() {
           </div>
           <div class="wmd-generate">
             <button type="button" class="wmd-btn wmd-btn-primary wmd-btn-lg" data-act="generate" ${state.busy ? 'disabled' : ''}>生成视频</button>
-            <div class="wmd-generate-hint"><span class="tnum">${isAuto ? '官网 API' : esc(wf.providerLabel || '自定义')} · ${esc(isAuto ? (s.resolution || wf.defaultResolution) : s.aspectRatio.split(' ')[0])} · ${wf.durationKey ? s.duration + 's' : '按实际生成时长'}</span></div>
+            <div class="wmd-generate-hint${studioModelName(wf, s) ? ' is-two-line' : ''}"><span class="tnum" id="studio-generate-hint">${studioGenerateHintHtml(wf, s)}</span></div>
           </div>
         </div>
       </div>
@@ -1720,6 +1766,8 @@ function bindStudio(root) {
   };
   bindChange('#p-resolution', 'resolution');
   bindChange('#p-aspect', 'aspectRatio');
+  const modelNameSel = $('#p-model-name', root);
+  if (modelNameSel) modelNameSel.onchange = () => { s.model = modelNameSel.value; refreshStudioHint(); studioPersist(); };
   bindChange('#p-duration', 'duration', Number);
   bindChange('#p-megapixels', 'megapixels', Number);
   bindChange('#p-megapixels2', 'megapixels2', Number);
@@ -1789,6 +1837,15 @@ function bindStudio(root) {
       if (act === 'clear-prompt') { s.prompt = ''; s.warnings = []; s.promptMode = 'code'; return render(); }
       if (act === 'optimize') { s.promptMode = 'code'; return optimizePrompt(target.dataset.format === 'seedance' ? 'seedance' : 'h3'); }
       if (act === 'generate') return generate();
+      if (act === 'stage-pick') {
+        // 有任务在跑时舞台必须跟着实时任务（不然又会「没完成却显示完成」），回看先等它跑完
+        if (studioOwnJobs().some((j) => j.status === 'running' || j.status === 'queued')) {
+          return toast('这个分镜还在生成，等它跑完再回看历史');
+        }
+        state.stagePick = state.stagePick || {};
+        state.stagePick[WB.context('video').itemId] = target.dataset.id;
+        return render();
+      }
       if (act === 'open-job') { return openJobDetail(target.dataset.id); }
       if (act === 'go-jobs') { state.logTab='video';localStorage.setItem('wmd.logs.tab','video');location.hash = '#logs'; return; }
       if (act === 'open-manager') {
@@ -2116,6 +2173,60 @@ function studioSkillFormat(s, wf) {
   return manual ? s.skillFormat : skillFormatOf(wf || currentWorkflow());
 }
 
+/**
+ * 视频模型名称：豆包网页有模型下拉（Seedance 2.0 Mini / Fast），文案必须一字不差。
+ * 工作流没带 models（Gemini、AutoDL、自定义渠道）就返回空，不往任务里塞模型。
+ */
+function studioModelName(wf, s) {
+  const list = Array.isArray(wf && wf.models) ? wf.models : [];
+  if (!list.length) return '';
+  const value = String((s && s.model) || '').trim();
+  return list.includes(value) ? value : '';
+}
+
+function studioModelFieldHtml(wf, s) {
+  const list = Array.isArray(wf && wf.models) ? wf.models : [];
+  if (!list.length) return '';
+  const current = studioModelName(wf, s);
+  return `<div class="wmd-field wmd-compose-field is-name">
+              <div class="wmd-field-head"><span class="wmd-field-label">模型名称</span></div>
+              <div class="wmd-select-wrap"><select class="wmd-select" id="p-model-name" title="发给管理器的视频模型名称，必须和网页下拉文案一字不差；不指定就沿用网页当前选中的模型">
+                <option value="" ${current ? '' : 'selected'}>跟随页面当前模型</option>
+                ${list.map((model) => `<option value="${esc(model)}" ${model === current ? 'selected' : ''}>${esc(model)}</option>`).join('')}
+              </select><span class="wmd-select-caret">${ICON.caret}</span></div>
+            </div>`;
+}
+
+/** 生成按钮下面那行参数摘要：管理器 · 16:9 · 15s（选了模型再单独一行 Seedance 2.0 Fast）。
+ *  模型名比这行长，所以拆成两段：窄的时候只在两段之间折行，不会把「15s」孤零零甩到一行。 */
+function studioGenerateHintParts(wf, s) {
+  const isAuto = wf && wf.provider === 'autodl';
+  const size = esc(isAuto ? ((s && s.resolution) || (wf && wf.defaultResolution)) : String((s && s.aspectRatio) || '').split(' ')[0]);
+  const duration = wf && wf.durationKey ? ` · ${(s && s.duration)}s` : ' · 按实际生成时长';
+  return {
+    params: `${isAuto ? '官网 API' : esc((wf && wf.providerLabel) || '自定义')} · ${size}${duration}`,
+    model: esc(studioModelName(wf, s)),
+  };
+}
+
+function studioGenerateHint(wf, s) {
+  const parts = studioGenerateHintParts(wf, s);
+  return parts.model ? `${parts.params} · ${parts.model}` : parts.params;
+}
+
+function studioGenerateHintHtml(wf, s) {
+  const parts = studioGenerateHintParts(wf, s);
+  return `<span class="hint-seg">${parts.params}</span>${parts.model ? ` <span class="hint-seg">${parts.model}</span>` : ''}`;
+}
+
+function refreshStudioHint() {
+  const wf = currentWorkflow();
+  const hint = $('#studio-generate-hint');
+  if (hint) hint.innerHTML = studioGenerateHintHtml(wf, state.studio);
+  const box = hint && hint.closest('.wmd-generate-hint');
+  if (box) box.classList.toggle('is-two-line', Boolean(studioModelName(wf, state.studio)));
+}
+
 let validateTimer = null;function validatePromptSoon() {
   clearTimeout(validateTimer);
   validateTimer = setTimeout(async () => {
@@ -2191,6 +2302,7 @@ async function generate() {
       audios: s.audios.slice(0,wf.audios).filter(Boolean).map((audio) => ({ path: audio.path, name: audio.name })),
       videos: (s.videos || []).slice(0,wf.videos||0).map(video=>({path:video.path,name:video.name})),
       duration: s.duration,
+      model: studioModelName(wf, s),
       resolution: s.resolution || wf.defaultResolution,
       aspectRatio: s.aspectRatio,
       megapixels: s.megapixels || wf.megapixelsDefault,
@@ -2201,6 +2313,8 @@ async function generate() {
     };
     const data = await api('/api/jobs', { method: 'POST', body });
     state.jobs = (await api('/api/jobs')).jobs;
+    // 刚提交了新任务：舞台回到实时任务，不要停在上一次回看的旧版
+    if (state.stagePick) delete state.stagePick[workbenchContext.itemId];
     if (WB.context("video").itemId === workbenchContext.itemId) state.lastJobId = data.jobs[0].id;
     try { localStorage.setItem('wmd.lastJobId', state.lastJobId); } catch { /* ignore */ }
     toast(`已加入队列 ${data.jobs.length} 条`);
@@ -2361,11 +2475,15 @@ function assetMatch(item) {
 
 function currentAssetView() {
   const data = state.assetLibrary;
-  const view = state.assetView || { kind: 'material', type: 'character' };
-  if (view.kind === 'material' && !ASSET_MATERIALS.some((item) => item.id === view.type)) view.type = 'character';
+  const raw = state.assetView || { kind: 'overview' };
+  // 老的「素材分类」视图统一成目录视图：素材/<人物|场景|道具>
+  const view = raw.kind === 'material'
+    ? { kind: 'dir', rel: '素材/' + assetTypeMeta(raw.type).label, type: raw.type }
+    : raw;
+  if (view.kind === 'dir' && !view.rel) return { kind: 'overview' };
   if (view.kind === 'shot') {
     const task = (data?.tasks || []).find((row) => (view.taskId ? row.id === view.taskId : row.title === view.taskTitle));
-    if (!task || !(task.shots || []).some((shot) => shot.name === view.name)) return { kind: 'material', type: 'character' };
+    if (!task || !(task.shots || []).some((shot) => shot.name === view.name)) return { kind: 'overview' };
     return { ...view, taskId: task.id, taskTitle: task.title };
   }
   return view;
@@ -2373,7 +2491,57 @@ function currentAssetView() {
 
 async function loadAssetLibrary() {
   state.assetLibrary = await api('/api/assets/library');
+  // 重新扫描后目录缓存作废，避免显示删掉的文件
+  state.assetTree = {};
   return state.assetLibrary;
+}
+
+/** 只允许一个在途请求：每次 render 都重开请求会变成死循环（页面直接卡死）。 */
+function ensureAssetLibrary() {
+  if (state.assetLibrary || state.assetLibraryLoading) return;
+  state.assetLibraryLoading = true;
+  loadAssetLibrary()
+    .then(() => { state.assetLibraryLoading = false; if (state.route === 'assets') render(); })
+    .catch((err) => { state.assetLibraryLoading = false; toast(err.message, true); });
+}
+
+/** 素材树单层：第一次展开某层时才去读它的子目录，页面不用一次加载几千个文件。
+ *  deep=true 读这个分类下所有文件（点分类时右侧要列全部）。
+ *  同一层只发一个请求；在途时返回同一个 promise，避免 render→bind→load 互相触发死循环。 */
+function assetDirKey(rel, deep) {
+  return (deep ? 'deep::' : '') + rel;
+}
+
+function loadAssetDir(rel, deep = false) {
+  state.assetTree = state.assetTree || {};
+  const key = assetDirKey(rel, deep);
+  const cached = state.assetTree[key];
+  if (cached && cached.loaded) return Promise.resolve(cached);
+  if (cached && cached.promise) return cached.promise;
+  const entry = { loading: true, loaded: false };
+  const query = '?rel=' + encodeURIComponent(rel) + (deep ? '&deep=1' : '');
+  entry.promise = api('/api/assets/dir' + query)
+    .then((data) => {
+      const done = { ...data, loading: false, loaded: true, deep: Boolean(deep) };
+      state.assetTree[key] = done;
+      return done;
+    })
+    .catch((err) => {
+      const failed = { loading: false, loaded: true, error: err.message, dirs: [], files: [] };
+      state.assetTree[key] = failed;
+      return failed;
+    });
+  state.assetTree[key] = entry;
+  return entry.promise;
+}
+
+function assetDirInfo(rel, deep = false) {
+  return (state.assetTree || {})[assetDirKey(rel, deep)] || null;
+}
+
+/** 树里的子目录用「读到的任意一份」都行：深读（deep）里也带着同样一层 dirs。 */
+function assetDirAny(rel) {
+  return assetDirInfo(rel) || assetDirInfo(rel, true) || null;
 }
 
 function assetLibraryEmpty(text, hint) {
@@ -2381,6 +2549,37 @@ function assetLibraryEmpty(text, hint) {
 }
 
 function assetTaskKey(task) { return task.id || task.title; }
+
+/** 左侧资产树的一行：整行可点（不用非得点小箭头），箭头跟在名称后面；
+ *  分类行点一下展开/收起并列出这一类全部文件，项目行点一下直接列出那一层的文件。 */
+function assetDirRowHtml(rel, view, depth, countHint) {
+  const expanded = (state.assetExpanded || {})['dir:' + rel] === true;
+  const info = assetDirAny(rel);
+  const name = rel.split('/').pop();
+  const active = view.kind === 'dir' && view.rel === rel;
+  const count = info && info.loaded ? info.total : (typeof countHint === 'number' ? countHint : '');
+  // 结构只有两层：分类（人物/场景/道具）→ 项目文件夹，项目文件夹里全是文件。
+  const hasDirs = depth === 0 || Boolean(info && info.loaded && (info.dirs || []).length);
+  return `<div class="lib-dir-block">
+    <button type="button" class="lib-dir-row ${active ? 'active' : ''}" data-lib-dir="${esc(rel)}" data-lib-dir-depth="${depth}" title="${esc(rel)}" style="padding-left:${8 + depth * 14}px">
+      <span class="lib-node-main">${esc(name)}</span>
+      ${hasDirs ? `<span class="lib-caret${expanded ? ' is-open' : ''}" aria-hidden="true"></span>` : ''}
+      <em class="lib-count">${count}</em>
+    </button>
+    ${expanded && hasDirs ? assetDirChildrenHtml(rel, view, depth + 1) : ''}
+  </div>`;
+}
+
+/** 展开后的下一层：只列子目录；文件不列在树上，点目录时整批显示在右侧。 */
+function assetDirChildrenHtml(rel, view, depth) {
+  const info = assetDirAny(rel);
+  if (!info || (!info.loaded && info.loading)) return `<div class="lib-empty" style="padding-left:${8 + depth * 14}px">读取中…</div>`;
+  if (info.error) return `<div class="lib-empty" style="padding-left:${8 + depth * 14}px">${esc(info.error)}</div>`;
+  const dirs = info.dirs || [];
+  if (!dirs.length) return `<div class="lib-empty" style="padding-left:${8 + depth * 14}px">没有子文件夹</div>`;
+  return dirs.map((dir) => assetDirRowHtml(dir.rel, view, depth, dir.total)).join('');
+}
+
 
 function renderAssetSidebar(data, view) {
   const query = String(state.assetQuery || '').toLowerCase();
@@ -2393,9 +2592,11 @@ function renderAssetSidebar(data, view) {
     <div class="library-nav-head"><h2>素材库</h2><span class="hint">${(data.tasks || []).length} 个任务 · ${(data.shots || []).length} 个分镜</span></div>
     <div class="library-group">
       <div class="library-group-title">资产</div>
-      ${ASSET_MATERIALS.map((material) => `<button class="lib-item ${view.kind === 'material' && view.type === material.id ? 'active' : ''}" data-lib-material="${material.id}">
-        <span>${esc(material.label)}</span><em>${(data.materials && data.materials[material.id] || []).length}</em>
-      </button>`).join('')}
+      ${ASSET_MATERIALS.map((material) => {
+        const rel = '素材/' + material.label;
+        const total = (data.totals && data.totals[material.id]) || 0;
+        return assetDirRowHtml(rel, view, 0, total);
+      }).join('')}
     </div>
     <div class="library-group">
       <div class="library-group-title"><span>分镜</span><button class="lib-add" data-act="new-task" title="新建任务">＋ 任务</button></div>
@@ -2439,16 +2640,54 @@ function renderAssetGrid(items, emptyText, emptyHint) {
     </div>`).join('')}</div>`;
 }
 
-function renderMaterialView(data, view) {
-  const material = ASSET_MATERIALS.find((item) => item.id === view.type) || ASSET_MATERIALS[0];
-  const items = ((data.materials && data.materials[view.type]) || []).filter(assetMatch);
+/** 默认总览：只显示三个分类和递归数量，不读任何子目录；点开哪层才读哪层。 */
+function renderAssetOverview(data) {
+  const cards = ASSET_MATERIALS.map((material) => {
+    const total = (data.totals && data.totals[material.id]) || 0;
+    return `<button type="button" class="asset-folder" data-lib-dir="${esc('素材/' + material.label)}" data-lib-dir-depth="0" title="打开 assets/素材/${esc(material.label)}">
+      <span class="asset-folder-icon">📁</span>
+      <span class="asset-folder-name">${esc(material.label)}</span>
+      <em>${total}</em>
+    </button>`;
+  }).join('');
   return `<div class="library-main-head">
-    <div><h2>${esc(material.label)}</h2><p class="hint">素材 → ${esc(material.label)} · ${items.length} 个文件</p></div>
+    <div><h2>素材库</h2><p class="hint">左侧点分类展开项目文件夹，点项目在那个位置列出这一层的文件（点开才读取，进页面不扫目录）</p></div>
+  </div>
+  <div class="asset-folders">${cards}</div>`;
+}
+
+/** 右侧只列文件：点分类是这一类全部文件，点项目文件夹是它里面的文件，这里不再重复列文件夹。 */
+function renderDirView(view) {
+  const rel = view.rel || '素材/人物';
+  const deep = view.deep === true;
+  const info = assetDirInfo(rel, deep);
+  const parts = rel.split('/');
+  const name = parts[parts.length - 1];
+  // 只有「素材/人物」这一层才给上传按钮：上传接口固定写到 assets/素材/<类型>/ 根下
+  const material = ASSET_MATERIALS.find((row) => rel === '素材/' + row.label) || null;
+  const query = String(state.assetQuery || '').toLowerCase();
+  const files = ((info && info.files) || []).filter((file) => !query || String(file.name).toLowerCase().includes(query));
+  const cards = files.map((file) => ({
+    name: file.name,
+    rel: file.rel,
+    url: file.url,
+    kind: file.media,
+    // 分类从路径里取（素材/人物/…），深层目录时要带上所属项目文件夹
+    typeLabel: [assetTypeLabelOf(file.rel), deep ? (file.folder || '') : ''].filter(Boolean).join(' · '),
+    bytes: file.bytes,
+  }));
+  const body = (!info || (info.loading && !info.loaded))
+    ? `<div class="empty"><span class="spinner"></span></div>`
+    : info.error
+      ? assetLibraryEmpty('读不到这个目录', info.error)
+      : cards.length ? renderAssetGrid(cards, '', '') : assetLibraryEmpty('这里还没有文件', `把图放进 ${rel}/ 就会显示在这里。`);
+  return `<div class="library-main-head">
+    <div><h2>${esc(name)}</h2><p class="hint">${esc(parts.join(' → '))} · ${info && info.loaded ? info.total : '…'} 个文件${deep ? '（含各项目文件夹）' : ''}</p></div>
     <div class="library-actions">
-      <button class="btn" data-act="upload-material">上传${esc(material.label)}</button>
+      ${material ? `<button class="btn" data-act="upload-material" data-material="${material.id}">上传${esc(material.label)}</button>` : ''}
     </div>
   </div>
-  ${renderAssetGrid(items, `还没有${material.label}素材`, `点右上角「上传${material.label}」，文件会放进 assets/素材/${material.label}/`)}`;
+  ${body}`;
 }
 
 function renderOtherView(data) {
@@ -2516,7 +2755,8 @@ function renderAssets() {
   const view = currentAssetView();
   const body = view.kind === 'shot' ? renderShotView(data, view)
     : view.kind === 'other' ? renderOtherView(data)
-    : renderMaterialView(data, view);
+    : view.kind === 'dir' ? renderDirView(view)
+    : renderAssetOverview(data);
   return `<div class="library-page" style="width:100%">
     ${renderAssetSidebar(data, view)}
     <section class="library-main">
@@ -2542,19 +2782,83 @@ function assetConfirm(title, text, onConfirm) {
   };
 }
 
+/** 目录视图里的文件不在 assetLibrary.items 里，点图时要能从目录缓存里找回这条记录。 */
+function findAssetItem(rel) {
+  const key = String(rel || '').replace(/\\/g, '/');
+  const flat = (state.assetLibrary && state.assetLibrary.items) || [];
+  const hit = flat.find((row) => String(row.rel || '').replace(/\\/g, '/') === key);
+  if (hit) return hit;
+  for (const info of Object.values(state.assetTree || {})) {
+    const file = (info && info.files || []).find((row) => String(row.rel || '').replace(/\\/g, '/') === key);
+    if (file) return { ...file, kind: file.media, path: assetAbsPath(file.rel) };
+  }
+  return null;
+}
+
+function assetTypeLabelOf(rel) {
+  const seg = String(rel || '').split('/')[1] || '';
+  const hit = ASSET_MATERIALS.find((row) => row.label === seg);
+  return hit ? hit.label : '';
+}
+function assetAbsPath(rel) {
+  const root = (state.assetLibrary && state.assetLibrary.root) || '';
+  const tail = String(rel || '').replace(/^[\\/]+/, '').replace(/\//g, '\\');
+  return root ? root.replace(/[\\/]+$/, '') + '\\' + tail : tail;
+}
+
+/** 点图弹窗：左边放大看，右边资料卡（项目归属、绝对位置、大小、尺寸、时间）。 */
 function assetDetailModal(item) {
+  const rel = String(item.rel || '');
+  const abs = item.path || assetAbsPath(rel);
+  const project = state.project || {};
+  const segs = rel.split('/');
+  const typeLabel = item.typeLabel || assetTypeLabelOf(rel) || '其他';
+  const folder = segs.slice(0, -1).join(' / ');
+  const stamp = item.mtime ? new Date(item.mtime).toLocaleString('zh-CN', { hour12: false }) : '';
+  const facts = [
+    ['分类', typeLabel],
+    ['项目归属', `${project.name || '当前项目'}${project.id ? '（' + project.id + '）' : ''}`],
+    ['所在目录', folder || '—'],
+    ['相对路径', rel || '—', true],
+    ['绝对位置', abs || '—', true],
+    ['文件大小', item.bytes ? fmtBytes(item.bytes) : '—'],
+    ['尺寸', item.width && item.height ? `${item.width}×${item.height}` : '读取中…', true],
+    ['修改时间', stamp || '—'],
+  ];
   const panel = openModal(`<div class="modal-head"><h2>${esc(item.name)}</h2><span class="grow"></span><button class="btn ghost sm" data-close="1">关闭</button></div>
-    <div class="modal-body"><div class="asset-preview">${item.kind === 'image' ? `<img src="${item.url}" alt="" />` : `<audio src="${item.url}" controls></audio>`}</div>
-    <div class="kv"><span>分类</span><span>${esc(item.typeLabel || item.type || '其他')}</span></div>
-    <div class="kv"><span>路径</span><span class="mono">${esc(item.rel || '')}</span></div></div>
-    <div class="modal-foot"><button class="btn" data-asset-rename="1">重命名</button><button class="btn ghost" data-asset-delete="1">删除</button><span class="grow"></span><button class="btn" data-close="1">关闭</button></div>`);
+    <div class="modal-body asset-detail-body">
+      <div class="asset-preview asset-detail-preview">${item.kind === 'image' ? `<img src="${esc(item.url)}" alt="${esc(item.name)}" />` : `<audio src="${esc(item.url)}" controls></audio>`}</div>
+      <dl class="asset-detail-facts">${facts.map(([label, value, wide]) => `<div class="${wide ? 'wide' : ''}"><dt>${esc(label)}</dt><dd class="${/路径|位置/.test(label) ? 'mono' : ''}">${esc(value)}</dd></div>`).join('')}</dl>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" data-asset-copy="1">复制路径</button>
+      <button class="btn ghost" data-asset-reveal="1">在文件夹中显示</button>
+      <button class="btn" data-asset-rename="1">重命名</button>
+      <button class="btn ghost" data-asset-delete="1">删除</button>
+      <span class="grow"></span>
+      <button class="btn" data-close="1">关闭</button>
+    </div>`);
+  if (item.kind === 'image') {
+    const img = panel.querySelector('.asset-detail-preview img');
+    if (img) img.onload = () => {
+      const row = [...panel.querySelectorAll('.asset-detail-facts > div')].find((div) => div.querySelector('dt') && div.querySelector('dt').textContent === '尺寸');
+      const cell = row && row.querySelector('dd');
+      if (cell) cell.textContent = `${img.naturalWidth}×${img.naturalHeight}`;
+    };
+  }
+  panel.querySelector('[data-asset-copy]').onclick = async () => {
+    try { await navigator.clipboard.writeText(abs); toast('已复制绝对路径'); } catch { toast('复制失败', true); }
+  };
+  panel.querySelector('[data-asset-reveal]').onclick = async () => {
+    try { await api('/api/reveal', { method: 'POST', body: { path: abs } }); } catch (err) { toast(err.message, true); }
+  };
   panel.querySelector('[data-asset-rename]').onclick = () => askText('重命名素材', item.name, '文件名', async (name) => {
     if (!name) return;
-    await api('/api/assets/material/rename', { method: 'POST', body: { rel: item.rel, name } });
+    await api('/api/assets/material/rename', { method: 'POST', body: { rel, name } });
     await loadAssetLibrary(); render(); toast('素材已重命名');
   });
   panel.querySelector('[data-asset-delete]').onclick = () => assetConfirm(`删除「${item.name}」？`, '文件会从素材库删除，不能恢复。', async () => {
-    await api('/api/assets/material/delete', { method: 'POST', body: { rel: item.rel } });
+    await api('/api/assets/material/delete', { method: 'POST', body: { rel } });
     await loadAssetLibrary(); render(); toast('素材已删除');
   });
 }
@@ -2616,9 +2920,8 @@ async function openAssetPicker(task, shotName, slot) {
 }
 
 function bindAssets(root) {
-  if (!state.assetLibrary) {
-    loadAssetLibrary().then(() => { if (state.route === 'assets') render(); }).catch((err) => toast(err.message, true));
-  }
+  // 只把总览读一次；目录树是纯本地缓存，用户点开某一层才去读盘，进来不会自己扫目录
+  ensureAssetLibrary();
   const search = $('#asset-search');
   if (search) {
     search.oninput = () => {
@@ -2632,6 +2935,29 @@ function bindAssets(root) {
     };
   }
   root.addEventListener('click', async (event) => {
+    // 资产树：整行可点（箭头跟在名称后面，只是提示）。
+    //   分类行 → 展开/收起，并在右侧列出这一类「全部项目」的文件（deep）
+    //   项目行 → 右侧只列它这一层的文件
+    const dirNode = event.target.closest('[data-lib-dir]');
+    if (dirNode) {
+      const rel = dirNode.dataset.libDir;
+      const depth = Number(dirNode.dataset.libDirDepth || 0);
+      const deep = depth === 0;
+      if (deep) {
+        const key = 'dir:' + rel;
+        state.assetExpanded = { ...(state.assetExpanded || {}), [key]: !((state.assetExpanded || {})[key] === true) };
+      }
+      const label = rel.split('/').pop();
+      const material = ASSET_MATERIALS.find((row) => row.label === label) || ASSET_MATERIALS.find((row) => rel.startsWith('素材/' + row.label));
+      state.assetView = { kind: 'dir', rel, deep, type: material ? material.id : '' };
+      render();
+      const info = assetDirInfo(rel, deep);
+      if (!info || (!info.loaded && !info.loading)) {
+        await loadAssetDir(rel, deep);
+        if (state.route === 'assets') render();
+      }
+      return;
+    }
     const material = event.target.closest('[data-lib-material]');
     if (material) { state.assetView = { kind: 'material', type: material.dataset.libMaterial }; return render(); }
     const toggle = event.target.closest('[data-lib-toggle]');
@@ -2698,8 +3024,10 @@ function bindAssets(root) {
     if (event.target.closest('[data-lib-other]')) { state.assetView = { kind: 'other' }; return render(); }
     const card = event.target.closest('[data-asset-rel]');
     if (card) {
-      const item = (state.assetLibrary.items || []).find((row) => row.rel === card.dataset.assetRel);
+      const item = findAssetItem(card.dataset.assetRel);
       if (item) return assetDetailModal(item);
+      toast('这个文件已经不在磁盘上了', true);
+      return;
     }
     const view = currentAssetView();
     const task = view.kind === 'shot'
@@ -3034,10 +3362,10 @@ function openMediaDetail(item) {
   openModal(`
     <div class="modal-head"><h2>${esc(item.shotLabel || item.name)}</h2><span class="grow"></span><button class="btn ghost sm" data-close="1">关闭</button></div>
     <div class="modal-body">
-      <div style="background:var(--surface-2);border-radius:10px;display:grid;place-items:center;min-height:240px;overflow:hidden">
+      <div class="media-detail-preview">
         ${item.kind === 'video'
-          ? `<video src="${url}" controls autoplay playsinline preload="metadata" style="width:100%;max-height:65vh;background:#111"></video>`
-          : `<img src="${url}" alt="${esc(item.name)}" style="max-width:100%;max-height:65vh;object-fit:contain" />`}
+          ? `<video src="${url}" controls autoplay playsinline preload="metadata"></video>`
+          : `<img src="${url}" alt="${esc(item.name)}" />`}
       </div>
       ${item.taskTitle ? `<div class="kv"><span>任务</span><span>${esc(item.taskTitle)}</span></div>` : ''}
       ${item.shotLabel ? `<div class="kv"><span>分镜</span><span>${esc(item.shotLabel)}</span></div>` : ''}
@@ -3479,21 +3807,26 @@ function imagePanelHtml(tab, ch) {
   }
 
   if (tab === 'reverse') {
+    const busyText = im.busy === 'gen' ? '出图中…' : im.busy === 'reverse' ? '反推中…' : (im.reverseText ? '重新反推并出图' : '反推并出图');
     return tabsBar + `
       ${imageSourcePickerHtml(source)}
       <div class="zs-field">
-        <div class="zs-field-head"><span class="zs-field-label">反推结果</span>
+        <div class="zs-field-head"><span class="zs-field-label">反推 → 直接出图</span>
           <span class="zs-field-right"><span class="zs-inline-actions">
-            <button type="button" class="zs-btn zs-btn-ghost zs-btn-sm" data-act="copy-reverse">复制</button>
-            <button type="button" class="zs-btn zs-btn-ghost zs-btn-sm" data-act="use-reverse" ${im.reverseText ? '' : 'disabled'}>去生成</button>
+            ${im.reverseText ? '<button type="button" class="zs-btn zs-btn-ghost zs-btn-sm" data-act="use-reverse" ' + (im.busy || IJ.active(WB.context('image').itemId) ? 'disabled' : '') + '>再出一张</button>' : ''}
+            <button type="button" class="zs-btn zs-btn-ghost zs-btn-sm" data-act="copy-reverse" ${im.reverseText ? '' : 'disabled'}>复制提示词</button>
           </span></span>
         </div>
-        <div class="zs-prompt">
-          <textarea class="zs-textarea" id="img-reverse-out" style="min-height:260px" placeholder="选一张图，点「反推提示词」">${esc(im.reverseText || '')}</textarea>
-        </div>
+        ${im.reverseText
+          ? `<div class="zs-reverse-prompt">
+              <div class="zs-reverse-hint">反推结果就是这块，直接改；改完点「再出一张」。</div>
+              <textarea class="zs-textarea" id="img-reverse-out" style="min-height:220px">${esc(im.reverseText || '')}</textarea>
+            </div>`
+          : '<div class="wmd-field-hint">选一张源图，点下面「反推并出图」：先反推成提示词，再用它直接出图，结果显示在右侧画布，不用切页签。</div>'}
       </div>
+      ${im.busy === 'gen' ? '<div class="wmd-field-hint">正在出图，完成后右侧画布自动更新…</div>' : ''}
       <div class="zs-panel-foot">
-        <button type="button" class="zs-btn zs-btn-primary zs-btn-lg zs-generate-btn" data-act="image-reverse" ${im.busy || IJ.active(WB.context('image').itemId) ? 'disabled' : ''}>${im.busy ? '反推中…' : '反推提示词'}</button>
+        <button type="button" class="zs-btn zs-btn-primary zs-btn-lg zs-generate-btn" data-act="image-reverse" ${im.busy || IJ.active(WB.context('image').itemId) ? 'disabled' : ''}>${busyText}</button>
       </div>`;
   }
 
@@ -3612,7 +3945,7 @@ function imageWorkspaceHtml(tab, ch) {
   const generating=!!imageTask||im.busy;
   const status = imageTask ? imageTask.phase : !ch ? '没有图像模型 · 先在左侧新增一个'
     : item ? `${item.name}${item.width ? ` · ${item.width}×${item.height}` : ''}${item.bytes ? ` · ${fmtBytes(item.bytes)}` : ''}${im.selection ? ' · 已选区' : ''}`
-    : (tab === 'reverse' ? '选择源图后点「反推提示词」' : '就绪 - 在左侧写提示词，点「图像生成」');
+    : (tab === 'reverse' ? '选源图 → 反推并出图，结果显示在这里' : '就绪 - 在左侧写提示词，点「图像生成」');
   return `<div class="zd-toolbar">
     <div class="zd-tool-group zd-filemenu" id="img-filemenu">
       <button type="button" class="zd-tool zd-filemenu-btn" data-act="img-file-menu" title="文件">
@@ -3978,7 +4311,7 @@ function openImageHistory() {
       </div>`).join('')}</div>` : '<div class="empty">还没有生成记录</div>'}
     </div>
   `);
-  $('#modal-panel [data-history]').forEach((card) => {
+  $$('#modal-panel [data-history]').forEach((card) => {
     card.onclick = () => {
       const batch = list[Number(card.dataset.history)];
       if (!batch || !batch.items) return;
@@ -4017,6 +4350,22 @@ function bindImage(root) {
   bindGenerationParameters(root,'image');
   const im = state.image;
   const workbenchContext = WB.context("image");
+  // 反推页直接出图：用给定提示词提交一次文生图，结果由后台任务回填到右侧画布，不切页签
+  const imageGenerateNow = async (prompt, refs = []) => {
+    const ch = imageChannel();
+    if (!ch) throw new Error('请选择图像模型');
+    const text = String(prompt || '').trim();
+    if (!text) throw new Error('提示词是空的');
+    if (IJ.active(workbenchContext.itemId)) throw new Error('当前画面已有未结束的图像任务，请等它结束');
+    await WB.flush('image');
+    await api('/api/images/generate', { method: 'POST', body: {
+      ...workbenchContext, background: true, requestId: crypto.randomUUID(), channelId: ch.id,
+      prompt: text, prefixPrompt: generationPrefixValue('image'), styleLayer: im.styleLayer || 'free',
+      imageRatio: im.imageRatio || 'auto', imageLayoutId: im.imageLayoutId || 'free', layoutPrompt: im.layoutPrompt,
+      size: im.size, count: im.count, styleId: state.project?.styleId, refs: Array.isArray(refs) ? refs : [],
+    } });
+    await IJ.refresh();
+  };
   if (im.tab === 'scene') {
     root.addEventListener('click', e => { const tab=e.target.closest('[data-img-tab]'); if(tab) {sceneCaptureInputs();im.tab=tab.dataset.imgTab;render();} });
     bindSceneWorkspace(root);return;
@@ -4112,10 +4461,17 @@ function bindImage(root) {
         toast('已复制');
         return;
       }
-      if (act === 'use-reverse') {
+        if (act === 'use-reverse') {
         im.prompt = im.reverseText || '';
-        im.tab = 'generate';
-        return render();
+        // 反推页里直接出图，不跳页签
+        if (!String(im.prompt).trim()) return toast('提示词是空的', true);
+        im.busy = 'gen'; render();
+        try {
+          await imageGenerateNow(im.prompt, []);
+          toast('已按提示词出图');
+        } catch (err) { toast(err.message, true); }
+        finally { im.busy = false; render(); }
+        return;
       }
       if (act === 'open-result') {
         const item = selected();
@@ -4166,11 +4522,16 @@ function bindImage(root) {
       }
       if (act === 'image-reverse') {
         if (!im.source) return toast('先选一张源图', true);
-        im.busy = true; render();
+        if (IJ.active(workbenchContext.itemId)) return toast('当前画面已有未结束的图像任务，请等它结束', true);
+        im.busy = 'reverse'; render();
         try {
           const res = await api('/api/images/reverse', { method: 'POST', body: { path: im.source.path } });
           im.reverseText = res.prompt;
-          toast('反推完成');
+          im.prompt = res.prompt;
+          // 反推完立刻用这段提示词出图，结果显示在右侧画布，不跳页签
+          im.busy = 'gen'; render();
+          await imageGenerateNow(res.prompt, []);
+          toast('反推完成，已按提示词出图');
         } catch (err) { toast(err.message, true); }
         finally { im.busy = false; await WB.complete("image",workbenchContext,im); render(); }
         return;
@@ -9738,7 +10099,7 @@ function renderBatch(embed = false) {
   <div class="batch-grid">
     <div class="card" style="padding:14px;display:flex;flex-direction:column;gap:10px">
       <div class="row"><span class="muted small">工作流</span><select class="select" id="batch-workflow" style="flex:1">${state.workflows.filter((w) => w.provider !== 'autodl' || !state.workflows.some((x) => x.provider === 'manager')).map((w) => `<option value="${esc(w.id)}" ${w.id === (b.workflowId || state.studio.workflowId) ? 'selected' : ''}>${esc(w.display)}</option>`).join('')}</select></div>
-      <textarea class="textarea mono" id="batch-json" style="min-height:300px" placeholder='{"format":"wmd-batch","version":1,"baseDir":"","defaults":{"duration":10,"repeat":1},"tasks":[...]}'>${esc(b.text || '')}</textarea>
+      <textarea class="textarea mono" id="batch-json" style="min-height:300px" placeholder='{"format":"wmd-batch","version":1,"baseDir":"","defaults":{"duration":10,"ratio":"16:9","model":"Seedance 2.0 Fast","repeat":1},"tasks":[...]}'>${esc(b.text || '')}</textarea>
       <div class="row">
         <button class="btn primary" data-act="batch-parse">解析并校验</button>
         <button class="btn" data-act="batch-add" ${result && result.tasks.some((t) => !t.errors.length) ? '' : 'disabled'}>加入队列</button>
@@ -9758,7 +10119,7 @@ function renderBatch(embed = false) {
             <span class="idx">${t.index}</span>
             <div style="flex:1;min-width:0">
               <div><strong>${esc(t.title)}</strong> <span class="hint">×${t.repeat}</span></div>
-              <div class="hint">${t.images.length} 图 · ${t.audios.length} 音频 · ${t.duration} 秒 · ${esc(t.aspectRatio)}</div>
+              <div class="hint">${t.images.length} 图 · ${t.audios.length} 音频 · ${t.duration} 秒 · ${esc(t.aspectRatio)}${t.model ? ` · 模型 ${esc(t.model)}` : ''}</div>
               ${t.errors.length ? `<div style="color:var(--danger)">${t.errors.map(esc).join('<br>')}</div>` : ''}
             </div>
           </div>`).join('') : `<div class="hint">解析后会在这里显示每条任务的校验结果。</div>`}
@@ -9820,7 +10181,7 @@ function bindBatch(root) {
           version: 1,
           name: '新批次',
           baseDir: '',
-          defaults: { aspectRatio: '9:16', duration: 10, repeat: 1 },
+          defaults: { ratio: '16:9', duration: 10, model: 'Seedance 2.0 Fast', repeat: 1 },
           tasks: [{ title: '示例任务', images: [{ path: '示例1/fs.png', subject: '角色' }], audios: [], prompt: 'subject_definitions:\n<Subject 1> is ...\n\nsummary:\n[reference generation] ...' }],
         };
         const blob = new Blob([JSON.stringify(template, null, 2)], { type: 'application/json' });
@@ -9836,7 +10197,8 @@ function bindBatch(root) {
 - tasks[].prompt 必须是六段式：subject_definitions / summary / retention_analysis / detailed_description / overall_soundscape / non_diegetic_music
 - images 每项写 {path, subject}，path 用绝对路径或相对素材库的路径；第 n 张对应 <Picture n>
 - audios 写本地音频路径，第 n 段对应 <Audio n>
-- 可选字段：aspectRatio（9:16 / 16:9 / 1:1）、duration（1–15 秒）、repeat
+- 可选字段：ratio 或 aspectRatio（16:9 / 9:16 / 1:1，管理器 Gemini 只支持 16:9 / 9:16）、duration（1–15 秒）、model（管理器豆包写 Seedance 2.0 Mini 或 Seedance 2.0 Fast；Gemini 留空）、repeat
+- ratio / model 可以写在 defaults 里作为整批默认值，tasks[] 里写了就按单个任务覆盖
 - 不要写 workflow/api 字段，导入后统一选择。`;
         await navigator.clipboard.writeText(spec);
         toast('已复制 AI 说明');
@@ -9962,6 +10324,8 @@ function channelTypeLabel(kind, type) {
 }
 
 function channelRows(kind) {
+  const me = (state.auth && state.auth.user) || {};
+  const canManage = !state.auth || !state.auth.user || Boolean(me.isAdmin || me.role === 'owner' || me.role === 'admin');
   const list = state.channels[kind] || [];
   if (!list.length) return `<div class="hint">还没有渠道。</div>`;
   return list.map((ch) => `
@@ -9972,14 +10336,15 @@ function channelRows(kind) {
         <div class="url">${esc(ch.baseUrl)}${ch.model ? ' · ' + esc(ch.model) : ''} · ${esc(channelTypeLabel(kind, ch.type))}</div>
         ${ch.maxTokens || ch.contextWindow ? `<div class="hint">输出 ≤ ${ch.maxTokens || '默认'} tokens · 上下文 ${ch.contextWindow || '默认'} tokens</div>` : ''}
         ${ch.lastTestMessage ? `<div class="hint">${esc(ch.lastTestMessage)}</div>` : ''}
-        <div class="hint">Key：${ch.apiKey ? `<code class="key-plain">${esc(ch.apiKey)}</code>` : '<span class="is-danger">未填写</span>'}</div>
+        <div class="hint">Key：${ch.hasKey ? `<code class="key-plain">${esc(ch.masked || '已配置')}</code>` : '<span class="is-danger">未填写</span>'}</div>
       </div>
+      ${canManage ? `
       <button type="button" class="btn sm" data-test-channel="${esc(ch.id)}" data-kind="${kind}">测试</button>
       ${ch.active && ch.enabled !== false ? '' : `<button type="button" class="btn sm" data-activate-channel="${esc(ch.id)}" data-kind="${kind}">设为默认</button>`}
       <button type="button" class="btn sm ghost" data-toggle-channel="${esc(ch.id)}" data-kind="${kind}" data-enabled="${ch.enabled === false ? '1' : '0'}">${ch.enabled === false ? '启用' : '停用'}</button>
       <button type="button" class="btn sm ghost" data-edit-channel="${esc(ch.id)}" data-kind="${kind}">编辑</button>
       <button type="button" class="btn sm ghost" data-copy-channel="${esc(ch.id)}" data-kind="${kind}" title="复制这套配置，再改模型名 / 名称">复制</button>
-      <button type="button" class="btn sm ghost" data-del-channel="${esc(ch.id)}" data-kind="${kind}">删除</button>
+      <button type="button" class="btn sm ghost" data-del-channel="${esc(ch.id)}" data-kind="${kind}">删除</button>` : '<span class="hint">只读</span>'}
     </div>`).join('');
 }
 
@@ -10063,12 +10428,15 @@ function appearancePane() {
 function channelPane(kind) {
   const d = state.settingsDraft;
   const meta = CHANNEL_KIND_META[kind];
+  const me = (state.auth && state.auth.user) || {};
+  const canManage = !state.auth || !state.auth.user || Boolean(me.isAdmin || me.role === 'owner' || me.role === 'admin');
   return `
     <div class="settings-block">
       <div class="settings-block-head"><h3>${meta.title}渠道</h3></div>
       <p class="hint">${meta.desc}</p>
+      ${canManage ? '' : '<p class="hint">渠道由本租户的负责人/管理员维护，成员只读。</p>'}
       ${channelRows(kind)}
-      <div class="row"><button type="button" class="btn" data-add-channel="${kind}">＋ 新增${meta.title}渠道</button></div>
+      ${canManage ? `<div class="row"><button type="button" class="btn" data-add-channel="${kind}">＋ 新增${meta.title}渠道</button></div>` : ''}
     </div>`;
 }
 
@@ -10086,6 +10454,216 @@ function openSettings(tab = 'text') {
   renderSettings();
 }
 
+const TEAM_ROLES = { owner: '负责人', admin: '管理员', member: '成员' };
+function showTeamLink(url) {
+  const box = $('#team-link-box');
+  const input = $('#team-link');
+  if (!box || !input) return;
+  input.value = new URL(url, location.origin).href;
+  box.hidden = false;
+  input.select?.();
+}
+function teamRoleLabel(user) {
+  if (!user) return '';
+  if (user.isAdmin) return '平台管理员';
+  return TEAM_ROLES[user.role] || '成员';
+}
+
+/**
+ * 租户与成员：租户之间数据完全隔离，这里只管人和角色。
+ * 平台管理员能建租户、给任意租户加人；租户负责人/管理员只能管本租户。
+ */
+function teamPane() {
+  const me = (state.auth && state.auth.user) || {};
+  const canManage = Boolean(me.isAdmin || me.role === 'owner' || me.role === 'admin');
+  return `
+    <div class="settings-block">
+      <h3>租户与成员</h3>
+      <p class="hint">每个租户的数据完全隔离：项目、任务、素材、成片、配置互不可见。同一租户的成员共享本租户的项目。</p>
+      <div class="kv"><span>当前租户</span><span id="team-tenant">读取中…</span></div>
+      <div class="kv"><span>我的角色</span><span>${esc(teamRoleLabel(me))}</span></div>
+      <div id="team-members" class="team-members"><p class="hint">读取成员…</p></div>
+      ${canManage ? `
+      <div class="settings-actions team-add-row">
+        <input class="input" id="team-new-name" placeholder="用户名（2–32 位）" autocomplete="off" />
+        <input class="input" id="team-new-pass" type="password" placeholder="密码（至少 6 位）" autocomplete="new-password" />
+        <select class="input" id="team-new-role"><option value="member">成员</option><option value="admin">管理员</option><option value="owner">负责人</option></select>
+        <button type="button" class="btn" id="team-add">添加成员</button>
+        <button type="button" class="btn ghost" id="team-invite">生成邀请链接</button>
+      </div>
+      ${me.isAdmin ? `
+      <div class="settings-actions team-add-row">
+        <input class="input" id="team-new-tenant" placeholder="新租户名称" autocomplete="off" />
+        <button type="button" class="btn ghost" id="team-add-tenant">新建租户</button>
+      </div>` : ''}` : ''}
+      <div id="team-link-box" hidden>
+        <div class="field"><label>一次性链接（只显示这一次，发给对方后 72 小时内有效）</label><input class="input mono" id="team-link" readonly /></div>
+      </div>
+      <p class="hint">成员的密码由这里设置；忘记密码时可以生成一次性重置链接，或让管理员重置。</p>
+      <div class="settings-block" style="margin-top:14px">
+        <h3>配额</h3>
+        <div id="team-quota" class="hint">读取中…</div>
+        ${me.isAdmin ? `
+        <div class="settings-actions team-add-row">
+          <select class="input" id="quota-tenant" title="选择要配置的租户"></select>
+          <input class="input" id="quota-users" type="number" min="0" placeholder="用户数上限（0=不限）" />
+          <input class="input" id="quota-projects" type="number" min="0" placeholder="项目数上限（0=不限）" />
+          <input class="input" id="quota-tasks" type="number" min="0" placeholder="每日任务上限（0=不限）" />
+          <input class="input" id="quota-storage" type="number" min="0" step="0.1" placeholder="存储上限 GB（0=不限）" />
+          <input class="input" id="quota-concurrent" type="number" min="0" placeholder="并发任务上限（0=不限）" />
+          <button type="button" class="btn" id="quota-save">保存配额</button>
+        </div>
+        <p class="hint">0 表示不限制；平台管理员可以切换任意租户，其它角色只能看自己租户。</p>` : '<p class="hint">配额由平台管理员设置。</p>'}
+      </div>
+    </div>`;
+}
+
+async function loadQuotaPane(tenantId) {
+  const quotaEl = $('#team-quota');
+  if (!quotaEl) return;
+  try {
+    const data = await api('/api/tenants/' + encodeURIComponent(tenantId) + '/quota');
+    const q = data.quota || {};
+    const u = data.usage || {};
+    const label = (value) => value ? value : '不限';
+    quotaEl.textContent = `用户 ${u.users || 0}/${label(q.maxUsers)} · 项目 ${u.projects || 0}/${label(q.maxProjects)} · 今日任务 ${u.tasksToday || 0}/${label(q.maxTasksPerDay)}`
+      + ` · 存储 ${fmtBytes(u.storageBytes || 0)}/${q.maxStorageBytes ? fmtBytes(q.maxStorageBytes) : '不限'}`
+      + ` · 并发 ${u.runningTasks || 0}/${label(q.maxConcurrentTasks)}`;
+    if ($('#quota-users')) $('#quota-users').value = String(q.maxUsers || 0);
+    if ($('#quota-projects')) $('#quota-projects').value = String(q.maxProjects || 0);
+    if ($('#quota-tasks')) $('#quota-tasks').value = String(q.maxTasksPerDay || 0);
+    if ($('#quota-storage')) $('#quota-storage').value = String(q.maxStorageBytes ? Number((q.maxStorageBytes / (1024 ** 3)).toFixed(2)) : 0);
+    if ($('#quota-concurrent')) $('#quota-concurrent').value = String(q.maxConcurrentTasks || 0);
+  } catch (error) {
+    quotaEl.textContent = error.message;
+  }
+}
+
+async function refreshTeamPane() {
+  const listEl = $('#team-members');
+  const tenantEl = $('#team-tenant');
+  if (!listEl) return;
+  const me = (state.auth && state.auth.user) || {};
+  try {
+    const [users, tenants] = await Promise.all([
+      api('/api/users'),
+      api('/api/tenants').catch(() => []),
+    ]);
+    const mine = (tenants || []).find((row) => row.id === me.tenantId);
+    if (tenantEl) tenantEl.textContent = mine ? `${mine.name}（${mine.members} 人）` : (me.tenantId || '默认租户');
+    const canManage = Boolean(me.isAdmin || me.role === 'owner' || me.role === 'admin');
+    const selector = $('#quota-tenant');
+    if (selector) {
+      const previous = selector.value;
+      selector.innerHTML = (tenants || []).map((row) => `<option value="${esc(row.id)}">${esc(row.name)}</option>`).join('');
+      const wanted = (tenants || []).some((row) => row.id === previous) ? previous : (me.tenantId || tenants?.[0]?.id || 'tnt_default');
+      selector.value = wanted;
+      selector.onchange = () => loadQuotaPane(selector.value);
+    }
+    const quotaTenant = selector ? selector.value : (me.tenantId || 'tnt_default');
+    await loadQuotaPane(quotaTenant);
+    listEl.innerHTML = users.map((user) => `
+      <div class="team-row">
+        <span class="team-name">${esc(user.username)}</span>
+        <span class="team-role">${esc(teamRoleLabel(user))}</span>
+        ${canManage && !user.isAdmin ? `<button type="button" class="btn ghost sm" data-team-role="${esc(user.id)}" data-next="${user.role === 'member' ? 'admin' : user.role === 'admin' ? 'owner' : 'member'}">改角色</button><button type="button" class="btn ghost sm" data-team-reset="${esc(user.id)}">重置密码</button><button type="button" class="btn ghost sm" data-team-remove="${esc(user.id)}">移除</button>` : ''}
+      </div>`).join('') || '<p class="hint">还没有成员</p>';
+  } catch (error) {
+    listEl.innerHTML = `<p class="hint">${esc(error.message)}</p>`;
+  }
+}
+
+/**
+ * 执行端：用户自己电脑上的管理器通过外联通道接进来。
+ * 这里负责发配对令牌、看在线状态、测通道；管理器那边填同一个令牌即可。
+ */
+function executorPane() {
+  return `
+    <div class="settings-block">
+      <h3>我的管理器（执行端）</h3>
+      <p class="hint">管理器装在自己电脑上时，用配对令牌让它主动连到这里：任务从通道下发、成片回传，服务器不需要能访问你的电脑。</p>
+      <div class="kv"><span>通道状态</span><span id="executor-online">读取中…</span></div>
+      <div class="kv"><span>已配对</span><span id="executor-paired">—</span></div>
+      <div id="executor-list" class="team-members"></div>
+      <div id="executor-token-box" hidden>
+        <div class="field"><label>配对令牌（只显示这一次，复制到管理器的「系统管理 → 外联通道」里）</label><input class="input mono" id="executor-token" readonly /></div>
+      </div>
+      <div class="settings-actions">
+        <button type="button" class="btn" id="executor-pair">生成配对令牌</button>
+        <button type="button" class="btn ghost" id="executor-probe">测试通道</button>
+      </div>
+      <p class="hint">每台机器生成一条令牌，多台机器可同时配对；生成新令牌不会让旧令牌失效。可把任意一条设为视频任务通道。</p>
+    </div>`;
+}
+
+async function refreshExecutorPane() {  const onlineEl = $('#executor-online');
+  if (!onlineEl) return;
+  try {
+    const info = await api('/api/executor/status');
+    onlineEl.textContent = info.online ? '在线' : '未连接';
+    const rows = info.channels || [];
+    const paired = $('#executor-paired');
+    if (paired) paired.textContent = rows.length ? `${rows.length} 台` : '还没有配对';
+    const list = $('#executor-list');
+    if (list) {
+      const activeId = (info.channel && info.channel.activeId) || '';
+      list.innerHTML = rows.map((row) => `
+        <div class="team-row">
+          <span class="team-name">${esc(row.name || '未命名')} · ${row.online ? '在线' : '离线'}${activeId === row.id ? ' · 任务通道' : ''}</span>
+          <span class="team-role">${esc(row.tokenHint || '')}${row.version ? ' · v' + esc(row.version) : ''}${row.lastError ? ' · ' + esc(row.lastError) : ''}</span>
+          <button type="button" class="btn ghost sm" data-exec-active="${esc(row.id)}">设为任务通道</button>
+          <button type="button" class="btn ghost sm" data-exec-revoke="${esc(row.id)}">撤销</button>
+        </div>`).join('') || '<p class="hint">还没有配对。生成一条令牌，填到管理器里。</p>';
+    }
+  } catch (error) {
+    onlineEl.textContent = error.message;
+  }
+}
+
+function auditPane() {
+  const me = (state.auth && state.auth.user) || {};
+  const canView = Boolean(me.isAdmin || me.role === 'owner' || me.role === 'admin');
+  if (!canView) {
+    return `<div class="settings-block"><h3>审计日志</h3><p class="hint">只有租户负责人/管理员可以查看审计日志。</p></div>`;
+  }
+  return `
+    <div class="settings-block">
+      <h3>审计日志</h3>
+      <p class="hint">登录、成员、租户、项目、配置与渠道变更；不记录密码和密钥。${me.isAdmin ? '平台管理员可看到所有租户。' : '只显示当前租户。'}</p>
+      <div id="audit-integrity" class="hint">完整性校验中…</div>
+      <div class="settings-actions">
+        <button type="button" class="btn ghost" data-audit-export="csv">导出 CSV</button>
+        <button type="button" class="btn ghost" data-audit-export="json">导出 JSON</button>
+      </div>
+      <div id="audit-list" class="team-members"><p class="hint">读取中…</p></div>
+    </div>`;
+}
+
+async function refreshAuditPane() {
+  const list = $('#audit-list');
+  if (!list) return;
+  try {
+    const data = await api('/api/audit?limit=100');
+    const items = (data && data.items) || [];
+    const integrity = data && data.integrity;
+    const integrityEl = $('#audit-integrity');
+    if (integrityEl && integrity) {
+      integrityEl.textContent = integrity.ok
+        ? `完整性校验通过（${integrity.checked} 条）`
+        : `完整性校验失败：${integrity.reason || (integrity.broken && integrity.broken[0] && integrity.broken[0].reason) || '记录被修改或删除'}`;
+      integrityEl.style.color = integrity.ok ? '' : 'var(--danger, #c33)';
+    }
+    list.innerHTML = items.length ? items.map((row) => `
+      <div class="team-row">
+        <span class="team-name">${esc(row.action)}</span>
+        <span class="team-role">${esc(row.detail || row.target || '')}</span>
+        <span class="hint">${esc(new Date(row.createdAt).toLocaleString('zh-CN', { hour12: false }))}</span>
+      </div>`).join('') : '<p class="hint">还没有审计记录</p>';
+  } catch (error) {
+    list.innerHTML = `<p class="hint">${esc(error.message)}</p>`;
+  }
+}
+
 function renderSettings() {
   const d = state.settingsDraft;
   const tab = state.settingsTab;
@@ -10093,6 +10671,9 @@ function renderSettings() {
     ['text', '文本推理'],
     ['image', '图片生成'],
     ['video', '视频生成'],
+    ['team', '租户成员'],
+    ['executor', '执行端'],
+    ['audit', '审计日志'],
     ['appearance', '外观'],
     ['storage', '存储目录'],
     ['about', '关于'],
@@ -10101,22 +10682,33 @@ function renderSettings() {
   let pane = '';
   if (kindOf[tab]) {
     pane = channelPane(kindOf[tab]);
+  } else if (tab === 'team') {
+    pane = teamPane();
+  } else if (tab === 'executor') {
+    pane = executorPane();
+  } else if (tab === 'audit') {
+    pane = auditPane();
   } else if (tab === 'appearance') {
     pane = appearancePane();
   } else if (tab === 'storage') {
+    // 部署参数是平台级的：只有平台管理员能改，普通租户成员只读。
+    const me = (state.auth && state.auth.user) || {};
+    const canPlatform = !state.auth || !state.auth.user || Boolean(me.isAdmin);
+    const ro = canPlatform ? '' : ' disabled';
     pane = `
       <div class="settings-block">
         <h3>存储目录</h3>
-        <div class="field"><label>项目根目录</label><input class="input mono" id="project-root" value="${esc(d.projectRoot || '')}" /></div>
+        ${canPlatform ? '' : '<p class="hint">项目目录、并发上限由平台管理员设置；租户内可以改自己的渠道、密钥和提示词。</p>'}
+        <div class="field"><label>项目根目录</label><input class="input mono" id="project-root" value="${esc(d.projectRoot || '')}"${ro} /></div>
         <p class="hint">每个项目会在这里自动生成独立子目录：<span class="mono">assets/ media/ uploads/ exports/</span>。项目激活时，素材、成片、上传都只读写该项目目录。修改根目录不会搬动已存在的项目文件。</p>
         <div class="workspace-migrate">
-          <button type="button" class="btn" id="workspace-migrate">把旧数据迁入当前项目</button>
+          <button type="button" class="btn" id="workspace-migrate"${ro}>把旧数据迁入当前项目</button>
           <span class="hint">旧版散落的 <span class="mono">data/assets、uploads、media</span> 不会自动搬动。点击后会先备份到 <span class="mono">data/backups</span>，再迁入当前项目。</span>
         </div>
-        <div class="field"><label>未归档成片目录（旧数据）</label><input class="input mono" id="save-folder" value="${esc(d.saveFolder)}" /></div>
-        <div class="field"><label>未归档素材目录（旧数据）</label><input class="input mono" id="asset-folder" value="${esc(d.assetFolder)}" /></div>
-        <div class="field"><label>克隆参考音色库（800+ 音色目录）</label><input class="input mono" id="voice-folder" value="${esc(d.voiceLibraryFolder || '')}" placeholder="D:\\notebook\\AIGC\\Comic-drama\\资产文档\\800+音色" /></div>
-        <div class="field" style="width:200px"><label>并发上限</label><input class="input" id="concurrency" type="number" min="1" max="10" value="${d.concurrency}" /></div>
+        <div class="field"><label>未归档成片目录（旧数据）</label><input class="input mono" id="save-folder" value="${esc(d.saveFolder)}"${ro} /></div>
+        <div class="field"><label>未归档素材目录（旧数据）</label><input class="input mono" id="asset-folder" value="${esc(d.assetFolder)}"${ro} /></div>
+        <div class="field"><label>克隆参考音色库（800+ 音色目录）</label><input class="input mono" id="voice-folder" value="${esc(d.voiceLibraryFolder || '')}" placeholder="D:\\notebook\\AIGC\\Comic-drama\\资产文档\\800+音色"${ro} /></div>
+        <div class="field" style="width:200px"><label>并发上限</label><input class="input" id="concurrency" type="number" min="1" max="10" value="${d.concurrency}"${ro} /></div>
         <p class="hint">每个 Key / 每个自定义视频渠道各占 1 个工位；并发上限控制同时执行的任务总数。</p>
         <p class="hint">音色库目录留空时，会自动用 <span class="mono">D:\\notebook\\AIGC\\Comic-drama\\资产文档\\800+音色</span>（如果存在）。</p>
       </div>`;
@@ -10138,7 +10730,7 @@ function renderSettings() {
         <div class="settings-pane" id="settings-pane">${pane}</div>
       </div>
     </div>
-    <div class="modal-foot"><span class="hint grow">设置保存在本机 data/config.json</span><button class="btn" data-close="1">关闭</button><button class="btn primary" id="settings-save">保存</button></div>
+    <div class="modal-foot"><span class="hint grow">渠道/部署参数保存在本机；主题、壁纸、字号、音量随账号保存</span><button class="btn" data-close="1">关闭</button><button class="btn primary" id="settings-save">保存</button></div>
   `);
   $('#modal-panel').classList.add('modal-settings');
   bindSettings();
@@ -10146,6 +10738,129 @@ function renderSettings() {
 
 function bindSettings() {
   const d = state.settingsDraft;
+  // 租户成员面板
+  const teamAdd = $('#team-add');
+  if (teamAdd) teamAdd.onclick = async () => {
+    const username = $('#team-new-name').value.trim();
+    const password = $('#team-new-pass').value;
+    const role = $('#team-new-role').value;
+    try {
+      await api('/api/users', { method: 'POST', body: { username, password, role } });
+      toast('成员已添加');
+      refreshTeamPane();
+    } catch (error) { toast(error.message, true); }
+  };
+  const teamAddTenant = $('#team-add-tenant');
+  if (teamAddTenant) teamAddTenant.onclick = async () => {
+    const name = $('#team-new-tenant').value.trim();
+    try {
+      await api('/api/tenants', { method: 'POST', body: { name } });
+      toast('租户已创建');
+      refreshTeamPane();
+    } catch (error) { toast(error.message, true); }
+  };
+  const teamInvite = $('#team-invite');
+  if (teamInvite) teamInvite.onclick = async () => {
+    try {
+      const role = $('#team-new-role')?.value || 'member';
+      const out = await api('/api/invites', { method: 'POST', body: { role } });
+      showTeamLink(out.url);
+      toast('邀请链接已生成，复制发给对方');
+    } catch (error) { toast(error.message, true); }
+  };
+  const quotaSave = $('#quota-save');
+  if (quotaSave) quotaSave.onclick = async () => {
+    const me = (state.auth && state.auth.user) || {};
+    const target = $('#quota-tenant')?.value || me.tenantId || 'tnt_default';
+    try {
+      await api('/api/tenants/' + encodeURIComponent(target) + '/quota', {
+        method: 'PUT',
+        body: {
+          maxUsers: Number($('#quota-users').value) || 0,
+          maxProjects: Number($('#quota-projects').value) || 0,
+          maxTasksPerDay: Number($('#quota-tasks').value) || 0,
+          maxStorageBytes: Math.round((Number($('#quota-storage')?.value) || 0) * (1024 ** 3)),
+          maxConcurrentTasks: Number($('#quota-concurrent')?.value) || 0,
+        },
+      });
+      toast('配额已保存');
+      await loadQuotaPane(target);
+    } catch (error) { toast(error.message, true); }
+  };
+  if ($('#team-members')) {
+    refreshTeamPane();
+    $('#team-members').onclick = async (event) => {
+      const roleBtn = event.target.closest('[data-team-role]');
+      const resetBtn = event.target.closest('[data-team-reset]');
+      const removeBtn = event.target.closest('[data-team-remove]');
+      if (roleBtn) {
+        const id = roleBtn.dataset.teamRole;
+        try {
+          await api('/api/users/' + encodeURIComponent(id), { method: 'PATCH', body: { role: roleBtn.dataset.next || 'admin' } });
+          toast('角色已更新');
+          refreshTeamPane();
+        } catch (error) { toast(error.message, true); }
+      }
+      if (resetBtn) {
+        try {
+          const out = await api('/api/users/' + encodeURIComponent(resetBtn.dataset.teamReset) + '/reset-token', { method: 'POST', body: {} });
+          showTeamLink(out.url);
+          toast('重置链接已生成，30 分钟内有效');
+        } catch (error) { toast(error.message, true); }
+      }
+      if (removeBtn) {
+        try {
+          await api('/api/users/' + encodeURIComponent(removeBtn.dataset.teamRemove), { method: 'DELETE' });
+          toast('成员已移除');
+          refreshTeamPane();
+        } catch (error) { toast(error.message, true); }
+      }
+    };
+  }
+
+  // 执行端面板（只有切到该页时元素才存在）
+  const pairBtn = $('#executor-pair');
+  if (pairBtn) pairBtn.onclick = async () => {
+    try {
+      const out = await api('/api/executor/pair', { method: 'POST', body: {} });
+      const input = $('#executor-token');
+      input.value = out.token;
+      $('#executor-token-box').hidden = false;
+      input.select?.();
+      toast('配对令牌已生成，复制到管理器里');
+      refreshExecutorPane();
+    } catch (error) { toast(error.message, true); }
+  };
+  const probeBtn = $('#executor-probe');
+  if (probeBtn) probeBtn.onclick = async () => {
+    try {
+      const out = await api('/api/executor/probe', { method: 'POST', body: {} });
+      if (out.ok) toast(`通道正常：${out.accounts} 个账号 · ${out.ms}ms`);
+      else toast(out.message || '通道不通', true);
+    } catch (error) { toast(error.message, true); }
+  };
+  const execList = $('#executor-list');
+  if (execList) execList.onclick = async (event) => {
+    const active = event.target.closest('[data-exec-active]');
+    const revoke = event.target.closest('[data-exec-revoke]');
+    try {
+      if (active) {
+        await api('/api/executor/active', { method: 'POST', body: { id: active.dataset.execActive } });
+        toast('已切换视频任务通道');
+        refreshExecutorPane();
+      }
+      if (revoke) {
+        await api('/api/executor/pair', { method: 'DELETE', body: { id: revoke.dataset.execRevoke } });
+        toast('配对已撤销');
+        refreshExecutorPane();
+      }
+    } catch (error) { toast(error.message, true); }
+  };
+  if ($('#executor-online')) refreshExecutorPane();
+  if ($('#audit-list')) refreshAuditPane();
+  $$('#modal-panel [data-audit-export]').forEach((btn) => {
+    btn.onclick = () => window.open('/api/audit/export?format=' + encodeURIComponent(btn.dataset.auditExport), '_blank');
+  });
   $$('#modal-panel [data-tab]').forEach((btn) => {
     btn.onclick = () => { state.settingsTab = btn.dataset.tab; renderSettings(); };
   });
@@ -10524,7 +11239,9 @@ function openChannelDialog(kind, channel, opts = {}) {
       lastTestOk: copying ? undefined : channel.lastTestOk,
       lastTestMessage: copying ? '' : channel.lastTestMessage,
       options: { ...(channel.options || {}) },
-      apiKey: channel.apiKey || '',
+      // 接口不再下发完整 Key：编辑时留空表示保持原值，占位符显示尾号。
+      apiKey: '',
+      masked: channel.masked || '',
       maxTokens: channel.maxTokens || 0,
       contextWindow: channel.contextWindow || 0,
     }
@@ -10569,14 +11286,14 @@ function openChannelDialog(kind, channel, opts = {}) {
         const value = draft.apiKey || '';
         const count = String(value).split(/[\r\n,;]+/).map((v) => v.trim()).filter(Boolean).length;
         if (f.type === 'textarea') {
-          return `<div class="field full"><label>${esc(f.label)} <span class="hint">本机明文保存</span></label>
-          <textarea class="input mono" data-ch-key="apiKey" data-ch-scope="top" rows="4" spellcheck="false" autocomplete="off" placeholder="${esc(f.placeholder || '每行一个 Key')}">${esc(value)}</textarea>
-          <div class="hint"><span id="ch-key-count">${count ? `已填 ${count} 个账号，每个账号各算一路并发` : '还没填密钥；留空保存会保留原密钥'}</span>
+          return `<div class="field full"><label>${esc(f.label)} <span class="hint">保存在服务端，接口不回传完整 Key</span></label>
+          <textarea class="input mono" data-ch-key="apiKey" data-ch-scope="top" rows="4" spellcheck="false" autocomplete="off" placeholder="${esc(draft.masked ? '已配置：' + draft.masked + '（留空保存会保留原密钥）' : (f.placeholder || '每行一个 Key'))}">${esc(value)}</textarea>
+          <div class="hint"><span id="ch-key-count">${count ? `本次已填 ${count} 个账号，每个账号各算一路并发` : '还没填新密钥；留空保存会保留原密钥'}</span>
             <button type="button" class="wmd-btn wmd-btn-sm" id="ch-clear-key" data-on="0" style="margin-left:8px">清空密钥</button></div></div>`;
         }
-        return `<div class="field"><label>${esc(f.label)} <span class="hint">本机明文保存</span></label>
-          <input class="input mono" data-ch-key="apiKey" data-ch-scope="top" type="text" value="${esc(value)}" placeholder="${esc(f.placeholder || 'sk-…')}" autocomplete="off" />
-          <div class="hint">直接显示并保存在 data/config.json；留空保存 = 保留原 Key</div></div>`;
+        return `<div class="field"><label>${esc(f.label)} <span class="hint">保存在服务端，接口不回传完整 Key</span></label>
+          <input class="input mono" data-ch-key="apiKey" data-ch-scope="top" type="text" value="${esc(value)}" placeholder="${esc(draft.masked ? '已配置：' + draft.masked : (f.placeholder || 'sk-…'))}" autocomplete="off" />
+          <div class="hint">留空保存 = 保留原 Key；要更换直接输入新的 Key</div></div>`;
       }
       if (f.key === 'model') {
         return `<div class="field"><label>${esc(f.label)}${f.required ? ' *' : ''}</label>
@@ -10800,8 +11517,12 @@ function connectEvents() {
     try {
       const job = JSON.parse(event.data);
       const index = state.jobs.findIndex((j) => j.id === job.id);
+      const previousStatus = index >= 0 ? state.jobs[index].status : '';
+      // 有新任务进来就取消「回看旧版」，否则新出一版也会被旧版按住看不见
+      if (index < 0 && job.itemId && state.stagePick) delete state.stagePick[job.itemId];
       if (index >= 0) state.jobs[index] = job;
       else state.jobs.unshift(job);
+      const statusChanged = previousStatus !== job.status;
       clearTimeout(timer);
       timer = setTimeout(() => {
         const active = document.activeElement;
@@ -10818,6 +11539,8 @@ function connectEvents() {
               render();
             } else {
               // 正在打字时不敢整页重画，但成片必须立刻露出来
+              // 分镜目录里的「生成中 / 完成」也要跟着变（尤其是别的分镜在跑），只重画目录那几行
+              if (statusChanged) { try { WB.paintSidebar('video'); } catch { /* ignore */ } }
               studioStageMediaPatch();
               studioLivePatch();
               updateStatus();
@@ -10900,6 +11623,10 @@ async function refreshServices() {
 /* ------------------------------------------------------------------ 账号 / 项目 */
 
 function renderLoginScreen() {
+  const params = new URLSearchParams(location.search);
+  const invite = params.get('invite');
+  const reset = params.get('reset');
+  if (invite || reset) return renderCodeScreen({ invite, reset });
   const enabled = state.auth && state.auth.enabled;
   document.body.innerHTML = `
     <div class="auth-screen">
@@ -10912,7 +11639,7 @@ function renderLoginScreen() {
         ${enabled ? '' : '<input class="input" id="auth-pass2" type="password" placeholder="再输一次密码" autocomplete="new-password" />'}
         <div class="auth-error" id="auth-error"></div>
         <button class="wmd-btn wmd-btn-primary" type="submit" id="auth-submit">${enabled ? '登录' : '创建并登录'}</button>
-        <div class="auth-switch">${enabled ? '只能本机登录；忘记密码删掉 data/users.json 重新创建' : '本机明文数据，仅个人使用'}</div>
+        <div class="auth-switch">${enabled ? '用管理员分配的账号登录；忘记密码请联系管理员重置' : '首次使用：创建的第一个账号是平台管理员'}</div>
       </form>
     </div>`;
   const form = $('#auth-form');
@@ -10945,6 +11672,76 @@ function renderLoginScreen() {
     }
   };
   $('#auth-user').focus();
+}
+
+/** 邀请链接 / 重置链接落地页：用一次性码创建账号或设置新密码。 */
+function renderCodeScreen({ invite, reset }) {
+  const isReset = Boolean(reset);
+  const code = isReset ? reset : invite;
+  document.body.innerHTML = `
+    <div class="auth-screen">
+      <form class="auth-card" id="auth-form">
+        <div class="auth-brand"><span class="wmd-brand-mark">Y9</span><div><b>WENYUN.M-DESKTOP</b><small>AI 视频创作工作台</small></div></div>
+        <h1>${isReset ? '设置新密码' : '接受邀请'}</h1>
+        <p class="hint" id="code-hint">${isReset ? '设置后旧会话会全部失效，请用新密码重新登录。' : '读取邀请信息…'}</p>
+        ${isReset ? '' : '<input class="input" id="auth-user" placeholder="用户名（2–32 位）" autocomplete="username" />'}
+        <input class="input" id="auth-pass" type="password" placeholder="${isReset ? '新密码' : '密码'}" autocomplete="new-password" />
+        <input class="input" id="auth-pass2" type="password" placeholder="再输一次密码" autocomplete="new-password" />
+        <div class="auth-error" id="auth-error"></div>
+        <button class="wmd-btn wmd-btn-primary" type="submit" id="auth-submit">${isReset ? '保存新密码' : '接受邀请并登录'}</button>
+        <div class="auth-switch"><a href="/">返回登录</a></div>
+      </form>
+    </div>`;
+  if (!isReset) {
+    fetch('/api/invites/' + encodeURIComponent(invite)).then(async (res) => {
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || '邀请链接无效或已过期');
+      const hint = $('#code-hint');
+      if (hint) hint.textContent = `加入「${data.data.tenantName || '租户'}」，角色：${TEAM_ROLES[data.data.role] || data.data.role}`;
+    }).catch((error) => {
+      const hint = $('#code-hint');
+      if (hint) hint.textContent = error.message;
+      const btn = $('#auth-submit');
+      if (btn) btn.disabled = true;
+    });
+  } else {
+    fetch('/api/resets/' + encodeURIComponent(reset)).then(async (res) => {
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || '重置链接无效或已过期');
+      const hint = $('#code-hint');
+      if (hint) hint.textContent = `账号：${data.data.username}。设置后旧会话会全部失效。`;
+    }).catch((error) => {
+      const hint = $('#code-hint');
+      if (hint) hint.textContent = error.message;
+      const btn = $('#auth-submit');
+      if (btn) btn.disabled = true;
+    });
+  }
+  const form = $('#auth-form');
+  form.onsubmit = async (event) => {
+    event.preventDefault();
+    const password = $('#auth-pass').value;
+    const error = $('#auth-error');
+    error.textContent = '';
+    if (password !== $('#auth-pass2').value) { error.textContent = '两次密码不一致'; return; }
+    const btn = $('#auth-submit');
+    btn.disabled = true;
+    btn.textContent = '处理中…';
+    try {
+      const body = isReset ? { code, password } : { code, username: $('#auth-user').value.trim(), password };
+      const res = await fetch(isReset ? '/api/auth/reset-password' : '/api/auth/accept-invite', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || '失败');
+      location.replace(location.pathname);
+    } catch (err) {
+      error.textContent = err.message;
+      btn.disabled = false;
+      btn.textContent = isReset ? '保存新密码' : '接受邀请并登录';
+    }
+  };
+  $('#auth-pass').focus();
 }
 
 async function loadProjects() {

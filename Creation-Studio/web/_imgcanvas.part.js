@@ -71,7 +71,7 @@ function imageWorkspaceHtml(tab, ch) {
   const item = imageCurrent();
   const status = !ch ? '没有图像渠道 · 先在左侧新增一个'
     : item ? `${item.name}${item.width ? ` · ${item.width}×${item.height}` : ''}${item.bytes ? ` · ${fmtBytes(item.bytes)}` : ''}${im.selection ? ' · 已选区' : ''}`
-    : (tab === 'reverse' ? '选择源图后点「反推提示词」' : '就绪 - 在左侧写提示词，点「图像生成」');
+    : (tab === 'reverse' ? '选源图 → 反推并出图，结果显示在这里' : '就绪 - 在左侧写提示词，点「图像生成」');
   const thumbs = (tab !== 'reverse' && (im.results || []).length)
     ? im.results.map((it, i) => `<button type="button" class="zd-tab ${i === (im.previewIndex || 0) ? 'zd-tab-active' : ''}" data-preview="${i}" title="${esc(it.name)}">
         <span class="zd-tab-name">${esc(it.name)}</span><span class="zd-tab-size">${it.width || ''}${it.height ? '×' + it.height : ''}</span>

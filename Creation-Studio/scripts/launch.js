@@ -120,7 +120,8 @@ function startAgent() {
     env: {
       ...process.env,
       AGENT_SETTINGS_PATH: process.env.AGENT_SETTINGS_PATH || path.join(AGENT_DIR, 'data', 'agent_settings.json'),
-      HARNESS_AUTH_MODE: process.env.HARNESS_AUTH_MODE || 'development',
+      // 默认走 controller：智能体向创作台复核项目归属；只有本机开发才显式设 development。
+      HARNESS_AUTH_MODE: process.env.HARNESS_AUTH_MODE || 'controller',
       WMD_BASE_URL: process.env.WMD_BASE_URL || `http://127.0.0.1:${WMD_PORT}`,
     },
   });

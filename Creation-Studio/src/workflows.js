@@ -68,6 +68,7 @@ function publicList() {
     widthKey: wf.widthKey || '',
     heightKey: wf.heightKey || '',
     seedKey: wf.seedKey || '',
+    models: wf.models || [],
     pass2: wf.pass2 || null,
   }));
 }

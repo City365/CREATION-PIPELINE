@@ -15,7 +15,10 @@ function workflows(channel) {
       provider: 'manager',
       platform: 'doubao',
       label: ch.name + ' · 豆包',
-      note: '管理器浏览器生成 · 豆包 Seedance · 5–15 秒',
+      note: '管理器浏览器生成 · 豆包 Seedance（Mini / Fast）· 5–15 秒',
+      // 豆包网页有模型下拉，文案必须一字不差；创作台据此给「模型名称」下拉，
+      // 选中后随任务发给管理器（Gemini 页面没有这一项，留空）。
+      models: managerVideo.MODEL_CHOICES,
       images: 9,
       optionalImages: true,
       audios: 0,
@@ -76,9 +79,9 @@ async function saveRemoteVideo(job, channel, taskId, platform, accountName, ctx)
       channelId: channel.id,
       channel: channel.name,
       platform,
-      model: channel.model || '',
+      model: managerVideo.modelOf(channel, job, platform) || '',
       duration: job.duration,
-      ratio: managerVideo.shortAspect(job.aspectRatio),
+      ratio: managerVideo.shortAspect(job.aspectRatio || job.ratio),
       managerTaskId: taskId,
       managerAccount: accountName || '',
     },
@@ -94,7 +97,9 @@ async function execute(ctx) {
   job.apiUrl = managerVideo.baseUrl(channel);
   job.stage = '提交到管理器…';
   touch(job, { progress: 10 });
-  log(job, 'info', `管理器渠道「${channel.name}」· ${managerVideo.PLATFORM_LABEL[platform] || platform}`);
+  log(job, 'info', `管理器渠道「${channel.name}」· ${managerVideo.PLATFORM_LABEL[platform] || platform}`
+    + (managerVideo.modelOf(channel, job, platform) ? ` · 模型 ${managerVideo.modelOf(channel, job, platform)}` : '')
+    + ` · 画幅 ${managerVideo.shortAspect(job.aspectRatio || job.ratio)}`);
   const submitted = job.resumeRemote && job.remotePromptId
     ? { taskId: job.remotePromptId, account: { name: '原任务账号' } }
     : await managerVideo.submit(channel, job, platform);

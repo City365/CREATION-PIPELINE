@@ -15,6 +15,7 @@
 
 import argparse
 import json
+import os
 import re
 import sys
 import zipfile
@@ -117,13 +118,52 @@ def clean_scene(value):
 # ------------------------------- 素材匹配 -------------------------------
 
 def list_images(folder):
+    """递归列出图片：素材按集分在子目录里（人物/第3集-…/温语-三视图.png），不能只看第一层。"""
     folder = Path(folder)
     if not folder.is_dir():
         return []
-    return sorted(
-        [p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in IMAGE_EXT],
-        key=lambda p: p.name,
-    )
+    found = []
+    for p in folder.rglob("*"):
+        if not p.is_file() or p.suffix.lower() not in IMAGE_EXT:
+            continue
+        parts = p.relative_to(folder).parts
+        if any(part.startswith(".") for part in parts):
+            continue  # .版本/ 之类的留档目录不算素材
+        found.append(p)
+    return sorted(found, key=lambda p: (p.parent.as_posix(), p.name))
+
+
+def find_assets_dir(explicit=""):
+    """素材库根目录：显式参数 > WMD_ASSETS_DIR > WMD_PROJECT_DIR/assets/素材 > 当前目录及上层的 assets/素材。"""
+    if explicit:
+        return Path(explicit), "参数 --assets"
+    env_assets = os.environ.get("WMD_ASSETS_DIR", "").strip()
+    if env_assets:
+        p = Path(env_assets)
+        if p.is_dir():
+            return p, "WMD_ASSETS_DIR"
+    env_project = os.environ.get("WMD_PROJECT_DIR", "").strip()
+    if env_project:
+        p = Path(env_project) / "assets" / "素材"
+        if p.is_dir():
+            return p, "当前项目的 assets/素材"
+    here = Path.cwd()
+    for base in [here, *list(here.parents)[:4]]:
+        for candidate in (base / "assets" / "素材", base / "素材"):
+            if candidate.is_dir():
+                return candidate, "自动找到 " + str(candidate)
+    return None, ""
+
+
+def in_episode(path, root, episode):
+    """按集筛素材：episode 为空时全都要；否则只要路径里带这一集的那个子目录。"""
+    if not episode:
+        return True
+    try:
+        rel = path.relative_to(root).as_posix()
+    except ValueError:
+        rel = path.as_posix()
+    return episode in rel
 
 
 def match_prefix(files, name):
@@ -519,7 +559,8 @@ def main(argv=None):
     default_map = Path(__file__).resolve().parent.parent / "mapping.json"
     ap = argparse.ArgumentParser(description="分镜提示词文本 -> 标准任务 JSON + Excel")
     ap.add_argument("--input", required=True, help="分镜文本（.txt）")
-    ap.add_argument("--assets", required=True, help="素材库根目录（其下有 人物/ 场景/，或直接放图片）")
+    ap.add_argument("--assets", default="", help="素材库根目录；默认取当前项目的 assets/素材（有 WMD_PROJECT_DIR 或能自动找到时）")
+    ap.add_argument("--episode", default="", help="只匹配这一集的素材目录（目录名包含这段文字，例如 第3集）")
     ap.add_argument("--out", default=".", help="输出目录，默认当前目录")
     ap.add_argument("--map", default=str(default_map), help="mapping.json 路径")
     ap.add_argument("--name", default="", help="输出文件名（不含扩展名），默认取输入文件名")
@@ -543,17 +584,21 @@ def main(argv=None):
     else:
         print("! 没有找到 mapping.json，使用空映射（只按文件名前缀匹配）")
 
-    assets = Path(args.assets)
-    if not assets.is_dir():
-        print("× 素材库不存在：%s" % assets, file=sys.stderr)
+    assets, assets_from = find_assets_dir(args.assets)
+    if assets is None:
+        print("× 找不到素材库：请传 --assets \"<项目>/assets/素材\"。"
+              "（正常由系统注入 WMD_PROJECT_DIR，脚本会自动定位；手动跑时指定一下。）", file=sys.stderr)
         return 2
+    print("素材库：%s（%s）" % (assets, assets_from))
+    if args.episode:
+        print("只匹配这一集：%s" % args.episode)
     char_dir = assets / "人物"
     scene_dir = assets / "场景"
     all_files = []
     if not char_dir.is_dir() or not scene_dir.is_dir():
         all_files = list_images(assets)
-    char_files = list_images(char_dir) if char_dir.is_dir() else all_files
-    scene_files = list_images(scene_dir) if scene_dir.is_dir() else all_files
+    char_files = [p for p in (list_images(char_dir) if char_dir.is_dir() else all_files) if in_episode(p, char_dir, args.episode)]
+    scene_files = [p for p in (list_images(scene_dir) if scene_dir.is_dir() else all_files) if in_episode(p, scene_dir, args.episode)]
     if not char_files:
         print("× 素材库里没有图片：%s" % assets, file=sys.stderr)
         return 2

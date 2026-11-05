@@ -120,7 +120,7 @@ function normalizeChannel(kind, raw) {
     lastTestOk: raw.lastTestOk ?? null,
     lastTestMessage: String(raw.lastTestMessage || ''),
   };
-  for (const field of ['baseUrl', 'apiKey', 'model']) {
+  for (const field of ['baseUrl', 'apiKey', 'model', 'executorToken']) {
     channel[field] = String(raw[field] || '').trim();
   }
   // 模型限制：最大输出 token / 最大上下文（0 = 不限制，交给上游默认）

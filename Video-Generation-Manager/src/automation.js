@@ -134,6 +134,8 @@ async function settlePopups(page,{signal,update,label='页面提示弹窗',grace
 }
 async function applyOptions(page, task, selectors, signal, hooks={}) {
   const proof={requested:{model:task.model||'',ratio:task.ratio||'',duration:task.duration??null,resolution:task.resolution||''}};
+  // phase=mode 只点「视频生成」进视频模式；phase=rest 只调模型/时长/比例；默认一次做完。
+  const phase=hooks.phase||'all';
   // Explicit options are mandatory: never silently send with a different model or duration.
   const options = [
     ['modeControl','视频生成',true],
@@ -144,6 +146,8 @@ async function applyOptions(page, task, selectors, signal, hooks={}) {
   ];
   for(const [key,label,required] of options) {
     signal.throwIfAborted(); if(!required) continue;
+    if(phase==='mode' && key!=='modeControl') continue;
+    if(phase==='rest' && key==='modeControl') continue;
     if(key==='modeControl' && await page.locator('[data-input-engine-actionbar-control-key="video-model"]').isVisible().catch(()=>false))continue;
     const selector=selectors[key] || (key==='resolutionControl'?selectors.durationControl:undefined);
     if(key==='modeControl') {
@@ -221,10 +225,34 @@ async function applyOptions(page, task, selectors, signal, hooks={}) {
         if(await skillBar.count().catch(()=>0))break;
         await wait(400,undefined,{signal});
       }
+      // 新版页面把「视频生成」收进输入框左下角的「对话」模式菜单里，先点开这个菜单再选。
+      const tryModeMenu=async()=>{
+        const chip=page.locator('[data-testid="chat_input_action_mode"]').first();
+        if(!await chip.count().catch(()=>0))return false;
+        if(!await chip.isVisible().catch(()=>false))return false;
+        await chip.click({timeout:3000}).catch(()=>null);
+        await wait(600,undefined,{signal});
+        const item=page.locator('[role="menuitem"],[data-radix-collection-item]').filter({hasText:/视频生成|生成视频/}).first();
+        if(await item.count().catch(()=>0) && await item.isVisible().catch(()=>false)){
+          await item.click({timeout:3000}).catch(()=>null);
+          await wait(900,undefined,{signal});
+          if(await inVideoMode())return true;
+        }
+        const js=await page.evaluate(()=>{
+          const el=[...document.querySelectorAll('[role="menuitem"],[role="option"],div,span')]
+            .filter((e)=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0;})
+            .find((e)=>(e.innerText||'').trim()==='视频生成');
+          if(!el)return false;el.click();return true;
+        }).catch(()=>false);
+        if(js){await wait(900,undefined,{signal});if(await inVideoMode())return true;}
+        await page.keyboard.press('Escape').catch(()=>null);
+        return false;
+      };
       let entered=false;
       const tried=[];
       if(selector){ tried.push('账号配置'); entered=await clickVisible(()=>page.locator(selector)); }
       if(!entered){ tried.push('直接入口'); entered=await clickVideoEntry(); }
+      if(!entered){ tried.push('模式菜单'); entered=await tryModeMenu(); }
       if(!entered){
         tried.push('更多技能');
         if(await openSkillMenu()) entered=await clickVideoEntry();
@@ -285,8 +313,10 @@ async function applyOptions(page, task, selectors, signal, hooks={}) {
       if(!confirmed)throw new Error('页面参数回读未确认：'+expected+'；已停止提交');
     }
   }
+  if(phase==='mode'){proof.phase='mode';proof.applied={mode:await page.locator('[data-input-engine-actionbar-control-key="video-model"]').first().innerText().catch(()=>'')};return proof;}
   const modelControl=page.locator(selectors.modelControl||'[data-input-engine-actionbar-control-key="video-model"]');
   const parameterControl=page.locator(selectors.durationControl||selectors.ratioControl||'[data-input-engine-actionbar-render-entry-key="video-generation-params-panel"]');
+  proof.phase=phase;
   proof.applied={model:await modelControl.first().innerText().catch(()=>''),summary:await parameterControl.first().innerText().catch(()=>''),duration:null,ratio:''};
   const durationMatch=proof.applied.summary.match(/(\d+)s/);if(durationMatch)proof.applied.duration=Number(durationMatch[1]);
   proof.applied.ratio=proof.applied.summary.match(/\d+:\d+/)?.[0] || (proof.applied.summary.includes('自动')?'auto':'');
@@ -299,20 +329,27 @@ async function applyOptions(page, task, selectors, signal, hooks={}) {
 async function submitText(page, text, selectors, signal, beforeSend, referenceFiles = null) {
   signal.throwIfAborted();
   const editor=await firstVisible(page,selectors.editor || 'textarea, [contenteditable="true"][role="textbox"], [data-slate-editor="true"], [contenteditable="true"]');
-  const binding=referenceFiles ? await require('./adapters/doubao-mentions').bindReferences(page,editor,text,referenceFiles,signal) : null;
-  if(!binding)await editor.fill(text);
+  // 图片引用策略：豆包原生 @ 图片芯片默认停用（详见 adapters/doubao-mentions.js 顶部说明）。
+  // 停用时 <Picture n>/@图片n 一律降级为纯文本「图n」后直接写入输入框；
+  // 只有显式 DBM_NATIVE_MENTIONS=1 才回到 bindReferences 的敲 @ → 选候选 → 核验芯片链路。
+  const mentions=require('./adapters/doubao-mentions');
+  const binding=(referenceFiles && mentions.nativeMentionsEnabled()) ? await mentions.bindReferences(page,editor,text,referenceFiles,signal) : null;
+  if(!binding)await editor.fill(mentions.pictureTagsToText(text));
   signal.throwIfAborted();
   if(beforeSend && await beforeSend(binding)===false)return binding;
-  if(selectors.send) await (await firstVisible(page,selectors.send,5000)).click();
-  else {
-    const stableSend=page.locator('[data-testid="chat_input_send_button"]');
-    if(await stableSend.count() && await stableSend.isVisible()){await stableSend.click();return;}
-    const send=page.getByRole('button',{name:/^(发送|发送消息|Send|Send message)$/i});
-    if(await send.count() && await send.first().isVisible()) await send.first().click();
-    else await editor.press('Enter');
-  }
+  await clickSend(page,selectors,editor);
 }
-async function uploadReferences(page, files, selectors, signal, platform, update = () => {}) {
+
+// 只负责点发送：文本已经落在输入框里时直接走这里，不再重填。
+async function clickSend(page,selectors,editor){
+  if(selectors.send){await (await firstVisible(page,selectors.send,5000)).click();return;}
+  const stableSend=page.locator('[data-testid="chat_input_send_button"]');
+  if(await stableSend.count() && await stableSend.isVisible()){await stableSend.click();return;}
+  const send=page.getByRole('button',{name:/^(发送|发送消息|Send|Send message)$/i});
+  if(await send.count() && await send.first().isVisible()){await send.first().click();return;}
+  await editor.press('Enter');
+}
+async function uploadReferences(page, files, selectors, signal, platform, update = () => {}, options = {}) {
   if(!files.length) return;
   // Doubao exposes authoritative upload completion in attachmentStates; a separate
   // progress selector is optional there, but remains mandatory for generic pages.
@@ -329,16 +366,45 @@ async function uploadReferences(page, files, selectors, signal, platform, update
     update({status:'uploading',message:'准备上传参考图 '+(fileIndex+1)+'/'+files.length+'：'+path.basename(file),progress:5+Math.round(fileIndex/files.length*10)});
     const before=await page.locator(selectors.attachment).count();
     const beforeStates=platform==='doubao'?await page.evaluate(readAttachmentState,selectors.attachment):[];
-    const uploader=page.locator(selectors.upload || 'input[type="file"]').first();
-    if(await uploader.count()) await uploader.setInputFiles(file);
-    else if(selectors.uploadButton){
-      const chooserPromise=page.waitForEvent('filechooser',{timeout:10000}).catch(error=>error);
-      await (await firstVisible(page,selectors.uploadButton,5000)).click();
-      if(selectors.uploadMenuItem)await (await firstVisible(page,selectors.uploadMenuItem,5000)).click();
-      const chooser=await chooserPromise;if(chooser instanceof Error)throw new Error('图片选择器未打开');
-      await chooser.setFiles(file);
-    }else throw new Error('找不到图片上传控件，请配置uploadButton和uploadMenuItem');
-    const end=Date.now()+120000;let ready=false;
+    let uploader=page.locator(selectors.upload || 'input[type="file"]').first();
+    let handed=false;
+    // 对话态（还没进视频模式）页面上没有 file input，要先点左下角「+」把入口展开/唤起选择器。
+    if(!await uploader.count()){
+      const plus=page.locator('[data-testid="upload_file_button"]').first();
+      if(await plus.count().catch(()=>0) && await plus.isVisible().catch(()=>false)){
+        const chooserPromise=page.waitForEvent('filechooser',{timeout:6000}).catch(()=>null);
+        await plus.click({timeout:4000}).catch(()=>null);
+        const chooser=await chooserPromise;
+        if(chooser){ await chooser.setFiles(file); handed=true; }
+        await wait(700,undefined,{signal});
+        uploader=page.locator(selectors.upload || 'input[type="file"]').first();
+        if(!handed && await uploader.count()){ await uploader.setInputFiles(file); handed=true; }
+        if(!chooser && !await uploader.count()){
+          // 「+」可能弹出菜单，里面有拍照/上传选项
+          const menuItem=page.locator('[role="menuitem"],[data-radix-collection-item]').filter({hasText:/上传|文件|图片/}).first();
+          if(await menuItem.count().catch(()=>0) && await menuItem.isVisible().catch(()=>false)){
+            const chooser2=page.waitForEvent('filechooser',{timeout:6000}).catch(()=>null);
+            await menuItem.click({timeout:4000}).catch(()=>null);
+            const c2=await chooser2;
+            if(c2){ await c2.setFiles(file); handed=true; }
+            await wait(500,undefined,{signal});
+            uploader=page.locator(selectors.upload || 'input[type="file"]').first();
+            if(!handed && await uploader.count()){ await uploader.setInputFiles(file); handed=true; }
+          }
+        }
+      }
+    }
+    if(!handed){
+      if(await uploader.count()){ await uploader.setInputFiles(file); handed=true; }
+      else if(selectors.uploadButton){
+        const chooserPromise=page.waitForEvent('filechooser',{timeout:10000}).catch(error=>error);
+        await (await firstVisible(page,selectors.uploadButton,5000)).click();
+        if(selectors.uploadMenuItem)await (await firstVisible(page,selectors.uploadMenuItem,5000)).click();
+        const chooser=await chooserPromise;if(chooser instanceof Error)throw new Error('图片选择器未打开');
+        await chooser.setFiles(file); handed=true;
+      } else throw new Error('找不到图片上传控件，请配置uploadButton和uploadMenuItem');
+    }
+    const end=Date.now()+(Number(options.maxWaitMs)||120000);let ready=false;
     while(Date.now()<end) {
       signal.throwIfAborted();
       const count=await page.locator(selectors.attachment).count();
@@ -361,6 +427,11 @@ async function uploadReferences(page, files, selectors, signal, platform, update
     if(!ready) {
       const states=platform==='doubao'?await page.evaluate(readAttachmentState,selectors.attachment):[];
       const count=await page.locator(selectors.attachment).count();
+      if(options.lenient && count>before){
+        // 对话态下页面不暴露上传进度：卡片已经出现就先继续，进视频模式后再复核状态。
+        update({status:'uploading',message:'参考图已挂上（对话态不显示进度），进入视频模式后复核：'+path.basename(file),uploadStatePending:true});
+        continue;
+      }
       const error=new Error('参考图未确认上传完成，已停止发送：'+path.basename(file));
       error.uploadDiagnostics={expectedCount:before+1,actualCount:count,attachments:states,elapsedMs:Date.now()-started,stalledMs:Date.now()-lastChange,history,network:trace.events.slice()};
       throw error;
@@ -417,18 +488,84 @@ async function warmUpConversation({page,task,selectors,signal,update=()=>{},warm
   }
   return {rounds:sent.length,total:messages.length,source,messages:sent,finishedAt:new Date().toISOString()};
 }
+// 输入顺序：text-first 先写提示词+传参考图，最后再选模型/时长/比例；
+// params-first 是老顺序（先选参数再传图）。用 DBM_INPUT_ORDER 切换。
+function inputOrder(){const raw=String(process.env.DBM_INPUT_ORDER||'params-first').trim().toLowerCase();
+  return raw==='text-first'?'text-first':'params-first';}
+
+// 文本已经在输入框里时，直接发送（带一次空文本保护）。
+async function submitPrepared(page,selectors,signal,beforeSend){
+  signal.throwIfAborted();
+  const editor=await firstVisible(page,selectors.editor || 'textarea,[contenteditable="true"]');
+  const text=String(await editor.innerText().catch(()=>'')).trim();
+  if(!text)throw new Error('提示词没有留在输入框里，已停止提交');
+  signal.throwIfAborted();
+  if(beforeSend && await beforeSend()===false)return;
+  await clickSend(page,selectors,editor);
+}
+
 async function prepareInputs(page,task,selectors,signal,platform,update=()=>{}) {
   signal.throwIfAborted();
   const editor=await firstVisible(page,selectors.editor||'textarea,[contenteditable=true]');
-  // Upload into a fresh composer. Filling a long prompt before upload can retain
-  // stale attachment props; the verified native binding writes the prompt later.
+  // 原生 @ 图片引用已停用：提示词统一降级为纯文本「图n」（见 adapters/doubao-mentions.js 顶部说明）
+  task={...task,prompt:require('./adapters/doubao-mentions').pictureTagsToText(task.prompt||'')};
   await editor.fill('');
   // 页面加载后可能先弹「下载电脑版」引导，先处理掉再点参数，避免点击被遮罩拦截。
   await settlePopups(page,{signal,update,label:'打开账号页面后的提示'});
-  update({status:'configuring',message:'设置视频参数',progress:3});
+  const order=inputOrder();
+  if(order==='text-first'){
+    // 顺序：写提示词 → 点「视频生成」进视频模式 → 传参考图 → 选模型/时长/比例。
+    // 参数放最后，避免切模式或挂附件时把已选参数冲掉。
+    // 顺序：上传参考图 → 写提示词 → 点「视频生成」→ 配置参数 → 发送。
+    update({status:'configuring',message:'先上传参考图',progress:2,inputOrder:order});
+    const uploadDiagnostics=await uploadReferences(page,task.references,selectors,signal,platform,update,{maxWaitMs:45000,lenient:true});
+    update({status:'configuring',message:'参考图已上传，写入视频提示词',progress:4,inputOrder:order});
+    await editor.fill(task.prompt||'');
+    await wait(300,undefined,{signal});
+    const typedBeforeMode=String(await editor.innerText().catch(()=>'')).trim();
+    update({status:'configuring',message:'图文就位，点「视频生成」进入视频模式',progress:6,inputOrder:order});
+    const modeProof=await applyOptions(page,task,selectors,signal,{update,phase:'mode'});
+    update({videoMode:modeProof.applied,modeProof,status:'configuring',message:'已进入视频模式，设置参数',progress:7});
+    // 视频模式才暴露附件状态，这里复核一次：没到 100% 就等，等到就不是正常附件。
+    if((task.references||[]).length){
+      const deadline=Date.now()+90000;
+      while(Date.now()<deadline){
+        const states=await page.evaluate(readAttachmentState,selectors.attachment).catch(()=>[]);
+        const bad=states.filter(s=>s.status!=='Normal'||Number(s.uploadPercent)<100);
+        if(states.length>=(task.references||[]).length && !bad.length)break;
+        await wait(1000,undefined,{signal});
+      }
+      const finalStates=await page.evaluate(readAttachmentState,selectors.attachment).catch(()=>[]);
+      const cardCount=await page.locator(selectors.attachment).count().catch(()=>0);
+      update({attachmentsAfterMode:finalStates,attachmentCards:cardCount});
+      // 有的版本在视频模式下不暴露附件状态字段，这时以附件卡片数量为准。
+      const bad=finalStates.filter(s=>s.status!=='Normal'||Number(s.uploadPercent)<100);
+      if(bad.length)throw new Error('参考图在视频模式下仍未上传完成，已停止发送');
+      if(!finalStates.length && cardCount<(task.references||[]).length)throw new Error('参考图没有挂在输入框上，已停止发送');
+    }
+    // 切换模式有可能清空输入框，立刻回读一次。
+    if(!String(await editor.innerText().catch(()=>'')).trim() && typedBeforeMode){
+      await editor.fill(task.prompt||'');
+      await wait(300,undefined,{signal});
+      update({status:'configuring',message:'进入视频模式后提示词被清空，已重新写入',progress:8,inputOrder:order});
+    }
+    update({status:'configuring',message:'最后设置视频参数（模型/时长/比例）',progress:8,inputOrder:order});
+    const parameters=await applyOptions(page,task,selectors,signal,{update,phase:'rest'});update({parameters});
+    // 切模式/选参数有可能把输入框清空，这里回读一次，空了就补写。
+    const stillThere=String(await editor.innerText().catch(()=>'')).trim();
+    let promptReFilled=false;
+    if(!stillThere){
+      await editor.fill(task.prompt||'');
+      await wait(300,undefined,{signal});
+      promptReFilled=true;
+      update({status:'configuring',message:'选参数后提示词被清空，已重新写入',progress:9,promptReFilled:true});
+    }
+    return {parameters,uploadDiagnostics,inputOrder:order,promptTyped:true,promptReFilled};
+  }
+  update({status:'configuring',message:'设置视频参数',progress:3,inputOrder:order});
   const parameters=await applyOptions(page,task,selectors,signal,{update});update({parameters});
   const uploadDiagnostics=await uploadReferences(page,task.references,selectors,signal,platform,update);
-  return {parameters,uploadDiagnostics};
+  return {parameters,uploadDiagnostics,inputOrder:order,promptTyped:false};
 }
 // 下载地址解析顺序（豆包）：插件 fallback_api 无水印原片 → 官方节点接口 → 页面明确标记的地址。
 // fallback_api 是实测可用的主路径（evidence/live-no-watermark-probe.md），对 removeWatermark=false 的任务也同样优先，
@@ -463,6 +600,11 @@ async function resolveGeneratedMedia({ page, state, task, anchorKey = '', signal
 }
 function createExecutor({ pool, store, downloads, ffprobe, fixture=false, getDispatcher, prepareOnly=false, interpreter=null, warmup=null }) {
   return async function execute(task, account, signal, update) {
+    // 原生 @ 图片引用已停用（见 adapters/doubao-mentions.js 顶部完整说明）：
+    // 提示词里的 <Picture n> / @图片n / @图n 在这里统一降级成纯文本「图n」，
+    // 后面写输入框、回读校验、submittedPrompt 记录用的都是降级后的文本。
+    // 想恢复原生 @ 芯片：DBM_NATIVE_MENTIONS=1 并重启管理器。
+    task={...task,prompt:require('./adapters/doubao-mentions').pictureTagsToText(task.prompt||'')};
     let page;let finished=false;
     try {
       signal.throwIfAborted();if(task.nextPollAt>Date.now())await wait(task.nextPollAt-Date.now(),undefined,{signal});page=await pool.taskPage(account,task.resume?task.conversationURL:undefined); const selectors=selectorsFor(account.platform,account);
@@ -501,13 +643,21 @@ function createExecutor({ pool, store, downloads, ffprobe, fixture=false, getDis
         if(before.captcha) {update({status:'paused',message:'请在账号窗口完成人工验证'});throw new Error('提交前需要人工验证，请完成后重新提交');}
         update({status:'submitting',message:'提交提示词',progress:10});
         let preparedBinding;
-        if(!task.resume)await submitText(page,task.prompt,selectors,signal,(binding)=>{
+        if(!task.resume&&prepared&&prepared.promptTyped){
+          // 新顺序：提示词和参考图已经在输入框里，这里只做最后的发送确认。
+          await submitPrepared(page,selectors,signal,()=>{
+            if(prepareOnly)return false;
+            update({submittedPrompt:task.prompt});
+            const quota=store.consumeQuota(account.id);update({quotaCharged:true,quotaDate:quota.date});
+            return true;
+          });
+        } else if(!task.resume) await submitText(page,task.prompt,selectors,signal,(binding)=>{
           preparedBinding=binding;
           if(prepareOnly)return false;
           if(binding)update({submittedPrompt:binding.text,referenceBindings:binding.bindings});
           const quota=store.consumeQuota(account.id);update({quotaCharged:true,quotaDate:quota.date});
         },account.platform==='doubao'?task.references:null);
-        if(prepareOnly)return {sent:false,mode:'executor-before-send',text:preparedBinding?.text||task.prompt,bindings:preparedBinding?.bindings||[],parameters:prepared?.parameters,uploadDiagnostics:prepared?.uploadDiagnostics};
+        if(prepareOnly)return {sent:false,mode:'executor-before-send',text:preparedBinding?.text||task.prompt,bindings:preparedBinding?.bindings||[],parameters:prepared?.parameters,uploadDiagnostics:prepared?.uploadDiagnostics,inputOrder:prepared?.inputOrder||inputOrder(),promptTyped:Boolean(prepared&&prepared.promptTyped)};
         const deadline=Date.now()+task.timeoutSeconds*1000;
         let anchorKey='',submittedDeadline=Date.now()+60000, confirmations=0,lastConfirmation='',lastReply='',stableSince=Date.now();
         // 我们发过的任务类消息（暖场 + 确认 + 催促）都要让页面归属检查认出来，不能算成“额外用户消息”。
@@ -652,4 +802,4 @@ function createExecutor({ pool, store, downloads, ffprobe, fixture=false, getDis
     }
   };
 }
-module.exports = { createExecutor, firstVisible, submitText, uploadReferences, prepareInputs, applyOptions, resolveGeneratedMedia, selectorsFor, DOUBAO_DEFAULTS, settlePopups, visiblePopup, clickFirstText, warmUpConversation, waitForChatReply, CONFIRM_TEXTS, PUSH_TEXTS, makePhrasePicker };
+module.exports = { createExecutor, firstVisible, submitText, submitPrepared, inputOrder, uploadReferences, prepareInputs, applyOptions, resolveGeneratedMedia, selectorsFor, DOUBAO_DEFAULTS, settlePopups, visiblePopup, clickFirstText, warmUpConversation, waitForChatReply, CONFIRM_TEXTS, PUSH_TEXTS, makePhrasePicker };

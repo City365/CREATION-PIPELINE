@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "0.4.2",
+  "authorization": {
+    "overloadOnly": true,
+    "basis": "填写当前任务实际授权；未过载不改"
+  },
+  "edits": []
+}

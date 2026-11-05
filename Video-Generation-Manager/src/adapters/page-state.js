@@ -88,7 +88,8 @@ function readPageState({ selectors = {}, baseline = [], prompt = '', anchorKey =
     // 平台有时先回复“暂时不能生成视频”来验证真人，需要继续请求 2-3 轮才会进入确认生成。
     videoUnavailable:/(?:我|这边|目前|暂时|现在)[^。\n]{0,10}(?:无法|不能|没法|不支持|不可以|没办法)[^。\n]{0,12}(?:生成|制作|创作|做)[^。\n]{0,6}(?:视频|短片)|(?:我|这边|目前|暂时|现在)[^。\n]{0,10}(?:无法|不能|没法)[^。\n]{0,6}直接[^。\n]{0,4}(?:生成|制作|创作)|不支持[^。\n]{0,6}(?:视频生成|生成视频)|(?:视频生成|生成视频)[^。\n]{0,8}(?:暂不可用|暂时不可用|无法使用|不支持|已关闭)|(?:只能|仅能)[^。\n]{0,10}(?:提供|给出)[^。\n]{0,8}(?:文字|脚本|方案)[^。\n]{0,8}(?:无法|不能)[^。\n]{0,6}(?:生成|制作)[^。\n]{0,4}视频/i.test(lastText),
     responding:Boolean(document.querySelector('[data-testid="chat_input_stop_button"], [data-testid="chat_input_stop_generate_button"]')),
-    confirmation:/确认后.*生成|是否.*开始生成|即将生成|我将.*生成|confirm.*generat/i.test(text),
+    // 只认平台真的在问「要不要开始生成」；「我将为你生成…」只是旁白，视频模式下发送后就会自己开始生成。
+confirmation:/确认后.*生成|是否.*开始生成|即将生成|我将.*生成|confirm.*generat/i.test(text),
   };
 }
 module.exports = { readPageState };

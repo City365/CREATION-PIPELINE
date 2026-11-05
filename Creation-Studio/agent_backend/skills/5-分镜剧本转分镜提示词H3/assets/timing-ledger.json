@@ -1,0 +1,30 @@
+{
+  "schemaVersion": "0.4.2",
+  "utterances": [
+    {
+      "group": 1,
+      "shot": 1,
+      "voiceIndex": 1,
+      "speaker": "周春明",
+      "channel": "现场对白",
+      "text": "你还得意上了是吧？",
+      "spokenText": "你还得意上了是吧？",
+      "shotDuration": 3,
+      "windowStart": 0,
+      "windowEnd": 3,
+      "start": 0,
+      "rate": 4.5,
+      "onset": 0.1,
+      "tail": 0.1,
+      "urgentSpeech": false,
+      "urgentReason": "",
+      "pauses": [
+        {
+          "id": "ending",
+          "seconds": 0.4,
+          "reason": "问号句末"
+        }
+      ]
+    }
+  ]
+}

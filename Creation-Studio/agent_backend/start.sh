@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")"
-export HARNESS_AUTH_MODE="${HARNESS_AUTH_MODE:-development}"
+export HARNESS_AUTH_MODE="${HARNESS_AUTH_MODE:-controller}"
 # 优先用智能体自己的 venv；没有再退回历史共用的 ml-engineer 环境兜底
 if [ -z "${AGENT_PYTHON:-}" ] && [ -x ".venv/Scripts/python.exe" ]; then
   AGENT_PYTHON=".venv/Scripts/python.exe"

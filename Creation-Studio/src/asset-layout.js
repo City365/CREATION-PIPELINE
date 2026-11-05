@@ -262,6 +262,96 @@ function listOther(root) {
   return items.sort((a, b) => b.mtime - a.mtime);
 }
 
+function dirEntry(root, abs) {
+  let entries = [];
+  try { entries = fs.readdirSync(abs, { withFileTypes: true }); } catch { entries = []; }
+  const dirs = [];
+  const files = [];
+  for (const entry of entries) {
+    if (entry.name.startsWith('.')) continue;
+    const child = path.join(abs, entry.name);
+    if (entry.isDirectory()) {
+      let mtime = 0;
+      try { mtime = fs.statSync(child).mtimeMs; } catch { /* 忽略读不到的目录 */ }
+      dirs.push({ kind: 'dir', name: entry.name, rel: relOf(root, child), total: countMedia(child), mtime });
+      continue;
+    }
+    const media = kindOf(entry.name);
+    if (media !== 'image' && media !== 'audio' && media !== 'video') continue;
+    let st = null;
+    try { st = fs.statSync(child); } catch { continue; }
+    const rel = relOf(root, child);
+    files.push({ kind: 'file', name: entry.name, rel, url: urlOf(rel), media, bytes: st.size, mtime: st.mtimeMs });
+  }
+  dirs.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
+  files.sort((a, b) => b.mtime - a.mtime || a.name.localeCompare(b.name, 'zh-CN'));
+  return { rel: relOf(root, abs), dirs, files };
+}
+
+/** 递归数一数目录下有多少张图/音频（给左侧树的数字用，超过 3000 就不再数了）。 */
+function countMedia(dir, seen = { n: 0 }) {
+  if (seen.n >= 3000) return seen.n;
+  let entries = [];
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return seen.n; }
+  for (const entry of entries) {
+    if (entry.name.startsWith('.')) continue;
+    const abs = path.join(dir, entry.name);
+    if (entry.isDirectory()) { countMedia(abs, seen); continue; }
+    const kind = kindOf(entry.name);
+    if (kind === 'image' || kind === 'audio' || kind === 'video') seen.n += 1;
+  }
+  return seen.n;
+}
+
+/**
+ * 素材树单层目录：左侧「资产」点开一层读一层，不用一次把整棵树（几千个文件）都读进内存。
+ * rel 相对项目 assets 根，例如 素材 / 素材/人物 / 素材/人物/我的同桌。
+ * deep=true 时把这个目录下所有文件（含子目录）一次列出来，用于「点分类看全部项目文件」。
+ */
+function scanDir(projectId, rel, options = {}) {
+  const root = rootFor(projectId);
+  const clean = String(rel || '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+  const abs = clean ? path.resolve(root, clean) : root;
+  const inside = path.relative(root, abs);
+  if (inside.startsWith('..') || path.isAbsolute(inside)) throw new Error('目录不在素材库里');
+  let stat = null;
+  try { stat = fs.statSync(abs); } catch { stat = null; }
+  if (!stat || !stat.isDirectory()) throw new Error('目录不存在');
+  const data = dirEntry(root, abs);
+  if (!options.deep) {
+    return { root, rel: data.rel, dirs: data.dirs, files: data.files, total: data.files.length + data.dirs.reduce((sum, dir) => sum + dir.total, 0) };
+  }
+  const files = [];
+  const walk = (dir) => {
+    let entries = [];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      if (entry.name.startsWith('.')) continue;
+      const child = path.join(dir, entry.name);
+      if (entry.isDirectory()) { walk(child); continue; }
+      const media = kindOf(entry.name);
+      if (media !== 'image' && media !== 'audio' && media !== 'video') continue;
+      let st = null;
+      try { st = fs.statSync(child); } catch { continue; }
+      const childRel = relOf(root, child);
+      const folder = relOf(abs, dir);
+      files.push({ kind: 'file', name: entry.name, rel: childRel, url: urlOf(childRel), media, folder, bytes: st.size, mtime: st.mtimeMs });
+    }
+  };
+  walk(abs);
+  files.sort((a, b) => b.mtime - a.mtime || a.name.localeCompare(b.name, 'zh-CN'));
+  return { root, rel: data.rel, dirs: data.dirs, files, total: files.length, deep: true };
+}
+
+/** 三个素材类型的递归文件数（左侧分类后面的数字）。 */
+function materialTotals(projectId) {
+  const root = rootFor(projectId);
+  const material = layoutOf(root).material;
+  const out = {};
+  for (const row of MATERIALS) out[row.id] = countMedia(path.join(material, row.dir));
+  return out;
+}
+
 function scan(projectId) {
   const root = rootFor(projectId);
   const tasks = listTasks(root);
@@ -283,6 +373,7 @@ function scan(projectId) {
   ];
   return {
     root, layout: layoutOf(root), tasks, shots, materials, other, items: flat, types,
+    totals: materialTotals(projectId),
     groups: tasks.map((task) => ({ name: task.title, rel: task.dirName, count: task.count, cover: task.shots[0]?.cover || '', mtime: task.mtime })),
   };
 }
@@ -516,6 +607,8 @@ function renameMaterial(projectId, rel, newName) {
   if (target !== abs) {
     if (fs.existsSync(target)) throw new Error('同名文件已存在');
     fs.renameSync(abs, target);
+    // 改名也是搬家：记一条别名，聊天里写死的旧链接还能打开
+    try { require('./file-aliases').record(abs, target); } catch { /* ignore */ }
   }
   return { rel: relOf(root, target), name: path.basename(target), url: urlOf(relOf(root, target)) };
 }
@@ -536,7 +629,7 @@ function createTask(projectId, title) {
 
 module.exports = {
   MATERIALS, SLOT_LABELS, SHOT_JSON, TASK_JSON,
-  rootFor, layoutOf, ensureLayout, scan, listTasks, listMaterial,
+  rootFor, layoutOf, ensureLayout, scan, scanDir, materialTotals, listTasks, listMaterial,
   findTask, ensureTask, createTask, createShot, updateShot, saveSlotBuffer, copyToSlot, clearSlot, importShots, deleteShot, saveMaterialBuffer,
   renameTask, deleteTask, renameShot, renameMaterial, deleteMaterial,
   materialMeta, urlOf, relOf,

@@ -3,12 +3,13 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const config = require('./config');
+const db = require('./db');
 const projects = require('./projects');
 const workspace = require('./workspace');
 const generationStore = require('./generation-store');
 const { readJson, writeJson, ensureDir, sanitizeFilename, safeSegment, kindOf, formatBytes, mimeFor } = require('./util');
 
-const META_FILE = path.join(config.DATA, 'assets.json');
+
 
 /* ------------------------------- 业务类型 ------------------------------- */
 
@@ -65,8 +66,38 @@ function normalizeMeta(raw) {
   return data;
 }
 
+/** 素材分类与主体映射存 SQLite：按项目一行，跟着业务数据走。 */
 function metaData() {
-  return normalizeMeta(readJson(META_FILE, null));
+  const rows = db.open().prepare('SELECT project, subjects, types FROM asset_meta').all();
+  const raw = { version: 2, projects: {} };
+  for (const row of rows) {
+    let subjects = {};
+    let types = {};
+    try { subjects = JSON.parse(row.subjects || '{}'); } catch { subjects = {}; }
+    try { types = JSON.parse(row.types || '{}'); } catch { types = {}; }
+    raw.projects[row.project] = { subjects, types };
+  }
+  return normalizeMeta(raw);
+}
+
+function saveMeta(data) {
+  const conn = db.open();
+  const now = Date.now();
+  const projects = (data && data.projects) || {};
+  conn.exec('BEGIN');
+  try {
+    for (const [project, row] of Object.entries(projects)) {
+      conn.prepare('INSERT INTO asset_meta(project, subjects, types, updated_at) VALUES (?,?,?,?) ON CONFLICT(project) DO UPDATE SET subjects = excluded.subjects, types = excluded.types, updated_at = excluded.updated_at')
+        .run(String(project), JSON.stringify((row && row.subjects) || {}), JSON.stringify((row && row.types) || {}), now);
+    }
+    const keep = Object.keys(projects);
+    if (keep.length) conn.prepare('DELETE FROM asset_meta WHERE project NOT IN (' + keep.map(() => '?').join(',') + ')').run(...keep);
+    else conn.prepare('DELETE FROM asset_meta').run();
+    conn.exec('COMMIT');
+  } catch (error) {
+    try { conn.exec('ROLLBACK'); } catch { /* ignore */ }
+    throw error;
+  }
 }
 
 function projectRow(data, projectId) {
@@ -83,7 +114,7 @@ function metaFor(projectId) {
 function updateMeta(projectId, mutate) {
   const data = metaData();
   mutate(projectRow(data, projectId));
-  writeJson(META_FILE, data);
+  saveMeta(data);
 }
 
 /** 迁移用：把旧（无项目）元数据整体挪到目标项目。 */
@@ -96,7 +127,7 @@ function moveProjectMeta(fromId, toId) {
   for (const [rel, subject] of Object.entries(from.subjects)) { to.subjects[rel] = subject; moved++; }
   for (const [rel, type] of Object.entries(from.types)) { to.types[rel] = type; moved++; }
   delete data.projects[String(fromId || '')];
-  writeJson(META_FILE, data);
+  saveMeta(data);
   return moved;
 }
 

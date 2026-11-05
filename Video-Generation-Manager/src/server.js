@@ -10,6 +10,7 @@ const { chromium } = require('playwright-core');
 const { Store, readJSON, saveJSON, safeSegment } = require('./store');
 const { TaskQueue } = require('./tasks');
 const {Settings}=require('./settings');
+const {Outbound}=require('./outbound');
 const { BrowserPool, findChrome } = require('./browser-pool');
 const {readPageState}=require('./adapters/page-state');
 const { createExecutor,applyOptions,selectorsFor,submitText,firstVisible } = require('./automation');
@@ -137,6 +138,7 @@ async function createService(options={}) {
   const port=Number(options.port ?? process.env.DBM_REBUILD_PORT ?? 17778);
   const store=options.store || new Store(directory);
   const settings=new Settings(directory);
+  let outbound=null;
   const defaultDownloads=path.join(directory,'downloads');fs.mkdirSync(defaultDownloads,{recursive:true});
   // 下载目录可由用户在系统管理里改；每次使用都重新解析并确保存在。
   const currentDownloads=()=>{const dir=settings.downloadsDirectory();fs.mkdirSync(dir,{recursive:true});return dir;};
@@ -298,6 +300,8 @@ async function createService(options={}) {
         if(req.method==='GET' && pathname==='/api/connection'){send(res,200,{baseURL:expected,apiToken:token,connectionFile});return;}
         if(req.method==='GET' && pathname==='/api/skills'){send(res,200,{skills:skillPacks.list()});return;}
         if(req.method==='GET' && pathname==='/api/settings'){send(res,200,settings.public());return;}
+        if(req.method==='GET' && pathname==='/api/remote/status'){send(res,200,outbound?outbound.status():{enabled:false});return;}
+        if(req.method==='POST' && pathname==='/api/remote/restart'){if(outbound)outbound.restart();send(res,200,outbound?outbound.status():{enabled:false});return;}
         // ---- v2：官方客户端调度的状态与人工操作入口 ----
         if(req.method==='GET' && pathname==='/api/v2/status'){
           const scheduler=settings.value.scheduler||{};
@@ -353,17 +357,23 @@ async function createService(options={}) {
         if(req.method==='PUT' && pathname==='/api/settings'){
           const value=settings.validate(await body(req));
           const proxyChanged=settings.proxyChanged(value);
+          const remoteBefore=JSON.stringify(settings.value.remote||{});
+          const remoteChanged=remoteBefore!==JSON.stringify(value.remote||{});
           if(proxyChanged && queue.running.size)throw new Error('请等待正在执行的任务完成后再修改代理');
           // 只有代理变化才需要重开账号浏览器；改下载目录直接生效。
           if(proxyChanged){
             queue.stopping=true;
             try{
               for(const account of store.list())await pool.closeAccount(account.id);
-              send(res,200,await settings.save(value));
+              const saved=await settings.save(value);
+              if(remoteChanged&&outbound)outbound.restart();
+              send(res,200,saved);
             }finally{if(!shuttingDown){queue.stopping=false;queue.kick();}}
             return;
           }
-          send(res,200,await settings.save(value));return;
+          const saved=await settings.save(value);
+          if(remoteChanged&&outbound)outbound.restart();
+          send(res,200,saved);return;
         }
         if(req.method==='POST' && pathname==='/api/interpreter/test'){
           const result=await interpreter.classifyDetailed({
@@ -444,7 +454,7 @@ async function createService(options={}) {
             if(queue.busy.has(account.id))throw new Error('账号正在执行任务，请先取消任务');
             await pool.closeAccount(account.id);send(res,200,store.remove(account.id));return;
           }
-          if(req.method==='POST' && accountRoute[2]==='prepare-video'){if(queue.busy.has(account.id))throw new Error('账号正在执行任务');await pool.open(account);const context=await pool.context(account);const page=context.pages().filter(p=>!p.isClosed()&&p.url().startsWith(pool.url(account).split('/chat')[0])).at(-1);const input=await body(req);if(input.prompt)await page.locator(account.selectors?.editor||'[contenteditable=true]').fill(String(input.prompt));send(res,200,await applyOptions(page,{...input,platform:account.platform},selectorsFor(account.platform,account),new AbortController().signal));return;}
+          if(req.method==='POST' && accountRoute[2]==='prepare-video'){if(queue.busy.has(account.id))throw new Error('账号正在执行任务');await pool.open(account);const context=await pool.context(account);const page=context.pages().filter(p=>!p.isClosed()&&p.url().startsWith(pool.url(account).split('/chat')[0])).at(-1);const input=await body(req);if(input.prompt)await page.locator(account.selectors?.editor||'[contenteditable=true]').fill(require('./adapters/doubao-mentions').pictureTagsToText(input.prompt));send(res,200,await applyOptions(page,{...input,platform:account.platform},selectorsFor(account.platform,account),new AbortController().signal));return;}
           if(req.method==='POST' && accountRoute[2]==='reference-draft'){
             if(queue.busy.has(account.id))throw new Error('账号正在执行任务');
             const input=await body(req);
@@ -655,6 +665,8 @@ async function createService(options={}) {
   await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(port,'127.0.0.1',resolve);});
   const baseURL='http://127.0.0.1:'+server.address().port;
   saveJSON(connectionFile,{baseURL,apiToken:token});
+  // 外联：共享部署时管理器主动连创作台，服务器不需要能访问这台机器。
+  outbound=new Outbound({settings,baseURL,token,log:(message)=>{try{console.log(message);}catch{/* 日志失败不影响任务 */}}});outbound.start();
   const wake=setInterval(()=>queue.kick(),5000);wake.unref();
   const service={server,queue,store,pool,extractor,token,baseURL,connectionFile,directory,closed,
     async openDashboard(){

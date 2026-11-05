@@ -133,6 +133,8 @@ test('外接管理器：豆包 / Gemini 视频任务跑通', { timeout: 90000 },
     assert.ok(doubao && gemini);
     assert.deepEqual(gemini.durationOptions, [10]);
     assert.deepEqual(gemini.ratios, ['16:9', '9:16']);
+    assert.deepEqual(doubao.models, ['Seedance 2.0 Mini', 'Seedance 2.0 Fast'], '创作台用这份清单做「模型名称」下拉');
+    assert.equal(gemini.models.length, 0, 'Gemini 没有模型下拉');
 
     const refPath = path.join(tmp, 'ref.png');
     fs.writeFileSync(refPath, PNG);
@@ -143,6 +145,7 @@ test('外接管理器：豆包 / Gemini 视频任务跑通', { timeout: 90000 },
       audios: [],
       duration: 10,
       aspectRatio: '16:9',
+      model: 'Seedance 2.0 Fast',
       count: 1,
     });
     assert.equal(jobRes.ok, true, JSON.stringify(jobRes));
@@ -174,6 +177,7 @@ test('外接管理器：豆包 / Gemini 视频任务跑通', { timeout: 90000 },
     assert.equal(submit.accountId, undefined, '留空账号应由管理器自动选号');
     assert.equal(submit.duration, 10);
     assert.equal(submit.ratio, '16:9');
+    assert.equal(submit.model, 'Seedance 2.0 Fast', '任务上指定的模型必须发给管理器');
     assert.deepEqual(submit.references, [refPath]);
     assert.ok(submit.prompt.includes('雪山寺庙'));
 
@@ -185,6 +189,7 @@ test('外接管理器：豆包 / Gemini 视频任务跑通', { timeout: 90000 },
       audios: [],
       duration: 10,
       aspectRatio: '9:16',
+      model: 'Seedance 2.0 Mini',
       count: 1,
     });
     assert.equal(geminiJob.ok, true, JSON.stringify(geminiJob));
@@ -227,6 +232,41 @@ test('留空账号时交给管理器自动选号，只有指定账号才钉死',
     assert.equal(manager.state.submits[2].requestId,'attempt-one');
     assert.equal(manager.state.submits[3].requestId,'attempt-two');
     assert.equal(manager.state.submits[1].accountId, 'acc-doubao', '明确指定的账号仍然钉死');
+  } finally {
+    manager.server.close();
+    await sleep(100);
+  }
+});
+
+test('模型名归一：短写法与小写都归到豆包下拉的可见文案，认不出的原样透传', () => {
+  const { normalizeModel, modelOf, MODEL_CHOICES } = require('../src/manager-video');
+  assert.deepEqual(MODEL_CHOICES, ['Seedance 2.0 Mini', 'Seedance 2.0 Fast']);
+  assert.equal(normalizeModel('Seedance 2.0 Mini'), 'Seedance 2.0 Mini');
+  assert.equal(normalizeModel('mini'), 'Seedance 2.0 Mini');
+  assert.equal(normalizeModel('Mini'), 'Seedance 2.0 Mini');
+  assert.equal(normalizeModel('seedance 2.0 mini'), 'Seedance 2.0 Mini');
+  assert.equal(normalizeModel('seedance-2.0-fast'), 'Seedance 2.0 Fast');
+  assert.equal(normalizeModel('seedance_2.0_Mini'), 'Seedance 2.0 Mini');
+  assert.equal(normalizeModel('2.0 mini'), 'Seedance 2.0 Mini');
+  assert.equal(normalizeModel('  Seedance   2.0   Fast '), 'Seedance 2.0 Fast');
+  assert.equal(normalizeModel('fast'), 'Seedance 2.0 Fast');
+  assert.equal(normalizeModel(''), '');
+  assert.equal(normalizeModel('Seedance 3.0 Pro'), 'Seedance 3.0 Pro', '未知模型不拦，交给管理器报页面错误');
+  const channel = { model: 'Seedance 2.0 Mini' };
+  assert.equal(modelOf(channel, {}, 'doubao'), 'Seedance 2.0 Mini', '任务没带就用渠道默认');
+  assert.equal(modelOf(channel, { model: 'Seedance 2.0 Fast' }, 'doubao'), 'Seedance 2.0 Fast', '任务上的优先');
+  assert.equal(modelOf(channel, { model: 'Seedance 2.0 Fast' }, 'gemini'), '', 'Gemini 页面上没有模型选项，必须留空');
+});
+
+test('画幅：任务上只有 ratio 字段时也能提交给管理器', async () => {
+  const manager = await startMockManager();
+  const { submit } = require('../src/manager-video');
+  const base = { baseUrl: `http://127.0.0.1:${MANAGER_PORT}`, apiKey: 'test-token', options: {} };
+  try {
+    await submit(base, { id: 'job-ratio', prompt: 'p', images: [], duration: 10, ratio: '9:16' }, 'doubao');
+    assert.equal(manager.state.submits.at(-1).ratio, '9:16');
+    await submit(base, { id: 'job-ratio2', prompt: 'p', images: [], duration: 10 }, 'gemini');
+    assert.equal(manager.state.submits.at(-1).ratio, '16:9', '没带画幅时按 16:9 兜底');
   } finally {
     manager.server.close();
     await sleep(100);

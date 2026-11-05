@@ -6,14 +6,26 @@ const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 const { URL } = require('node:url');
 const config = require('./config');
+const vault = require('./vault');
+const backup = require('./backup');
 const workflows = require('./workflows');
 const providers = require('./providers');
 const prompts = require('./prompts');
 const seedance = require('./seedance');
 const library = require('./library');
 const assetLayout = require('./asset-layout');
+const imageHistory = require('./image-history');
 const auth = require('./auth');
+const userPrefs = require('./user-prefs');
+const accessCodes = require('./access-codes');
+const tenants = require('./tenants');
+const tenantContext = require('./tenant-context');
+const tenantScope = require('./tenant-scope');
+const quotas = require('./quotas');
+const audit = require('./audit');
 const internalAuth = require('./internal-auth');
+const executorChannel = require('./executor-channel');
+const executorTransport = require('./executor-transport');
 const projects = require('./projects');
 const workspace = require('./workspace');
 const workspaceMigrate = require('./workspace-migrate');
@@ -25,6 +37,8 @@ const taskImport = require('./task-import');
 const probe = require('./probe');
 const channels = require('./channels');
 const imagegen = require('./imagegen');
+const fileAliases = require('./file-aliases');
+const projectPaths = require('./project-paths');
 const imageTasks = require('./image-tasks');
 const genericVideo = require('./generic-video');
 const tts = require('./tts');
@@ -122,20 +136,49 @@ async function readBody(req, limit = 120 * 1024 * 1024) {
   });
 }
 
-function allowedRoots() {
+/** 裸字节请求体：执行端回传成片走这里，不做 JSON 解析。 */
+async function readRawBody(req, limit = 512 * 1024 * 1024) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    req.on('data', (chunk) => {
+      size += chunk.length;
+      if (size > limit) {
+        reject(new Error('请求体过大'));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
+}
+
+/**
+ * 可访问的文件根。传租户时只放行该租户的项目目录：
+ * 未归档目录（老的 assets/media/uploads）是全局的，只给默认租户；
+ * 其它租户只在自己的项目目录和 data/tenants/<id> 下活动。
+ */
+function allowedRoots(tenantId) {
   const cfg = config.load();
-  const roots = [cfg.saveFolder, cfg.assetFolder, cfg.uploadFolder, path.join(cfg.dataDir, 'frames'), path.join(cfg.dataDir, 'ref-images')];
+  const roots = [];
+  if (!tenantId || tenantId === tenants.DEFAULT_TENANT) {
+    roots.push(cfg.saveFolder, cfg.assetFolder, cfg.uploadFolder, path.join(cfg.dataDir, 'frames'), path.join(cfg.dataDir, 'ref-images'));
+  } else {
+    roots.push(path.join(cfg.dataDir, 'tenants', tenantId));
+  }
   try {
-    for (const project of projects.list()) {
+    for (const project of projects.list(tenantId || undefined)) {
       try { roots.push(workspace.pathsFor(project).dir); } catch { /* 单个项目目录异常不影响其它路径 */ }
     }
   } catch { /* ignore */ }
   return roots.map((p) => path.resolve(p));
 }
 
-function isAllowed(file) {
+function isAllowed(file, tenantId) {
   const abs = path.resolve(String(file));
-  return allowedRoots().some((root) => abs === root || abs.startsWith(root + path.sep));
+  return allowedRoots(tenantId).some((root) => abs === root || abs.startsWith(root + path.sep));
 }
 
 function serveFile(req, res, file, { download = false } = {}) {
@@ -434,7 +477,16 @@ function proxyAgent(req, res, pathname, search) {
   res.on('close', () => { try { upstream.destroy(); } catch { /* ignore */ } });
 }
 
-async function route(req, res) {
+function clientIp(req) {
+  return String((req.socket && req.socket.remoteAddress) || '').replace(/^::ffff:/, '');
+}
+
+function route(req, res) {
+  // 每个请求一个独立的租户上下文，避免 keep-alive 连接上的请求互相继承租户。
+  return tenantContext.run('', () => handle(req, res));
+}
+
+async function handle(req, res) {
   const url = new URL(req.url, 'http://127.0.0.1');
   const pathname = decodeURIComponent(url.pathname);
   const method = req.method.toUpperCase();
@@ -460,19 +512,180 @@ async function route(req, res) {
 
   let currentUser = null;
   const token = auth.tokenFromRequest(req);
-  const PUBLIC_API = new Set(['/api/health', '/api/web-version', '/api/auth/me', '/api/auth/login', '/api/auth/register', '/api/auth/logout']);
+  const PUBLIC_API = new Set(['/api/health', '/api/web-version', '/api/auth/me', '/api/auth/login', '/api/auth/register', '/api/auth/logout',
+    '/api/auth/accept-invite', '/api/auth/reset-password',
+    // 执行端通道自己校验令牌：管理器是无人值守进程，没有浏览器会话。
+    '/api/executor/poll', '/api/executor/reply', '/api/executor/blob']);
+  // 邀请/重置码的说明接口要在注册页展示，未登录也能读；只返回租户名/角色/过期时间。
+  const publicCodePath = /^\/api\/(invites|resets)\/[^/]+$/.test(pathname);
   const internalCall = internalAuth.authorized(req);
-  if (auth.enabled() && pathname.startsWith('/api') && !PUBLIC_API.has(pathname) && !internalCall) {
+  if (auth.enabled() && pathname.startsWith('/api') && !PUBLIC_API.has(pathname) && !publicCodePath && !internalCall) {
     currentUser = auth.userByToken(token);
     if (!currentUser) return json(res, 401, { ok: false, error: '请先登录', auth: true });
   }
-  // 当前项目：所有素材、媒体、任务查询都默认带上这个条件，避免跨项目串数据。
-  let activeProject = null;
-  try { activeProject = currentUser && currentUser.activeProjectId ? projects.get(currentUser.activeProjectId) : null; } catch { activeProject = null; }
-  const projectId = activeProject ? activeProject.id : '';
-  const scoped = (value) => value || projectId;
+  // 租户上下文：项目、任务、素材、文件都只在当前租户里找。
+  // 没有登录体系（本机未注册）时落到默认租户，行为和以前一致。
+  const tenantId = currentUser ? (currentUser.tenantId || tenants.DEFAULT_TENANT) : tenants.DEFAULT_TENANT;
+  const role = currentUser ? (currentUser.role || (currentUser.isAdmin ? 'owner' : 'member')) : 'owner';
+  const canManage = !currentUser || Boolean(currentUser.isAdmin) || role === 'owner' || role === 'admin';
+  // 配置里的渠道/密钥/提示词按租户隔离；后续所有 config.load()/channels.* 都读这个租户。
+  tenantContext.enter(tenantId);
+  /** 平台默认 ui + 当前用户自己的界面偏好。 */
+  const configView = () => {
+    const view = config.publicView();
+    if (currentUser) view.ui = userPrefs.view(view.ui, currentUser.id);
+    return view;
+  };
 
-  if (await workbenchRoutes(req,res,url,{ok,readBody,mediaPath:(input)=>{const abs=mediaPath(input);if(!isAllowed(abs)||!allowedRoots().some(root=>{try{const rel=path.relative(fs.realpathSync(root),fs.realpathSync(abs));return rel===''||(!rel.startsWith('..'+path.sep)&&rel!=='..'&&!path.isAbsolute(rel));}catch{return false;}}))throw Error("文件不在素材目录内");return abs;}})) return;
+  /** 项目必须属于当前租户；别的租户的项目一律当作不存在，不泄露存在性。 */
+  const assertProject = (id) => {
+    const key = String(id || '');
+    const project = key ? projects.get(key) : null;
+    if (!project || (project.tenantId || tenants.DEFAULT_TENANT) !== tenantId) {
+      const error = new Error('项目不存在');
+      error.status = 404;
+      throw error;
+    }
+    return project;
+  };
+  let activeProject = null;
+  try { activeProject = currentUser && currentUser.activeProjectId ? assertProject(currentUser.activeProjectId) : null; } catch { activeProject = null; }
+  const projectId = activeProject ? activeProject.id : '';
+  // 客户端传来的 projectId 不可信：先查归属再放行；空值表示“未归档”。
+  // 'default' / 'unassigned' 是旧的“未归档”桶名，不能当成真实项目去查，否则新账号首屏就 404。
+  const scoped = (value) => {
+    const raw = String(value || '').trim();
+    const id = (raw === 'default' || raw === 'unassigned') ? projectId : (raw || projectId);
+    if (!id) return '';
+    assertProject(id);
+    return id;
+  };
+  // 未归档的数据（没有项目的历史任务、素材）只给默认租户看，避免跨租户串。
+  const unassignedVisible = () => tenantId === tenants.DEFAULT_TENANT;
+  let tenantProjectIdsCache = null;
+  const tenantProjectIds = () => {
+    if (!tenantProjectIdsCache) tenantProjectIdsCache = new Set(projects.list(tenantId).map((item) => item.id));
+    return tenantProjectIdsCache;
+  };
+  /** 这条记录（任务/事件）属于当前租户吗。 */
+  const inTenant = (pid) => {
+    const key = String(pid || '');
+    if (!key || key === 'unassigned' || key === 'default') return unassignedVisible();
+    return tenantProjectIds().has(key);
+  };
+
+  /* ------------------------- 执行端通道（用户本机管理器） ------------------------- */
+  // 管理器主动长轮询取命令、本地执行、再回传结果；服务器不需要能访问用户的内网。
+  const channelToken = url.searchParams.get('token') || req.headers['x-executor-token'] || '';
+  if (pathname === '/api/executor/poll' && method === 'GET') {
+    try {
+      const waitParam = url.searchParams.get('wait');
+      const result = await executorChannel.poll(channelToken, {
+        // 显式 wait=0 表示立即返回；只有没传时才用默认长轮询。
+        waitMs: waitParam === null || waitParam === '' ? 25000 : Number(waitParam),
+        name: url.searchParams.get('name') || '',
+        version: url.searchParams.get('version') || '',
+      });
+      return json(res, 200, result);
+    } catch (error) {
+      return json(res, 401, { ok: false, error: error.message });
+    }
+  }
+  if (pathname === '/api/executor/reply' && method === 'POST') {
+    if (!executorChannel.authenticate(channelToken)) return json(res, 401, { ok: false, error: '通道令牌无效或已失效' });
+    const payload = await readBody(req).catch(() => null);
+    if (!payload || !payload.id) return bad(res, '缺少命令 id', 400);
+    return json(res, 200, { ok: true, settled: executorChannel.settle(channelToken, payload) });
+  }
+  if (pathname === '/api/executor/blob' && method === 'POST') {
+    if (!executorChannel.authenticate(channelToken)) return json(res, 401, { ok: false, error: '通道令牌无效或已失效' });
+    const id = String(url.searchParams.get('id') || '');
+    if (!/^[A-Za-z0-9-]{8,64}$/.test(id)) return bad(res, '缺少命令 id', 400);
+    const raw = await readRawBody(req);
+    const file = executorChannel.saveBlob(id, raw);
+    return json(res, 200, { ok: true, bytes: raw.length, blob: path.basename(file, '.bin') });
+  }
+  if (method === 'GET' && pathname === '/api/executor/status') {
+    if (!currentUser) return json(res, 401, { ok: false, error: '请先登录', auth: true });
+    const info = executorChannel.status(currentUser.id);
+    const channel = (config.load().channels.video || []).find((c) => c.type === 'manager-video' && c.enabled !== false) || null;
+    return ok(res, {
+      ...info,
+      channel: channel ? { id: channel.id, name: channel.name || '', remote: Boolean(channel.executorToken), baseUrl: channel.baseUrl || '', activeId: channel.executorToken ? executorChannel.tokenId(channel.executorToken) : '' } : null,
+    });
+  }
+  if (method === 'POST' && pathname === '/api/executor/probe') {
+    if (!currentUser) return json(res, 401, { ok: false, error: '请先登录', auth: true });
+    const body = await readBody(req).catch(() => ({}));
+    const rows = executorChannel.tokensForUser(currentUser.id);
+    const probeToken = String(body.token || '') || (rows[0] && rows[0].token) || '';
+    if (!probeToken) return bad(res, '还没有配对：先在管理器里生成配对令牌', 400);
+    // 指定路径时只回报状态和字节数，不把内容带回浏览器——用来验证通道和大文件回传。
+    const probePath = String(body.path || '').trim();
+    if (probePath) {
+      if (!/^\/api\/[A-Za-z0-9_\/?=&.%+-]+$/.test(probePath)) return bad(res, '探测路径无效', 400);
+      try {
+        const started = Date.now();
+        const out = await executorTransport.requestJson({ executorToken: probeToken }, probePath, { timeoutMs: 180000 });
+        return ok(res, { ok: out.ok, status: out.status, bytes: out.blobBytes || (out.text ? Buffer.byteLength(out.text) : 0), ms: Date.now() - started });
+      } catch (error) {
+        return ok(res, { ok: false, message: error.message });
+      }
+    }
+    try {
+      const started = Date.now();
+      const stateRes = await executorTransport.requestJson({ executorToken: probeToken }, '/api/state', { timeoutMs: 30000 });
+      const data = stateRes.data || {};
+      const accounts = Array.isArray(data.accounts) ? data.accounts : [];
+      return ok(res, {
+        ok: true,
+        ms: Date.now() - started,
+        accounts: accounts.length,
+        doubao: accounts.filter((a) => a.platform === 'doubao').length,
+        gemini: accounts.filter((a) => a.platform === 'gemini').length,
+        tasks: Array.isArray(data.tasks) ? data.tasks.length : 0,
+      });
+    } catch (error) {
+      return ok(res, { ok: false, message: error.message });
+    }
+  }
+  if (method === 'POST' && pathname === '/api/executor/pair') {
+    if (!currentUser) return json(res, 401, { ok: false, error: '请先登录', auth: true });
+    const body = await readBody(req).catch(() => ({}));
+    const issued = executorChannel.issue(currentUser.id, { name: String(body.name || os.hostname() || ''), replace: body.replace === true });
+    audit.record({ action: 'executor.pair', tenantId, userId: currentUser.id, target: issued.id, detail: issued.name, ip: clientIp(req) });
+    return ok(res, issued);
+  }
+  if (method === 'POST' && pathname === '/api/executor/active') {
+    if (!currentUser) return json(res, 401, { ok: false, error: '请先登录', auth: true });
+    if (!canManage) return bad(res, '只有租户负责人/管理员可以切换任务通道', 403);
+    const body = await readBody(req).catch(() => ({}));
+    const rows = executorChannel.tokensForUser(currentUser.id);
+    const hit = rows.find((row) => executorChannel.tokenId(row.token) === String(body.id || ''))
+      || (body.token ? rows.find((row) => row.token === String(body.token)) : null);
+    if (!hit) return bad(res, '没有找到这条配对', 404);
+    const cfg = config.load();
+    const channel = (cfg.channels.video || []).find((c) => c.type === 'manager-video' && c.enabled !== false);
+    if (!channel) return bad(res, '请先在「视频生成」里添加并启用管理器渠道', 400);
+    channel.executorToken = hit.token;
+    config.save({ channels: cfg.channels });
+    audit.record({ action: 'executor.active', tenantId, userId: currentUser.id, target: executorChannel.tokenId(hit.token), detail: channel.name || channel.id, ip: clientIp(req) });
+    return ok(res, { id: executorChannel.tokenId(hit.token), channelId: channel.id });
+  }
+  if (method === 'DELETE' && pathname === '/api/executor/pair') {
+    if (!currentUser) return json(res, 401, { ok: false, error: '请先登录', auth: true });
+    const body = await readBody(req).catch(() => ({}));
+    const removed = executorChannel.revokeForUser(currentUser.id, { id: body.id, token: body.token });
+    if (!removed) return bad(res, '没有找到这条配对', 404);
+    audit.record({ action: 'executor.revoke', tenantId, userId: currentUser.id, target: String(body.id || ''), ip: clientIp(req) });
+    return ok(res, true);
+  }
+
+  // 未归档桶：默认租户沿用老的 'default'，其它租户各用各的，避免互相看见
+  const unassignedKey = () => (tenantId === tenants.DEFAULT_TENANT ? 'default' : 'unassigned:' + tenantId);
+  const scopeKey = (value) => scoped(value) || unassignedKey();
+
+  if (await workbenchRoutes(req,res,url,{ok,readBody,scope:scopeKey,mediaPath:(input)=>{const abs=mediaPath(input);if(!isAllowed(abs, tenantId)||!allowedRoots(tenantId).some(root=>{try{const rel=path.relative(fs.realpathSync(root),fs.realpathSync(abs));return rel===''||(!rel.startsWith('..'+path.sep)&&rel!=='..'&&!path.isAbsolute(rel));}catch{return false;}}))throw Error("文件不在素材目录内");return abs;}})) return;
   if (await creativeRoutes(req, res, url, {ok, bad, readBody, mediaPath, imageDataUrl, user:currentUser})) return;
 
   if (method === 'GET' && pathname === '/api/auth/me') {
@@ -482,7 +695,9 @@ async function route(req, res) {
 
   if (method === 'POST' && pathname === '/api/auth/register') {
     const body = await readBody(req);
-    const user = auth.register(body.username, body.password);
+    // 首个用户建默认租户；之后要管理员创建，或者开启 signup.open 自助开新租户
+    const user = auth.register(body.username, body.password, { tenantName: body.tenantName });
+    audit.record({ action: 'auth.register', tenantId: user.tenantId, userId: user.id, detail: user.username, ip: clientIp(req) });
     const session = auth.login(body.username, body.password);
     res.setHeader('Set-Cookie', 'wmd_session=' + encodeURIComponent(session.token) + '; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000');
     return ok(res, { user, enabled: true });
@@ -490,13 +705,23 @@ async function route(req, res) {
 
   if (method === 'POST' && pathname === '/api/auth/login') {
     const body = await readBody(req);
-    const session = auth.login(body.username, body.password);
+    let session;
+    try {
+      session = auth.login(body.username, body.password);
+    } catch (error) {
+      // 只记用户名和来源，不记密码。
+      audit.record({ action: 'auth.login.failed', detail: String(body.username || '').slice(0, 64), ip: clientIp(req) });
+      throw error;
+    }
+    audit.record({ action: 'auth.login', tenantId: session.user.tenantId, userId: session.user.id, detail: session.user.username, ip: clientIp(req) });
     res.setHeader('Set-Cookie', 'wmd_session=' + encodeURIComponent(session.token) + '; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000');
     return ok(res, { user: session.user, enabled: true });
   }
 
   if (method === 'POST' && pathname === '/api/auth/logout') {
+    const logoutUser = auth.userByToken(token);
     auth.logout(token);
+    if (logoutUser) audit.record({ action: 'auth.logout', tenantId: logoutUser.tenantId, userId: logoutUser.id, ip: clientIp(req) });
     res.setHeader('Set-Cookie', 'wmd_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0');
     return ok(res, true);
   }
@@ -504,8 +729,222 @@ async function route(req, res) {
   if (method === 'POST' && pathname === '/api/auth/project') {
     if (!currentUser) return json(res, 401, { ok: false, error: '请先登录', auth: true });
     const body = await readBody(req);
-    auth.setActiveProject(currentUser.id, body.projectId);
+    // 只能切到自己租户里的项目
+    auth.setActiveProject(currentUser.id, body.projectId ? assertProject(body.projectId).id : '');
     return ok(res, true);
+  }
+
+  /* ------------------------- 邀请 / 密码重置（一次性码） ------------------------- */
+  if (method === 'POST' && pathname === '/api/auth/accept-invite') {
+    const body = await readBody(req);
+    const code = String(body.code || '').trim();
+    const invite = accessCodes.peek(code, 'invite');
+    if (!invite) return bad(res, '邀请链接无效或已过期', 400);
+    quotas.assertUsers(invite.tenantId);
+    const created = auth.register(body.username, body.password, { asAdmin: true, tenantId: invite.tenantId, role: invite.role });
+    if (!accessCodes.consume(code, 'invite')) {
+      // 极端并发：码刚被用掉。把刚创建的用户删掉，避免留下没有邀请来源的账号。
+      try { auth.removeUser(created.id); } catch { /* 没有项目，正常能删 */ }
+      return bad(res, '邀请链接已被使用', 400);
+    }
+    const session = auth.login(body.username, body.password);
+    res.setHeader('Set-Cookie', 'wmd_session=' + encodeURIComponent(session.token) + '; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000');
+    audit.record({ action: 'invite.accept', tenantId: invite.tenantId, userId: created.id, detail: created.username + ' / ' + created.role, ip: clientIp(req) });
+    return ok(res, { user: created, enabled: true });
+  }
+
+  if (method === 'POST' && pathname === '/api/auth/reset-password') {
+    const body = await readBody(req);
+    const code = String(body.code || '').trim();
+    const reset = accessCodes.peek(code, 'reset');
+    if (!reset) return bad(res, '重置链接无效或已过期', 400);
+    if (String(body.password || '').length < 6) return bad(res, '密码至少 6 位', 400);
+    const user = auth.findById(reset.userId);
+    if (!user) return bad(res, '用户不存在', 400);
+    if (!accessCodes.consume(code, 'reset')) return bad(res, '重置链接已被使用', 400);
+    auth.updateUser(user.id, { password: body.password });
+    audit.record({ action: 'auth.password.reset', tenantId: user.tenantId, userId: user.id, detail: user.username, ip: clientIp(req) });
+    return ok(res, true);
+  }
+
+  if (method === 'POST' && pathname === '/api/auth/change-password') {
+    if (!currentUser) return json(res, 401, { ok: false, error: '请先登录', auth: true });
+    const body = await readBody(req);
+    auth.changePassword(currentUser.id, body.oldPassword, body.newPassword);
+    // 改密会让旧会话失效，这里直接给当前浏览器换一个新会话。
+    const session = auth.login(currentUser.username, body.newPassword);
+    res.setHeader('Set-Cookie', 'wmd_session=' + encodeURIComponent(session.token) + '; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000');
+    audit.record({ action: 'auth.password.change', tenantId, userId: currentUser.id, detail: currentUser.username, ip: clientIp(req) });
+    return ok(res, true);
+  }
+
+  const inviteInfoRoute = /^\/api\/invites\/([^/]+)$/.exec(pathname);
+  if (inviteInfoRoute && method === 'GET') {
+    const invite = accessCodes.peek(inviteInfoRoute[1], 'invite');
+    if (!invite) return bad(res, '邀请链接无效或已过期', 404);
+    const tenant = tenants.get(invite.tenantId);
+    return ok(res, { tenantName: tenant ? tenant.name : '', role: invite.role, expiresAt: invite.expiresAt });
+  }
+
+  const resetInfoRoute = /^\/api\/resets\/([^/]+)$/.exec(pathname);
+  if (resetInfoRoute && method === 'GET') {
+    const reset = accessCodes.peek(resetInfoRoute[1], 'reset');
+    if (!reset) return bad(res, '重置链接无效或已过期', 404);
+    const user = auth.findById(reset.userId);
+    if (!user) return bad(res, '重置链接无效或已过期', 404);
+    return ok(res, { username: user.username, expiresAt: reset.expiresAt });
+  }
+
+  if (method === 'POST' && pathname === '/api/invites') {
+    if (!currentUser) return json(res, 401, { ok: false, error: '请先登录', auth: true });
+    if (!canManage) return bad(res, '只有租户负责人/管理员可以邀请成员', 403);
+    const body = await readBody(req);
+    const role = ['owner', 'admin', 'member'].includes(body.role) ? body.role : 'member';
+    if (role === 'owner' && !(currentUser.isAdmin || currentUser.role === 'owner')) return bad(res, '只有负责人可以邀请负责人', 403);
+    const targetTenant = currentUser.isAdmin && body.tenantId ? String(body.tenantId) : tenantId;
+    if (!currentUser.isAdmin && targetTenant !== tenantId) return bad(res, '不能邀请到其它租户', 403);
+    if (!tenants.get(targetTenant)) return bad(res, '租户不存在', 404);
+    const hours = Math.max(1, Math.min(168, Number(body.expiresInHours) || 72));
+    const created = accessCodes.createInvite({ tenantId: targetTenant, role, createdBy: currentUser.id, ttlMs: hours * 3600 * 1000 });
+    audit.record({ action: 'invite.create', tenantId: targetTenant, userId: currentUser.id, target: role, detail: 'expires=' + created.expiresAt, ip: clientIp(req) });
+    return ok(res, { code: created.code, url: '/?invite=' + encodeURIComponent(created.code), role, tenantId: targetTenant, expiresAt: created.expiresAt });
+  }
+
+  const resetTokenRoute = /^\/api\/users\/([^/]+)\/reset-token$/.exec(pathname);
+  if (resetTokenRoute && method === 'POST') {
+    if (!currentUser || !canManage) return bad(res, '没有权限重置密码', 403);
+    const target = auth.findById(resetTokenRoute[1]);
+    if (!target) return bad(res, '用户不存在', 404);
+    if (!currentUser.isAdmin && target.tenantId !== tenantId) return bad(res, '用户不存在', 404);
+    if (target.isAdmin) return bad(res, '平台管理员请使用自己的改密流程', 400);
+    const created = accessCodes.createReset({ userId: target.id, tenantId: target.tenantId, createdBy: currentUser.id });
+    audit.record({ action: 'user.reset.token', tenantId: target.tenantId, userId: currentUser.id, target: target.id, detail: target.username, ip: clientIp(req) });
+    return ok(res, { code: created.code, url: '/?reset=' + encodeURIComponent(created.code), username: target.username, expiresAt: created.expiresAt });
+  }
+
+  /* --------------------------- 租户与成员管理 --------------------------- */
+  if (method === 'GET' && pathname === '/api/tenants') {
+    if (!currentUser) return json(res, 401, { ok: false, error: '请先登录', auth: true });
+    const list = currentUser.isAdmin ? tenants.list() : [tenants.get(tenantId)].filter(Boolean);
+    return ok(res, list.map((row) => ({ ...tenants.publicTenant(row), members: auth.members(row.id).length })));
+  }
+
+  if (method === 'POST' && pathname === '/api/tenants') {
+    if (!currentUser || !currentUser.isAdmin) return bad(res, '只有平台管理员可以创建租户', 403);
+    const body = await readBody(req);
+    const created = tenants.create(body.name);
+    audit.record({ action: 'tenant.create', tenantId: created.id, userId: currentUser.id, target: created.id, detail: created.name, ip: clientIp(req) });
+    return ok(res, tenants.publicTenant(created));
+  }
+
+  const tenantRoute = /^\/api\/tenants\/([^/]+)$/.exec(pathname);
+  if (tenantRoute) {
+    if (!currentUser || !currentUser.isAdmin) return bad(res, '只有平台管理员可以管理租户', 403);
+    const id = tenantRoute[1];
+    if (method === 'PUT') {
+      const renamed = tenants.rename(id, (await readBody(req)).name);
+      audit.record({ action: 'tenant.rename', tenantId: id, userId: currentUser.id, target: id, detail: renamed.name, ip: clientIp(req) });
+      return ok(res, tenants.publicTenant(renamed));
+    }
+    if (method === 'DELETE') {
+      if (auth.members(id).length) return bad(res, '租户里还有用户，先移走或删除用户', 400);
+      const removed = tenants.remove(id);
+      audit.record({ action: 'tenant.delete', tenantId: id, userId: currentUser.id, target: id, ip: clientIp(req) });
+      return ok(res, removed);
+    }
+  }
+
+  // 配额：成员可查看自己租户，平台管理员可查看/修改任意租户。
+  const quotaRoute = /^\/api\/tenants\/([^/]+)\/quota$/.exec(pathname);
+  if (quotaRoute) {
+    if (!currentUser) return json(res, 401, { ok: false, error: '请先登录', auth: true });
+    const id = quotaRoute[1];
+    if (!tenants.get(id)) return bad(res, '租户不存在', 404);
+    if (!currentUser.isAdmin && id !== tenantId) return bad(res, '租户不存在', 404);
+    if (method === 'GET') return ok(res, { quota: quotas.get(id), usage: quotas.usage(id) });
+    if (method === 'PUT') {
+      if (!currentUser.isAdmin) return bad(res, '只有平台管理员可以修改配额', 403);
+      const next = quotas.set(id, await readBody(req));
+      audit.record({ action: 'quota.update', tenantId: id, userId: currentUser.id, target: id, detail: JSON.stringify(next), ip: clientIp(req) });
+      return ok(res, { quota: next, usage: quotas.usage(id) });
+    }
+  }
+
+  // 审计：平台管理员看全部（可按租户过滤），租户负责人/管理员只看本租户。
+  if (method === 'GET' && pathname === '/api/audit') {
+    if (!currentUser) return json(res, 401, { ok: false, error: '请先登录', auth: true });
+    if (!currentUser.isAdmin && !['owner', 'admin'].includes(role)) return bad(res, '没有权限查看审计日志', 403);
+    const requested = String(url.searchParams.get('tenantId') || '');
+    if (!currentUser.isAdmin && requested && requested !== tenantId) return bad(res, '租户不存在', 404);
+    const tenantFilter = currentUser.isAdmin ? requested : tenantId;
+    return ok(res, {
+      items: audit.list({ tenantId: tenantFilter, limit: Number(url.searchParams.get('limit')) || 100, offset: Number(url.searchParams.get('offset')) || 0 }),
+      total: audit.count(tenantFilter),
+      integrity: audit.verify(tenantFilter),
+    });
+  }
+
+  if (method === 'GET' && pathname === '/api/audit/export') {
+    if (!currentUser) return json(res, 401, { ok: false, error: '请先登录', auth: true });
+    if (!currentUser.isAdmin && !['owner', 'admin'].includes(role)) return bad(res, '没有权限导出审计日志', 403);
+    const requested = String(url.searchParams.get('tenantId') || '');
+    if (!currentUser.isAdmin && requested && requested !== tenantId) return bad(res, '租户不存在', 404);
+    const tenantFilter = currentUser.isAdmin ? requested : tenantId;
+    const format = String(url.searchParams.get('format') || 'csv').toLowerCase() === 'json' ? 'json' : 'csv';
+    const out = audit.exportPayload({ tenantId: tenantFilter, format });
+    const name = `audit-${tenantFilter || 'all'}-${new Date().toISOString().slice(0, 10)}.${format}`;
+    res.writeHead(200, {
+      'Content-Type': out.contentType,
+      'Content-Disposition': `attachment; filename="${name}"`,
+      'Cache-Control': 'no-store',
+    });
+    res.end(out.body);
+    audit.record({ action: 'audit.export', tenantId: tenantFilter || tenantId, userId: currentUser.id, detail: `${format} rows=${out.rows}`, ip: clientIp(req) });
+    return;
+  }
+
+  if (method === 'GET' && pathname === '/api/users') {
+    if (!currentUser) return json(res, 401, { ok: false, error: '请先登录', auth: true });
+    // 平台管理员看全部；其他人只看自己租户
+    const list = currentUser.isAdmin ? auth.users().map(auth.publicUser) : auth.members(tenantId);
+    return ok(res, list);
+  }
+
+  if (method === 'POST' && pathname === '/api/users') {
+    if (!currentUser || !canManage) return bad(res, '没有权限创建用户', 403);
+    const body = await readBody(req);
+    const targetTenant = String(body.tenantId || tenantId);
+    if (!currentUser.isAdmin && targetTenant !== tenantId) return bad(res, '不能给其它租户创建用户', 403);
+    quotas.assertUsers(targetTenant);
+    const created = auth.register(body.username, body.password, { asAdmin: true, tenantId: targetTenant, role: body.role });
+    audit.record({ action: 'user.create', tenantId: targetTenant, userId: currentUser.id, target: created.id, detail: created.username + ' / ' + created.role, ip: clientIp(req) });
+    return ok(res, created);
+  }
+
+  const memberRoute = /^\/api\/users\/([^/]+)$/.exec(pathname);
+  if (memberRoute) {
+    if (!currentUser || !canManage) return bad(res, '没有权限管理用户', 403);
+    const target = auth.findById(memberRoute[1]);
+    if (!target) return bad(res, '用户不存在', 404);
+    if (!currentUser.isAdmin && target.tenantId !== tenantId) return bad(res, '用户不存在', 404);
+    if (method === 'PATCH' || method === 'PUT') {
+      const body = await readBody(req);
+      const patch = { role: body.role, password: body.password };
+      if (target.isAdmin && body.role && body.role !== 'owner') return bad(res, '平台管理员的角色不能降级', 400);
+      const updated = auth.updateUser(target.id, patch);
+      audit.record({
+        action: 'user.update', tenantId: target.tenantId, userId: currentUser.id, target: target.id,
+        detail: [body.role ? 'role=' + body.role : '', body.password ? 'password-reset' : ''].filter(Boolean).join(' '),
+        ip: clientIp(req),
+      });
+      return ok(res, updated);
+    }
+    if (method === 'DELETE') {
+      if (target.id === currentUser.id) return bad(res, '不能删除自己', 400);
+      const removed = auth.removeUser(target.id);
+      audit.record({ action: 'user.delete', tenantId: target.tenantId, userId: currentUser.id, target: target.id, detail: target.username, ip: clientIp(req) });
+      return ok(res, removed);
+    }
   }
 
   if (method === 'GET' && pathname === '/api/styles') {
@@ -535,25 +974,36 @@ async function route(req, res) {
   }
 
   if (method === 'GET' && pathname === '/api/projects') {
-    return ok(res, projects.list().map((p) => projects.publicProject(p)));
+    // 只返回当前租户的项目
+    return ok(res, projects.list(tenantId).map((p) => projects.publicProject(p)));
   }
 
   if (method === 'POST' && pathname === '/api/projects') {
     const body = await readBody(req);
-    const project = projects.create(body);
+    quotas.assertProjects(tenantId);
+    const project = projects.create({ ...body, tenantId, ownerUserId: (currentUser && currentUser.id) || '' });
     if (currentUser) auth.setActiveProject(currentUser.id, project.id);
+    audit.record({ action: 'project.create', tenantId, userId: currentUser && currentUser.id, target: project.id, detail: project.name, ip: clientIp(req) });
     return ok(res, projects.publicProject(project));
   }
 
   const projectRoute = /^\/api\/projects\/([^/]+)$/.exec(pathname);
   if (projectRoute) {
     const id = projectRoute[1];
+    if (method === 'GET') {
+      return ok(res, projects.publicProject(assertProject(id)));
+    }
     if (method === 'PUT') {
+      assertProject(id);
       const body = await readBody(req);
-      return ok(res, projects.publicProject(projects.update(id, body)));
+      const updated = projects.update(id, { ...body, tenantId, ownerUserId: body.ownerUserId });
+      audit.record({ action: 'project.update', tenantId, userId: currentUser && currentUser.id, target: id, detail: updated.name, ip: clientIp(req) });
+      return ok(res, projects.publicProject(updated));
     }
     if (method === 'DELETE') {
+      const project = assertProject(id);
       projects.remove(id);
+      audit.record({ action: 'project.delete', tenantId, userId: currentUser && currentUser.id, target: id, detail: project.name, ip: clientIp(req) });
       return ok(res, true);
     }
   }
@@ -583,7 +1033,13 @@ async function route(req, res) {
   }
 
   if (pathname.startsWith('/api/agent')) {
-    if (!req.headers['x-project-id'] && projectId) req.headers['x-project-id'] = projectId;
+    // 客户端自带的 x-project-id 不可信：只认当前租户里的项目，认不出就用当前项目。
+    const asked = String(req.headers['x-project-id'] || '').trim();
+    let agentProject = projectId || AGENT_PROJECT;
+    if (asked) {
+      try { agentProject = assertProject(asked).id; } catch { agentProject = projectId || AGENT_PROJECT; }
+    }
+    req.headers['x-project-id'] = agentProject;
     return proxyAgent(req, res, pathname, url.search);
   }
 
@@ -637,7 +1093,7 @@ async function controlService(name, action) {
       if (!fs.existsSync(PYTHON)) throw new Error('找不到 Python：' + PYTHON);
       const child = spawn(PYTHON, ['-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', '17820'], {
         cwd: AGENT_DIR,
-        env: { ...process.env, AGENT_SETTINGS_PATH: path.join(AGENT_DIR, 'data', 'agent_settings.json'), HARNESS_AUTH_MODE: 'development', WMD_BASE_URL: 'http://127.0.0.1:17821' },
+        env: { ...process.env, AGENT_SETTINGS_PATH: path.join(AGENT_DIR, 'data', 'agent_settings.json'), HARNESS_AUTH_MODE: process.env.HARNESS_AUTH_MODE || 'controller', WMD_BASE_URL: 'http://127.0.0.1:17821' },
         detached: true, stdio: 'ignore', windowsHide: true,
       });
       child.unref();
@@ -684,6 +1140,16 @@ async function controlService(name, action) {
     }
   }
 
+  // 智能体后端复核项目归属：内部凭据 + 本机来源；不按当前租户过滤，
+  // 因为智能体是替任意租户的项目服务的，租户隔离由创作台代理层完成。
+  const internalProjectRoute = /^\/api\/internal\/projects\/([^/]+)$/.exec(pathname);
+  if (method === 'GET' && internalProjectRoute) {
+    if (!internalCall) return bad(res, 'forbidden', 403);
+    const project = projects.get(internalProjectRoute[1]);
+    if (!project) return bad(res, '项目不存在', 404);
+    return ok(res, { id: project.id, tenantId: project.tenantId || tenants.DEFAULT_TENANT });
+  }
+
   if (method === 'GET' && pathname === '/api/health') return ok(res, { status: 'ok', name: 'creation-studio', uptime: process.uptime(), activeImageTasks:imageTasks.tasks().activeCount() });
 
   // 前端资源指纹：页面开着很久时用它发现「服务器已经换了新版本」，提示刷新，避免看到旧样式
@@ -695,20 +1161,22 @@ async function controlService(name, action) {
     return ok(res, { version: parts.join('-') });
   }
 
+  // 没有选中项目时，工作台状态按租户分开存，不能用全局的 default 桶
+  const studioKey = (value) => scoped(value) || unassignedKey();
+
   if (method === 'GET' && pathname === '/api/studio/state') {
-    const q = new URL(req.url, 'http://127.0.0.1');
-    return ok(res, studioStore.get(q.searchParams.get('projectId') || 'default'));
+    return ok(res, studioStore.get(studioKey(url.searchParams.get('projectId'))));
   }
 
   if (method === 'POST' && pathname === '/api/studio/state') {
     const body = await readBody(req);
-    const saved = studioStore.save(body.projectId, body.state);
+    const saved = studioStore.save(studioKey(body.projectId), body.state);
     return ok(res, saved);
   }
 
   if (method === 'GET' && pathname === '/api/state') {
     return ok(res, {
-      config: config.publicView(),
+      config: configView(),
       projectId,
       project: activeProject ? projects.publicProject(activeProject) : null,
       projectRoot: config.load().projectRoot,
@@ -717,9 +1185,10 @@ async function controlService(name, action) {
       jobs: projectId ? jobs.list(projectId) : jobs.list(),
       stats: jobs.slotStats(),
       channels: {
-        llm: channels.list('llm', { includeSecrets: true }),
-        image: channels.list('image', { includeSecrets: true }),
-        video: channels.list('video', { includeSecrets: true }),
+        // 列表只返回 hasKey / masked；真正调用渠道时服务端自己按 id 取完整 Key。
+        llm: channels.list('llm'),
+        image: channels.list('image'),
+        video: channels.list('video'),
       },
       channelTypes: channels.publicTypes(),
       prompt: {
@@ -767,9 +1236,9 @@ async function controlService(name, action) {
 
   if (method === 'GET' && pathname === '/api/channels') {
     return ok(res, {
-      llm: channels.list('llm', { includeSecrets: true }),
-      image: channels.list('image', { includeSecrets: true }),
-      video: channels.list('video', { includeSecrets: true }),
+      llm: channels.list('llm'),
+      image: channels.list('image'),
+      video: channels.list('video'),
     });
   }
 
@@ -827,10 +1296,12 @@ async function controlService(name, action) {
   }
 
   if (method === 'POST' && pathname === '/api/channels') {
+    if (!canManage) return bad(res, '没有权限管理渠道', 403);
     const body = await readBody(req);
     const kind = ['llm', 'image', 'video'].includes(body.kind) ? body.kind : '';
     if (!kind) return bad(res, '未知渠道类型');
     const created = channels.create(kind, body);
+    audit.record({ action: 'channel.create', tenantId, userId: currentUser && currentUser.id, target: created.id, detail: kind + ' ' + created.name, ip: clientIp(req) });
     return ok(res, channels.list(kind).find((c) => c.id === created.id));
   }
 
@@ -839,19 +1310,24 @@ async function controlService(name, action) {
     const id = channelRoute[1];
     const action = channelRoute[2] || '';
     if (method === 'PUT' && !action) {
+      if (!canManage) return bad(res, '没有权限管理渠道', 403);
       const body = await readBody(req);
       const kind = body.kind;
       if (!['llm', 'image', 'video'].includes(kind)) return bad(res, '未知渠道类型');
       const updated = channels.update(kind, id, body);
+      audit.record({ action: 'channel.update', tenantId, userId: currentUser && currentUser.id, target: id, detail: kind + ' ' + updated.name, ip: clientIp(req) });
       return ok(res, channels.list(kind).find((c) => c.id === updated.id));
     }
     if (method === 'DELETE' && !action) {
+      if (!canManage) return bad(res, '没有权限管理渠道', 403);
       const kind = url.searchParams.get('kind') || '';
       if (!['llm', 'image', 'video'].includes(kind)) return bad(res, '未知渠道类型');
       channels.remove(kind, id);
+      audit.record({ action: 'channel.delete', tenantId, userId: currentUser && currentUser.id, target: id, detail: kind, ip: clientIp(req) });
       return ok(res, true);
     }
     if (method === 'POST' && action === 'activate') {
+      if (!canManage) return bad(res, '没有权限管理渠道', 403);
       const body = await readBody(req);
       const kind = body.kind;
       if (!['llm', 'image', 'video'].includes(kind)) return bad(res, '未知渠道类型');
@@ -952,31 +1428,8 @@ async function controlService(name, action) {
   }
 
 
-function imageHistoryFile() {
-  const dir = config.load().dataDir || path.join(__dirname, '..', 'data');
-  ensureDir(dir);
-  return path.join(dir, 'image-history.json');
-}
-
-function readImageHistory() {
-  try {
-    const list = JSON.parse(fs.readFileSync(imageHistoryFile(), 'utf8'));
-    return Array.isArray(list) ? list : [];
-  } catch {
-    return [];
-  }
-}
-
-function rememberImageBatch(entry) {
-  try {
-    const list = readImageHistory();
-    list.unshift(entry);
-    fs.writeFileSync(imageHistoryFile(), JSON.stringify(list.slice(0, 80), null, 2) + '\n', 'utf8');
-  } catch { /* 历史记录不影响生成 */ }
-}
-
   if (method === 'GET' && pathname === '/api/images/history') {
-    return ok(res, { items: readImageHistory() });
+    return ok(res, { items: imageHistory.list() });
   }
 
   if (method === 'GET' && pathname === '/api/images/tasks') {
@@ -993,6 +1446,16 @@ function rememberImageBatch(entry) {
   }
   if (method === 'POST' && pathname === '/api/images/generate') {
     const body=await readBody(req),worker=imageTasks.tasks();
+    // 项目资产图走固定路径：targetPath 必须是项目相对路径，越界/绝对路径直接拒绝，不落盘
+    if (body.targetPath !== undefined && String(body.targetPath || '').trim()) {
+      const targetProject = scoped(body.projectId);
+      if (!targetProject) return bad(res, '传了 targetPath 就必须带 projectId：项目资产图只能落在项目目录里');
+      try {
+        projectPaths.targetFor(targetProject, body.targetPath);
+        if (!projectPaths.hasExt(body.targetPath, projectPaths.IMAGE_EXT)) return bad(res, 'targetPath 要写到图片文件名（.png / .jpg / .webp）');
+      } catch (err) { return bad(res, err.message, err.status || 400); }
+      body.projectId = targetProject;
+    }
     const event=events.createFromJobInputs([body],{kind:'image',source:'image',title:body.prompt?.slice(0,60),projectId:scoped(body.projectId),paused:body.paused});
     const task=worker.get(event.items[0].refId),eventId=event.id;
     if(body.background)return ok(res,{taskId:task.id,runId:task.id,status:task.status,eventId});
@@ -1022,7 +1485,7 @@ function rememberImageBatch(entry) {
     const saved = [];
     for (const raw of paths) {
       const src = path.resolve(String(raw));
-      if (!isAllowed(src) || !fs.existsSync(src) || !fs.statSync(src).isFile()) return bad(res, '源文件不可用：' + src);
+      if (!isAllowed(src, tenantId) || !fs.existsSync(src) || !fs.statSync(src).isFile()) return bad(res, '源文件不可用：' + src);
       let name = sanitizeFilename(String(body.name || path.basename(src)));
       if (!path.extname(name)) name += path.extname(src) || '.png';
       let dest = path.join(dir, name);
@@ -1045,9 +1508,9 @@ function rememberImageBatch(entry) {
     if (!m) return bad(res, '数据不是 base64 图片');
     const buffer = Buffer.from(m[2], 'base64');
     if (!buffer.length) return bad(res, '图片为空');
-    const saved = imagegen.saveImages([{ buffer, mime: m[1] }]);
-    if(body.sourcePath&&isAllowed(body.sourcePath)) generationStore.link(body.sourcePath,saved.items[0].path);
-    rememberImageBatch({ id: saved.id, items: saved.items, prompt: String(body.prompt || ''), kind: 'edit', createdAt: Date.now() });
+    const saved = imagegen.saveImages([{ buffer, mime: m[1] }], undefined, scoped(body.projectId), { targetPath: body.targetPath });
+    if(body.sourcePath&&isAllowed(body.sourcePath, tenantId)) generationStore.link(body.sourcePath,saved.items[0].path);
+    imageHistory.remember({ id: saved.id, items: saved.items, prompt: String(body.prompt || ''), kind: 'edit', createdAt: Date.now(), projectId: String(body.projectId || '') });
     return ok(res, { id: saved.id, item: saved.items[0] });
   }
 
@@ -1055,7 +1518,7 @@ function rememberImageBatch(entry) {
     const body = await readBody(req);
     const src = path.resolve(String(body.path || ''));
     if (!fs.existsSync(src) || !fs.statSync(src).isFile()) return bad(res, '文件不存在');
-    if (!isAllowed(src)) return bad(res,'源文件不在素材目录内');
+    if (!isAllowed(src, tenantId)) return bad(res,'源文件不在素材目录内');
     const saved = library.saveAssetUpload(path.basename(src), fs.readFileSync(src), body.folder || '');
     generationStore.link(src,saved.path);
     return ok(res, { rel: saved.rel, path: saved.path });
@@ -1064,8 +1527,21 @@ function rememberImageBatch(entry) {
   if (method === 'PUT' && pathname === '/api/config') {
     const body = await readBody(req);
     const patch = {};
-    for (const key of ['concurrency', 'projectRoot', 'saveFolder', 'assetFolder', 'voiceLibraryFolder', 'autodlKeys', 'llm', 'prompt', 'ui']) {
-      if (body[key] !== undefined) patch[key] = body[key];
+    // 部署参数是平台级的，只有平台管理员能改；渠道/Key/提示词只有租户管理员能改；
+    // 界面偏好（主题、壁纸、字号、音量）是每用户自己的，登录后写 user_prefs。
+    const platformKeys = new Set(['concurrency', 'projectRoot', 'saveFolder', 'assetFolder', 'voiceLibraryFolder']);
+    const tenantKeys = new Set(['autodlKeys', 'llm', 'prompt']);
+    const canPlatform = !currentUser || Boolean(currentUser.isAdmin);
+    for (const key of ['concurrency', 'projectRoot', 'saveFolder', 'assetFolder', 'voiceLibraryFolder', 'autodlKeys', 'llm', 'prompt']) {
+      if (body[key] === undefined) continue;
+      if (platformKeys.has(key) && !canPlatform) continue;
+      if (tenantKeys.has(key) && !canManage) continue;
+      patch[key] = body[key];
+    }
+    const uiPatch = body.ui && typeof body.ui === 'object' && !Array.isArray(body.ui) ? body.ui : null;
+    if (uiPatch) {
+      if (currentUser) userPrefs.save(currentUser.id, uiPatch);
+      else patch.ui = uiPatch;   // 还没有账号时，本机设置继续写平台默认值
     }
     if (patch.projectRoot) ensureDir(patch.projectRoot);
     if (patch.saveFolder) ensureDir(patch.saveFolder);
@@ -1080,7 +1556,8 @@ function rememberImageBatch(entry) {
       patch.llm.apiKey = config.llmConfig().apiKey;
     }
     const saved = config.save(patch);
-    return ok(res, config.publicView());
+    audit.record({ action: 'config.update', tenantId, userId: currentUser && currentUser.id, detail: [...Object.keys(patch), ...(uiPatch ? ['ui'] : [])].join(','), ip: clientIp(req) });
+    return ok(res, configView());
   }
 
 
@@ -1174,8 +1651,35 @@ function rememberImageBatch(entry) {
   }
 
   if (method === 'GET' && pathname === '/api/file') {
-    const file = url.searchParams.get('path');
-    if (!file || !isAllowed(file)) return bad(res, '非法路径', 403);
+    // 规范地址：?rel=<项目相对路径>&projectId=<项目>，跟着项目根目录走，换根不会断
+    const relPath = url.searchParams.get('rel');
+    if (relPath) {
+      const pid = scoped(url.searchParams.get('projectId'));
+      let file = '';
+      try { file = projectPaths.abs(pid, relPath); } catch (err) { return bad(res, err.message, err.status || 400); }
+      if (!fs.existsSync(file)) return bad(res, '文件不存在：' + projectPaths.normalize(relPath), 404);
+      return serveFile(req, res, file, { download: url.searchParams.get('download') === '1' });
+    }
+    const requested = url.searchParams.get('path');
+    if (!requested) return bad(res, '非法路径', 403);
+    // 老记录（绝对路径）兼容：素材归档/改名后查别名表，换过项目根目录的按项目目录名重挂
+    let file = path.resolve(requested);
+    let allowed = isAllowed(file, tenantId);
+    if (!allowed || !fs.existsSync(file)) {
+      const moved = fileAliases.resolve(requested);
+      if (moved && isAllowed(moved, tenantId)) { file = moved; allowed = true; }
+    }
+    // 素材被整理进 <集名> 子目录之后，按文件名找回并记别名
+    if ((!allowed || !fs.existsSync(file)) && req.method === 'GET') {
+      const found = fileAliases.recover(requested);
+      if (found && isAllowed(found, tenantId)) { file = found; allowed = true; }
+    }
+    if (!allowed && !fs.existsSync(file)) {
+      const healed = projectPaths.rebaseAny(requested);
+      if (healed && isAllowed(healed, tenantId)) { file = healed; allowed = true; }
+    }
+    if (!allowed) return bad(res, '非法路径', 403);
+    if (!fs.existsSync(file)) return bad(res, '文件已移动或删除：' + requested, 404);
     return serveFile(req, res, file, { download: url.searchParams.get('download') === '1' });
   }
 
@@ -1224,7 +1728,8 @@ function mediaPath(input) {
 
   if (method === 'GET' && pathname === '/api/jobs') {
     const { status, provider } = collectJobFilters(url);
-    let list = projectId ? jobs.list(projectId) : jobs.list();
+    // 选了项目只看该项目；没选就列本租户全部（未归档任务只给默认租户）
+    let list = projectId ? jobs.list(projectId) : jobs.list().filter((job) => inTenant(job.projectId));
     const eventId = url.searchParams.get('eventId') || '';
     if (eventId) list = list.filter((j) => j.eventId === eventId);
     if (status) list = list.filter((j) => j.status === status);
@@ -1235,7 +1740,7 @@ function mediaPath(input) {
 
   if (method === 'POST' && pathname === '/api/jobs') {
     const body = await readBody(req);
-    if(body.itemId)workbenchStore.store().get(body.itemId,body.projectId,'video');
+    if(body.itemId)workbenchStore.store().get(body.itemId,scoped(body.projectId),'video');
     const inputs=prepareEventVideos([{ ...body, projectId: scoped(body.projectId) }]);
     const event=events.createFromJobInputs(inputs,{kind:'video',source:'studio',title:body.title,projectId:scoped(body.projectId),policy:body.policy,schedule:body.schedule});
     return ok(res,{jobs:event.items.map(i=>({id:i.refId})),eventId:event.id,warnings:[]});
@@ -1285,7 +1790,11 @@ function mediaPath(input) {
   }
 
   if (method === 'GET' && pathname === '/api/events') {
-    return ok(res, events.list({ status: url.searchParams.get('status') || '', source: url.searchParams.get('source') || '', kind:url.searchParams.get('kind')||'',projectId:url.searchParams.get('projectId')||projectId,page:url.searchParams.get('page'),query:url.searchParams.get('query')||'',month:url.searchParams.get('month')||'',sort:url.searchParams.get('sort')||'' }));
+    // 指定项目就校验归属；没指定就按本租户全部项目过滤，未归档只给默认租户
+    const askedProject = url.searchParams.get('projectId') ? scoped(url.searchParams.get('projectId')) : '';
+    const allowedProjectIds = askedProject ? [askedProject] : [...tenantProjectIds()];
+    if (!askedProject && unassignedVisible()) allowedProjectIds.push('');
+    return ok(res, events.list({ status: url.searchParams.get('status') || '', source: url.searchParams.get('source') || '', kind:url.searchParams.get('kind')||'',projectId:askedProject,projectIds:allowedProjectIds,page:url.searchParams.get('page'),query:url.searchParams.get('query')||'',month:url.searchParams.get('month')||'',sort:url.searchParams.get('sort')||'' }));
   }
 
   if (method === 'POST' && pathname === '/api/events/import') {
@@ -1328,7 +1837,11 @@ function mediaPath(input) {
   const lifecycleAction=/^\/api\/events\/([^/]+)\/(schedule|queue|prepare|attempts)$/.exec(pathname);
   if(lifecycleAction){const id=lifecycleAction[1];if(method==='POST'&&lifecycleAction[2]==='queue')return ok(res,events.queueEvent(id));if(method==='POST'&&lifecycleAction[2]==='prepare')return ok(res,events.prepareEvent(id));if(method==='POST'&&lifecycleAction[2]==='schedule')return ok(res,events.scheduleEvent(id,await readBody(req)));if(method==='GET'&&lifecycleAction[2]==='attempts'){const event=events.get(id),data=events.repository.attemptPage(id,url.searchParams.get('page'));const grouped=new Map();for(const attempt of data.attempts){const item=event.items.find(i=>i.id===attempt.itemId);if(!grouped.has(attempt.itemId))grouped.set(attempt.itemId,{itemId:attempt.itemId,title:item?.title||attempt.itemId,attempts:[]});grouped.get(attempt.itemId).attempts.push(attempt);}return ok(res,{...data,items:[...grouped.values()]});}}
   const deleteEventRoute = /^\/api\/events\/([^/]+)$/.exec(pathname);
-  if (method === 'DELETE' && deleteEventRoute) return ok(res, events.removeEvent(deleteEventRoute[1]));
+  if (method === 'DELETE' && deleteEventRoute) {
+    const removed = events.removeEvent(deleteEventRoute[1]);
+    audit.record({ action: 'event.delete', tenantId, userId: currentUser && currentUser.id, target: deleteEventRoute[1], detail: removed.title || '', ip: clientIp(req) });
+    return ok(res, removed);
+  }
 
   /* 豆包视频提取：借管理器的账号登录态抓对话里的成片，再拿回来替换本地成片 */
   // 管理器有 Bearer 鉴权，token 存在「管理器」类型渠道的 apiKey 里（和别的管理器调用保持一致）
@@ -1588,6 +2101,11 @@ function mediaPath(input) {
     return ok(res, assetLayout.scan(projectId));
   }
 
+  // 素材库左侧树：点一层读一层，别一次把整棵目录树都读出来；deep=1 时把这个分类下的文件全列出来
+  if (method === 'GET' && pathname === '/api/assets/dir') {
+    return ok(res, assetLayout.scanDir(projectId, url.searchParams.get('rel') || '', { deep: url.searchParams.get('deep') === '1' }));
+  }
+
   if (method === 'GET' && pathname === '/api/assets') {
     return ok(res, library.scanAssets(projectId));
   }
@@ -1706,7 +2224,9 @@ function mediaPath(input) {
   }
 
   if (method === 'GET' && pathname === '/api/media') {
-    return ok(res, library.listMedia(url.searchParams.get('kind') || '', projectId, { taskTitle: url.searchParams.get('task') || '' }));
+    // 显式传 projectId 时按该项目列（仍校验租户归属）；不传沿用当前项目。
+    const mediaProject = url.searchParams.get('projectId') ? scoped(url.searchParams.get('projectId')) : projectId;
+    return ok(res, library.listMedia(url.searchParams.get('kind') || '', mediaProject, { taskTitle: url.searchParams.get('task') || '' }));
   }
 
   if (method === 'GET' && pathname === '/api/media/episodes') {
@@ -1860,7 +2380,8 @@ function mediaPath(input) {
     const send = (event, data) => {
       res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     };
-    const onJob = (job) => send('job', job);
+    // 只推本租户的任务事件，别的租户的任务不广播
+    const onJob = (job) => { if (inTenant(job && job.projectId)) send('job', job); };
     const onRefresh = () => send('refresh', {});
     jobs.emitter.on('job', onJob);
     jobs.emitter.on('refresh', onRefresh);
@@ -2027,9 +2548,17 @@ const server = http.createServer((req, res) => {
 });
 
 function start() {
+  // 上次轮换密钥如果停在“事务已提交、文件还没换”的中间态，先在这里收尾。
+  try {
+    const recovered = vault.recover();
+    if (recovered.recovered) console.log('密钥轮换已收尾：' + (recovered.backup || ''));
+  } catch (error) {
+    console.error('密钥轮换收尾失败：' + error.message);
+  }
   const cfg = config.load();
   internalAuth.token();
   config.storage();
+  backup.start();
   jobs.loadState();
   events.start();
   imageTasks.tasks().initialize();
@@ -2045,7 +2574,7 @@ function start() {
       try {
         for (const job of jobs.list()) {
           if (job.status !== 'interrupted') continue;
-          const result = await probe.probeJob(job);
+          const result = await tenantContext.run(job.tenantId || tenantScope.tenantOfProject(job.projectId), () => probe.probeJob(job));
           if (result.remote === 'done') jobs.reconcile(job.id, { status: 'failed', stage: '平台已完成（待继续查询）', error: '重启后探针发现平台已完成，可点「继续查询/下载」取回原任务' });
           else if (result.remote === 'failed') jobs.reconcile(job.id, { status: 'failed', stage: '平台失败', error: '重启后探针确认平台任务失败：' + String(result.evidence && result.evidence.detail || '').slice(0, 200) });
           else if (result.remote === 'canceled') jobs.reconcile(job.id, { status: 'canceled', stage: '平台已取消' });
@@ -2071,10 +2600,14 @@ async function shutdown(){
   await imageTasks.tasks().close();
   process.exit(0);
 }
-process.on('SIGINT',shutdown);
-process.on('SIGTERM',shutdown);
+process.on('SIGINT',()=>{require('./process-log').line('signal','SIGINT');shutdown();});
+process.on('SIGTERM',()=>{require('./process-log').line('signal','SIGTERM');shutdown();});
 
-if (require.main === module) start();
+if (require.main === module) {
+  // 先装进程级兜底，再启动服务：崩溃/异常必须留下 process.log 证据。
+  require('./process-guard').install({ onFatal: () => jobs.flushState() });
+  start();
+}
 
 module.exports = { server, start };
 
@@ -2148,7 +2681,11 @@ function prepareEventVideos(inputs) {
     input.applyStyle=false;
     const wf=workflows.get(input.workflowId);
     if(!wf)throw Object.assign(new Error('工作流不存在'),{status:400});
-    input.model=input.model||(channels.get('video',wf.channelId)||{}).model||wf.model;
+    // 批量 JSON / 接口里画幅可以写 ratio，统一成工作流的画幅键
+    if(!input.aspectRatio && input.ratio) input.aspectRatio=String(input.ratio).trim();
+    // 模型：任务上带就优先用任务的（豆包 Seedance 2.0 Mini / Fast），没带才回落渠道配置
+    input.model=(input.model?String(input.model).trim():'')||(channels.get('video',wf.channelId)||{}).model||wf.model;
+    if(wf.provider==='manager'&&input.model)input.model=managerVideo.normalizeModel(input.model);
     const check=workflows.validate(wf,input);
     if(check.errors.length)throw Object.assign(new Error(check.errors.join('；')),{status:400});
     return input;

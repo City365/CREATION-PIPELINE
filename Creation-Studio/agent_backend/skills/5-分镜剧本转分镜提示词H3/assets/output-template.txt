@@ -1,0 +1,40 @@
+_::~OUTPUT_START::~_
+人物：{{实际人物或None}}
+场景：{{实际场景或None}}
+道具：{{实际道具或None}}
+===
+DURATION: [总时长{{组秒数}}s]
+subject_definitions:
+{{实际Subject/Scene/Prop定义；有资产才用@}}
+
+summary:
+[reference generation] {{英文概述，截止于本组原事件}}
+
+retention_analysis:
+{{实际可见条目与仅声音条目，不能默认全部fully_preserved}}
+
+detailed_description:
+16:9 horizontal widescreen framing.
+Widescreen composition with clear left-right relationships and foreground/midground/background depth. Use motivated camera movement and physically consistent in-scene lighting. No vertical-video framing. No center-crop-safe composition.
+No subtitles. No captions. No burned-in text. No on-screen text overlay of any kind. Clean plate.
+No background music. No score. No non-diegetic music.
+All characters maintain the wardrobe of their bound @ references; scene context, role, emotion and posture do not change costumes.
+{{本场实际物理光源与光质；无绑定实体不虚构参考}}
+
+[Shot {{N}}] At {{MM:SS.mmm}}
+LOCATION: {{地点、内外、叙事时间、实际区域、光线}}
+CAMERA POSITION & SHOOTING DIRECTION: {{相机位置、拍向、主体屏幕关系与轴线}}
+SHOT TYPE / FRAMING / CAMERA MOVEMENT: {{观看任务、景别、主要运动与焦点}}
+TIME MARKER: {{叙事时间，连续用None (continuous)}}
+Action & Performance: {{Primary Event与VISIBLE REACTIONS，位置/姿态/朝向，条内快切按原顺序}}
+END FRAME / END BEAT: {{本条末态及道具去向，不超前}}
+Dialogue: {{每原声一行，保留说话人/声道；无台词用None}}
+SOUND: {{声源、空间、连续关系，无重复词或新清晰台词}}
+DURATION: {{源条秒数}}s
+
+overall_soundscape:
+{{本组现场/画外/OS/环境与动作声，和逐条一致}}
+
+non_diegetic_music:
+N/A (No background music, no score, and no non-diegetic music.)
+_::~OUTPUT_END::~_

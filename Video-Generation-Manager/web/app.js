@@ -178,3 +178,30 @@ refresh().then(openTaskFromHash);setInterval(refresh,3000);if($('#api-base'))loa
  on('#scheduler-form','submit',e=>{e.preventDefault();action(e.submitter,async()=>{const scheduler={mode:form.elements.mode.value,clientExe:form.elements.clientExe.value.trim(),pollMs:Number(form.elements.pollMs.value)||8000};await api('/api/settings',{method:'PUT',body:JSON.stringify({scheduler})});await load();notice(scheduler.mode==='client'?'已切换到客户端调度：新任务走官方豆包桌面端':'已切换到网页版调度：新任务走账号浏览器');});});
  await load().catch(error=>{stateEl.textContent=error.message;});
 })().catch(()=>{});
+
+// 外联通道：管理器主动连共享部署的创作台，取任务、回传结果
+(async function remoteSettings(){
+ const form=$('#remote-form');if(!form)return;
+ const stateEl=$('#remote-state');
+ function describe(s){
+  const parts=[s.enabled?'已启用':'未启用'];
+  if(!s.configured)parts.push('未填地址或令牌');
+  parts.push(s.online?'已连上创作台':'未连上');
+  if(s.lastError)parts.push(s.lastError);
+  if(s.handled)parts.push('已处理 '+s.handled+' 条命令');
+  return parts.join(' · ');
+ }
+ async function load(){const s=await api('/api/settings');const r=s.remote||{};form.elements.enabled.checked=Boolean(r.enabled);form.elements.studioUrl.value=r.studioUrl||'';form.elements.name.value=r.name||'';form.elements.token.value='';form.elements.clearToken.checked=false;stateEl.textContent=r.tokenConfigured?describe(await api('/api/remote/status')):('还没有令牌'+(r.studioUrl?' · '+r.studioUrl:''));}
+ async function status(){const s=await api('/api/remote/status');stateEl.textContent=describe(s);}
+ on('#remote-check','click',e=>action(e.currentTarget,status));
+ on('#remote-form','submit',e=>{e.preventDefault();action(e.submitter,async()=>{
+  const remote={enabled:form.elements.enabled.checked,studioUrl:form.elements.studioUrl.value.trim(),name:form.elements.name.value.trim()};
+  const token=form.elements.token.value.trim();
+  if(token)remote.token=token;
+  if(form.elements.clearToken.checked)remote.clearToken=true;
+  await api('/api/settings',{method:'PUT',body:JSON.stringify({remote})});
+  await load();
+  notice('外联设置已保存');
+ });});
+ await load().catch(error=>{stateEl.textContent=error.message;});
+})().catch(()=>{});

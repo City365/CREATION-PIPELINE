@@ -9,14 +9,22 @@
     {
       "id": "manager-video",
       "label": "外接管理器（豆包 / Gemini）",
-      "hint": "调用 管理器7.8.7/rebuild 的本地服务（默认 127.0.0.1:17778），用真实 Chrome 账号跑豆包 / Gemini 网页生成；凭据在 rebuild/data/connection.json",
+      "hint": "管理器可以装在本机（填 127.0.0.1 地址），也可以装在别的机器上（填外联配对令牌）。凭据在管理器 data/connection.json 里",
       "fields": [
         {
           "key": "baseUrl",
           "label": "管理器地址",
           "placeholder": "http://127.0.0.1:17778",
-          "required": true,
-          "default": "http://127.0.0.1:17778"
+          "required": false,
+          "default": "http://127.0.0.1:17778",
+          "hint": "本机管理器填 http://127.0.0.1:17778；用外联通道时留空即可"
+        },
+        {
+          "key": "executorToken",
+          "label": "外联配对令牌（可选）",
+          "type": "password",
+          "placeholder": "在创作台「我的管理器」里生成的 exe_…",
+          "hint": "填了就通过外联通道调用：管理器主动连创作台，服务器不需要能访问这台机器；此时地址可以留空"
         },
         {
           "key": "apiKey",
@@ -31,8 +39,8 @@
         },
         {
           "key": "model",
-          "label": "豆包模型（可选）",
-          "placeholder": "留空用管理器默认"
+          "label": "豆包模型（渠道默认，可选）",
+          "placeholder": "Seedance 2.0 Mini / Seedance 2.0 Fast；留空用管理器当前设置"
         },
         {
           "key": "seconds",

@@ -1,0 +1,72 @@
+_::~OUTPUT_START::~_
+人物：林知夏、护士长、原缝合伤员
+场景：国立医疗中心急诊部抢救大厅
+道具：持针器、缝合丝线与剪线器械、橡胶手套、监护仪、黄色医疗垃圾桶
+===
+DURATION: [总时长15s]
+subject_definitions:
+<Subject 1> is 林知夏 (text-only).
+<Subject 2> is 护士长 (text-only).
+<Subject 3> is 原缝合伤员 (text-only; distinct from the later-arriving man).
+<Scene 1> is 国立医疗中心急诊部抢救大厅 (text-only).
+<Prop 1> is 持针器 (text-only).
+<Prop 2> is 缝合丝线与剪线器械 (text-only).
+<Prop 3> is 橡胶手套 (text-only).
+<Prop 4> is 监护仪 (text-only).
+<Prop 5> is 黄色医疗垃圾桶 (text-only).
+
+summary:
+[reference generation] High-pressure emergency work during a rainstorm: 林知夏 completes an existing suture while the head nurse reports a tunnel collision and an incoming severely injured man. The original dispatch context includes an estimated two-minute arrival; the authorized shorter spoken report expresses imminent arrival. She gives the room, blood-preparation and neurosurgical standby orders without relocating the original sutured patient.
+
+retention_analysis:
+<Subject 1>(appears in [Shot 1], [Shot 2], [Shot 3]): fully_preserved
+<Subject 2>(appears in [Shot 2], [Shot 3]): fully_preserved
+<Subject 3>(appears in [Shot 1], [Shot 2], [Shot 3]): fully_preserved
+
+detailed_description:
+16:9 horizontal widescreen framing.
+Widescreen composition with clear left-right relationships and foreground/midground/background depth. No vertical-video framing. No center-crop-safe composition.
+No subtitles. No captions. No burned-in text. No on-screen text overlay of any kind. Clean plate. Actual in-scene marks explicitly required by the script remain physical objects, not overlays.
+No background music. No score. No non-diegetic music.
+No bound character or prop assets were supplied. Use text-only identity references and maintain consistent appearances across these groups; do not invent @ bindings or claim a supplied fixed voice card.
+Cold white overhead emergency lighting remains dominant. Red-blue light is confined to storm-window reflections; rain is outside double glazing.
+
+[Shot 1] At 00:00.000
+LOCATION: 国立医疗中心急诊部抢救大厅, interior, rainstorm night. A treatment bed sits left of the central aisle; monitoring equipment stands beside it; double-glazed windows occupy the rear wall and automatic sliding doors the rear-right passage.
+CAMERA POSITION & SHOOTING DIRECTION: First 0.0-2.0 seconds: a wide view from the central aisle toward the window wall establishes bed, monitors and doors. 林知夏 works at the left side of the bed, facing the patient. At 2.0 seconds cut within this Shot to a bedside three-quarter view including her concentrated face and active gloved hands; keep the same bed-side relationship.
+SHOT TYPE / FRAMING / CAMERA MOVEMENT: Space establishment to precise clinical work / wide to medium close-up / static setups with one internal cut / readable room depth followed by clear face-and-hands detail.
+TIME MARKER: None; opening scene, deep night.
+Action & Performance: 林知夏 wears rubber gloves and uses a needle holder to carry out the scripted rapid, precise suturing on the blood-smeared original patient. Primary Event: she maintains the same wound site and ongoing work across the cut, without turning this patient into the later-arriving man. VISIBLE REACTIONS: steady gaze, controlled breathing and a still jaw; no panic. Rain strikes the double glazing; red-blue ambulance reflections cross the exterior window surface, while the interior remains cold fluorescent white.
+END FRAME / END BEAT: 林知夏 remains beside the original patient, gloved hands occupied with the needle holder and suture. The wound is still being closed; the patient remains on the same bed. The automatic door is still a separate entrance on rear right.
+Dialogue: 林知夏 (onscreen diegetic with offscreen continuation across internal cuts; calm, precise, 4.5 Mandarin characters per second; begin at 1.2 seconds), says:<d>[Chinese]三号丝线，持针器。</d>
+SOUND: Muffled rain impact through insulated glass, staggered monitor alarms and restrained instrument sounds. Her line starts at 1.2 seconds and continues across the cut without replay. Duck alarm level beneath the words; no extra staff dialogue or music.
+DURATION: 4s
+
+[Shot 2] At 00:04.000
+LOCATION: The same resuscitation hall, bed and rear-right automatic entrance; unchanged fluorescent light and storm reflections.
+CAMERA POSITION & SHOOTING DIRECTION: From 0.0-2.0 seconds face the rear-right sliding doorway and track the head nurse a short distance along the aisle toward the bed. From 2.0-6.0 seconds use a stable two-person medium view: 林知夏 on screen left by the patient, the head nurse on screen right at bedside, facing her. Do not cut to the tunnel or show the incoming casualty yet.
+SHOT TYPE / FRAMING / CAMERA MOVEMENT: Urgent arrival and report / medium tracking to medium two-shot / one short motivated track, then static / enough depth to retain the bedside relationship.
+TIME MARKER: Continuous. The new male casualty is expected shortly; arrival has not yet occurred.
+Action & Performance: The electric door slides apart abruptly. The head nurse crosses the passage quickly and begins reporting immediately, initially from the doorway, rather than waiting until the last four seconds. Primary Event: the nurse reaches the bed and finishes the compressed accident-and-condition report without adding a response. 林知夏 keeps her ongoing task controlled. VISIBLE REACTIONS: the nurse is visibly alarmed and breathless, while 林知夏 stays focused.
+END FRAME / END BEAT: The head nurse has stopped at the right side of the original bed facing 林知夏. 林知夏 remains with the original patient; the newly reported man is still offscreen and has not been confused with that patient.
+Dialogue: 护士长 (offscreen diegetic at first, then onscreen diegetic; extremely urgent dispatch report, 6.5 Mandarin characters per second; begin at shot start while entering; distinguish the tunnel name and both clinical findings), says:<d>[Chinese]清潭洞隧道车祸，患者将到！进行性意识障碍，伴胸腔闭锁不全！</d>
+SOUND: Door swish and quick footsteps under one continuous report from the moving nurse. The voice moves from the doorway to bedside in the same real room, never OS. Preserve clinical words at the selected rapid rate; keep rain and alarms below the voice. No music.
+DURATION: 6s
+
+[Shot 3] At 00:10.000
+LOCATION: The same hall and original treatment bed; the corridor toward 一号抢救室 is the destination, not a new room already entered. A yellow medical-waste bin stands beside the treatment station.
+CAMERA POSITION & SHOOTING DIRECTION: First 0.0-2.2 seconds use a close insert on the finishing knot, cut thread and glove removal at the same bed. Then follow 林知夏 from the same aisle side as she turns and strides toward the resuscitation-room passage, leaving the original patient behind. Keep the route on screen right relative to the established hall view. Retain the original bed and head nurse briefly in the receding background.
+SHOT TYPE / FRAMING / CAMERA MOVEMENT: Finishing action to decisive movement / hand detail to medium tracking / static insert then short follow, separated by the existing internal cut.
+TIME MARKER: Continuous; preparations for the reported incoming casualty.
+Action & Performance: 林知夏 finishes the scripted knot, cuts the suture, returns the used instrument to the adjacent tray, removes both blood-marked gloves and puts them in the yellow bin. These small tool transitions free her hands consistently; no additional treatment result is invented. She delivers the order from shot start while working, then turns and walks toward 一号抢救室. VISIBLE REACTIONS: cold concentration and decisive posture, with no uncontrolled panic. The original sutured patient is not moved to stand in for the incoming man.
+END FRAME / END BEAT: 林知夏 is moving toward the passage, both used gloves left in the bin and neither needle holder nor scissors carried into the next scene. The original patient remains at the treatment bed; the head nurse has received the order without new dialogue.
+Dialogue: 林知夏 (onscreen diegetic with offscreen continuation across internal cuts; controlled, clipped emergency command at 6 Mandarin characters per second; begin at shot start while finishing the suture; read 400cc as four-hundred C-C in Mandarin), says:<d>[Chinese]推一号抢救室，备血400cc，神外二组值班医生待命！</d>
+SOUND: One uninterrupted command over the instrument, glove, bin and footstep sounds. The two room/team identifiers and 400cc remain distinct; phrase pauses also serve the numeric grouping. No repeated command, new reply or music.
+DURATION: 5s
+
+overall_soundscape:
+Rain remains muffled behind insulated glass, with monitor alarms and hospital movement under the three original speech units as authorized for this execution. The nurse's accident-and-condition report and the doctor's compact order use urgent delivery without replay; room and team identifiers, blood amount and clinical findings remain clear. No new background speech or music.
+
+non_diegetic_music:
+N/A (No background music, no score, and no non-diegetic music.)
+_::~OUTPUT_END::~_

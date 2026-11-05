@@ -1,0 +1,73 @@
+_::~OUTPUT_START::~_
+人物：林知夏、徐道允、护士长
+场景：急诊部一号抢救室
+道具：监护仪、除颤仪及两柄电极板、导电膏、氧气面罩、磨损银色打火机、橡胶手套
+===
+DURATION: [总时长15s]
+subject_definitions:
+<Subject 1> is 林知夏 (text-only; same clinician and clean gloves).
+<Subject 2> is 徐道允 (text-only; same patient, right-brow scar and left-hand lighter).
+<Subject 3> is 护士长 (text-only; same head nurse as the hall group).
+<Scene 1> is 急诊部一号抢救室 (text-only).
+<Prop 1> is 监护仪 (text-only).
+<Prop 2> is 除颤仪及两柄电极板 (text-only).
+<Prop 3> is 导电膏 (text-only).
+<Prop 4> is 氧气面罩 (text-only).
+<Prop 5> is 磨损银色打火机 (text-only).
+<Prop 6> is 橡胶手套 (text-only).
+
+summary:
+[reference generation] The monitor alarm breaks the recognition pause. 林知夏 forces her visible grief into focused action, delivers the original 200-joule clearance command and gives one scripted shock. The source's unresolved flat alarm remains; she orders the 300-joule recharge. End before a second shock or any invented recovery.
+
+retention_analysis:
+<Subject 1>(appears in [Shot 1], [Shot 2], [Shot 3]): fully_preserved
+<Subject 2>(appears in [Shot 2], [Shot 3]): fully_preserved
+<Subject 3>(appears in [Shot 1]): fully_preserved
+
+detailed_description:
+16:9 horizontal widescreen framing.
+Widescreen composition with clear left-right relationships and foreground/midground/background depth. No vertical-video framing. No center-crop-safe composition.
+No subtitles. No captions. No burned-in text. No on-screen text overlay of any kind. Clean plate. Actual in-scene marks explicitly required by the script remain physical objects, not overlays.
+No background music. No score. No non-diegetic music.
+No bound character or prop assets were supplied. Use text-only identity references and maintain consistent appearances across these groups; do not invent @ bindings or claim a supplied fixed voice card.
+Maintain the same cold overhead light and bed/monitor/equipment relationships as Room One. Read moisture in her eyes without adding a lighting transformation; monitor graphics are in-scene displays, not explanatory captions.
+
+[Shot 1] At 00:00.000
+LOCATION: 急诊部一号抢救室, same patient trolley, monitor near the head end and cold overhead light. 林知夏 remains at the head-side position; the head nurse is beside the monitor.
+CAMERA POSITION & SHOOTING DIRECTION: First 0.0-1.5 seconds use a readable monitor insert, then cut to the head nurse pointing toward it. Keep 林知夏 in the established bedside direction rather than moving her across the room. The patient's left-hand lighter is not relocated merely because it is outside the close framing.
+SHOT TYPE / FRAMING / CAMERA MOVEMENT: Monitor event to alarmed reaction / screen insert to medium close-up / static setups with one internal cut.
+TIME MARKER: Continuous with the recognition and lighter detail.
+Action & Performance: The monitor picture becomes chaotic and broken with flattening horizontal portions, matching the source's mixed graphic description, while a piercing alarm sounds. Primary Event: the head nurse points and calls to 林知夏; the line begins over the monitor image and continues into the nurse's face view. VISIBLE REACTIONS: sudden fear and loss of composure. 林知夏 is still at bedside with the lifted mask; do not announce a new outcome beyond the scripted alarm.
+END FRAME / END BEAT: The nurse remains pointing at the monitor. 林知夏 is still beside 徐道允, now forced to act; the lifted mask and clean gloves have not disappeared between cuts.
+Dialogue: 护士长 (offscreen diegetic at first, then onscreen diegetic; alarmed projected call at 4.5 Mandarin characters per second; begin at 0.4 seconds, continuing across the internal cut), says:<d>[Chinese]林医生！室颤了！</d>
+SOUND: One sustained alarm under the nurse's single call, beginning at 0.4 seconds. The initially offscreen voice remains the nurse's real voice in the room and becomes onscreen across the cut; no OS or music.
+DURATION: 3.5s
+
+[Shot 2] At 00:03.500
+LOCATION: The same trolley and head-side equipment position, with the defibrillator unit and gel accessible beside 林知夏; unchanged physical light.
+CAMERA POSITION & SHOOTING DIRECTION: From 0.0-2.0 seconds frame her three-quarter face and free-hand transition at bedside. From 2.0-4.0 seconds cut to both handles and gel application. From 4.0-6.0 seconds show the paddles against the patient's chest and her clearance command from the same bedside relationship. Do not add an extra numbered Shot.
+SHOT TYPE / FRAMING / CAMERA MOVEMENT: Emotional control, preparation and clearance / reaction close-up, hand insert, medium close view / static setups with the scripted internal cuts; no decorative orbit.
+TIME MARKER: Continuous; this Shot prepares the first scripted shock, not an additional shock.
+Action & Performance: 林知夏 places the mask she was holding beside the head end, freeing her left hand before taking both handles; this is a small continuity action, not a new treatment outcome. Her clean gloves remain on. Primary Event: moisture wells in her reddened eyes, then her gaze hardens into controlled resolve; she takes the paddles, spreads the scripted conductive gel and places them at the chest as written. The 200-joule/clearance line starts at 1.8 seconds and runs through the hand and chest views. VISIBLE REACTIONS: a clenched jaw and wet eyes, without adding sobbing dialogue or a tear falling into the wound. During clearance framing, do not show other hands continuing to contact the patient or bed.
+END FRAME / END BEAT: 林知夏 holds both paddles at the chest, the clearance command completed and the mask left at the head end. 徐道允 is still unresponsive, his silver lighter still associated with the same left hand. No shock or recovery is added before the next Shot.
+Dialogue: 林知夏 (onscreen diegetic with offscreen continuation across internal cuts; desperate but intelligible clearance command at 6 Mandarin characters per second; begin at 1.8 seconds; keep 200 joules distinct), says:<d>[Chinese]充电200焦耳！所有人离开床体！闪开！</d>
+SOUND: Continuous room alarm beneath one forceful command. Keep 200 joules and the clearance words intelligible; numerical emphasis uses the same phrase-end pause. Gel and equipment handling remain subordinate. No extra charging voice or music.
+DURATION: 6s
+
+[Shot 3] At 00:09.500
+LOCATION: The same room, trolley, head-end monitor and bedside defibrillator. No change in patient identity, room orientation or physical light.
+CAMERA POSITION & SHOOTING DIRECTION: From 0.0-2.5 seconds hold a side medium-close view of the scripted shock recoil and fall back onto the mattress. At 2.5 seconds cut to the persistent flat monitor trace and 林知夏's pale face/equipment hand, keeping her on the same side of the bed. Her next order begins at 1.6 seconds and continues across this cut.
+SHOT TYPE / FRAMING / CAMERA MOVEMENT: Shock result to renewed command / torso medium-close, monitor insert and clinician close view within the source unit / static setups, no added second discharge.
+TIME MARKER: Continuous immediately after the preceding clearance.
+Action & Performance: A dull electrical impact accompanies the one scripted discharge; the man's torso bows and falls back. Show only the brief subdued contact glint specified by the source, with no explosion or new burns. Primary Event: the monitor remains flat and alarming; 林知夏 registers no restoration, tightens her jaw and presses the charge control again while ordering 300 joules. Her hands and the paddles follow the physical recoil rather than floating. VISIBLE REACTIONS: pallor and determined strain. Do not make the patient wake, speak, drop the lighter, regain a trace or receive a second visible shock in this Shot.
+END FRAME / END BEAT: The second charge has been requested/initiated and 林知夏 remains poised with the equipment. The monitor still shows the source's unresolved state; there is no claimed recovery or declared death, and no second discharge yet. The patient and left-hand lighter remain the same.
+Dialogue: 林知夏 (onscreen diegetic with offscreen continuation across internal cuts; forceful urgent command at 6 Mandarin characters per second; begin at 1.6 seconds across the recoil-to-monitor cut; keep 300 joules distinct), says:<d>[Chinese]心率未恢复，再充300焦耳！闪开！</d>
+SOUND: One dull shock impact followed by the continuing long alarm and the single renewed command. The line starts at 1.6 seconds, following the initial recoil, and carries over the cut; 300 joules stays clear. No duplicated words, new staff dialogue, triumphant cue or music.
+DURATION: 5.5s
+
+overall_soundscape:
+The sustained alarm continues under the nurse and the two physician commands. Carry the nurse's voice and the later recharge command across their internal cuts without repeating text. One dull shock sound only; no second discharge, recovery cue, music, new staff response or extra intelligible speech.
+
+non_diegetic_music:
+N/A (No background music, no score, and no non-diegetic music.)
+_::~OUTPUT_END::~_

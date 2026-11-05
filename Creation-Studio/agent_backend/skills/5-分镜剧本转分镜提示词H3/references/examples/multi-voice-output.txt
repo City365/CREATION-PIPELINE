@@ -1,0 +1,46 @@
+_::~OUTPUT_START::~_
+人物：@周春明、@付尚
+场景：@高三六班教室
+道具：@扩音器
+===
+DURATION: [总时长8s]
+subject_definitions:
+<Subject 1> is @周春明.
+<Subject 2> is @付尚.
+<Scene 1> is @高三六班教室.
+<Prop 1> is @扩音器.
+
+summary:
+[reference generation] A seated classroom response followed by one private inner line. Preserve both spoken lines and the OS in one numbered source unit, with internal cuts and continuous OS across the cut at 4.0 seconds. The teacher does not hear or answer the student's thought.
+
+retention_analysis:
+<Subject 1>(appears in [Shot 1]): fully_preserved
+<Subject 2>(appears in [Shot 1]): fully_preserved
+
+detailed_description:
+16:9 horizontal widescreen framing.
+Widescreen composition with clear left-right relationships and foreground/midground/background depth. No vertical-video framing. No center-crop-safe composition.
+No subtitles. No captions. No burned-in text. No on-screen text overlay of any kind. Clean plate.
+No background music. No score. No non-diegetic music.
+All characters maintain the wardrobe of their bound @ references.
+The north lectern, south front-row desk and west aisle remain in place. Soft daylight retains the same east-wall window source across the internal cuts.
+
+[Shot 1] At 00:00.000
+LOCATION: @高三六班教室 <Scene 1>, interior, day; the northern lectern and southern front-row desk under unchanged east-window diffused daylight.
+CAMERA POSITION & SHOOTING DIRECTION: Use the west side of the teacher-student axis throughout. At 0.0-2.0 seconds, a readable two-shot places the standing @周春明 <Subject 1> on screen left and the seated @付尚 <Subject 2> on screen right, with the lectern, blackboard and desk as references. At 2.0 seconds, cut within this source unit to the student's northwest three-quarter view. At 4.0 seconds, cut to the teacher from the southwest side of the same axis. At 6.0 seconds, return to the student's previous view; physical positions do not change.
+SHOT TYPE / FRAMING / CAMERA MOVEMENT: Dialogue, reaction and private thought / medium two-shot followed by medium close-ups / static setups with the specified internal cuts / clear faces, with the room relation established before closer framing. No focus transfer or camera travel is required.
+TIME MARKER: None (continuous).
+Action & Performance: From 0.0-2.0 seconds, @周春明 <Subject 1> stands beside the lectern, facing the seated student, wearing @扩音器 <Prop 1>; Primary Event: he speaks the first original line with a light smile. @付尚 <Subject 2> stays seated, hands on the desk, facing the teacher. From 2.0-4.0 seconds, the student gives his brief spoken reply and closes his mouth before the OS starts at 3.4 seconds. From 4.0-6.0 seconds, the teacher remains standing and quietly relaxed in response to the earlier spoken reply, without reacting to the OS; the student's inner line continues across this cut and finishes before 6.0 seconds. From 6.0-8.0 seconds, the student is again visible, still seated, mouth closed and gaze toward the teacher. VISIBLE REACTIONS: only the input's restrained ease and quiet seated state; no rising, new answer or additional gesture.
+END FRAME / END BEAT: @付尚 <Subject 2> remains at the front-row desk with closed mouth and gaze toward the teacher. @周春明 <Subject 1> remains beside the lectern. The OS has ended; the amplifier and the physical light source have not changed.
+Dialogue: @周春明 <Subject 1> (onscreen diegetic; 0.0-2.0 seconds; light, clear, normal delivery), says:<d>[Chinese]坐着说。</d>
+@付尚 <Subject 2> (onscreen diegetic; 2.0-4.0 seconds before the OS; brief, clear reply), says:<d>[Chinese]好。</d>
+@付尚 <Subject 2> (OS; starts at 3.4 seconds and continues across the cut at 4.0 seconds; short, restrained inner delivery; no mouth synchronization), says:<d>[Chinese]先躲过这题。</d>
+SOUND: The teacher's first line is heard through the already-worn amplifier in the classroom; the student's reply is unamplified diegetic speech from the desk. The OS is a subjective voice layer, continuous across the cut to the teacher without replaying its words, without adopting the teacher's screen location or amplifier processing. Only current delivery and acoustic treatment are specified; do not claim an inherited timbre profile. Quiet classroom room tone continues across all cuts. No added speech, desk impacts or music.
+DURATION: 8s
+
+overall_soundscape:
+One continuous classroom ambience, two original diegetic utterances and one OS utterance. The OS remains the student's private thought when the teacher is on screen; the teacher does not hear it. No background music, no extra intelligible speech and no duplicated inner line.
+
+non_diegetic_music:
+N/A (No background music, no score, and no non-diegetic music.)
+_::~OUTPUT_END::~_

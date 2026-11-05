@@ -6,7 +6,8 @@ if not defined AGENT_PYTHON if exist "%~dp0agent_backend\.venv\Scripts\python.ex
 if not defined AGENT_PYTHON set AGENT_PYTHON=D:\notebook\AIGC\ml-engineer\backend\.venv\Scripts\python.exe
 if not defined AGENT_PORT set AGENT_PORT=17820
 if not defined AGENT_SETTINGS_PATH set "AGENT_SETTINGS_PATH=%~dp0agent_backend\data\agent_settings.json"
-if not defined HARNESS_AUTH_MODE set HARNESS_AUTH_MODE=development
+rem 默认 controller：向创作台复核项目归属。本机单独调试时才显式设 development。
+if not defined HARNESS_AUTH_MODE set HARNESS_AUTH_MODE=controller
 if not defined WMD_BASE_URL set WMD_BASE_URL=http://127.0.0.1:17821
 echo [wmd-agent] python: %AGENT_PYTHON%
 echo [wmd-agent] port:   %AGENT_PORT%

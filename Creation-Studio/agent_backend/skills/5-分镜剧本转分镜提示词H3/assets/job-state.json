@@ -1,0 +1,44 @@
+{
+  "schemaVersion": "0.4.2",
+  "groupId": null,
+  "originalInputHash": null,
+  "executionInputHash": null,
+  "sourceMap": [],
+  "facts": [],
+  "scene": {
+    "name": null,
+    "storyTime": null,
+    "physicalAnchors": [],
+    "light": null,
+    "source": {
+      "kind": "unknown",
+      "ref": null
+    }
+  },
+  "characters": [],
+  "props": [],
+  "voices": [],
+  "camera": {
+    "position": null,
+    "direction": null,
+    "screenRelation": null,
+    "focus": null,
+    "source": {
+      "kind": "unknown",
+      "ref": null
+    }
+  },
+  "lastConfirmedState": null,
+  "dialogueFiles": {
+    "original": null,
+    "execution": null,
+    "timing": null,
+    "edits": null
+  },
+  "unknowns": [],
+  "risks": [],
+  "handoff": {
+    "previousGroupId": null,
+    "nextGroupStateActuallyProvided": false
+  }
+}

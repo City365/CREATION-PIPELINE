@@ -1,0 +1,4 @@
+interface:
+  display_name: "剧本转分镜·小行星横屏"
+  short_description: "将中文分镜转换为小行星横屏提示词，保留编号并审核台词声窗与连续状态"
+  default_prompt: "使用 $xiaoxing-storyboard-to-video 将下面的分镜转换为小行星16:9视频提示词，按需读取模块并检查台词声窗。"

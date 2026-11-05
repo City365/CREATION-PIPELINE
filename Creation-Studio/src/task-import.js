@@ -19,7 +19,7 @@ const batch = require('./batch');
 const RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4'];
 const MAX_IMAGES = 9;
 
-const HEADERS = ['分镜名称', '视频提示词', '参考图（按顺序）', '参考图说明（按顺序）', '视频画幅', '视频时长'];
+const HEADERS = ['分镜名称', '视频提示词', '参考图（按顺序）', '参考图说明（按顺序）', '视频画幅', '视频时长', '视频模型'];
 const HEADER_ALIAS = {
   title: ['分镜名称', '任务标题', '标题', '分镜', '分镜名'],
   prompt: ['视频提示词', '提示词', '描述', '内容', '任务详情'],
@@ -28,6 +28,7 @@ const HEADER_ALIAS = {
   notes: ['参考图说明（按顺序）', '参考图说明', '图片说明', '素材说明'],
   duration: ['视频时长', '时长（秒）', '时长(秒)', '时长'],
   ratio: ['视频画幅', '画幅', '比例', '画面比例'],
+  model: ['视频模型', '模型', '模型名称'],
 };
 
 function normHeader(value) {
@@ -43,11 +44,12 @@ for (const [field, aliases] of Object.entries(HEADER_ALIAS)) {
 
 const JSON_TEMPLATE = {
   version: 1,
-  说明: [
+    说明: [
     '本文件只支持固定结构：顶层 items 数组，一条任务一个元素；单条任务也只放一行。',
-    '字段：分镜名称 title、视频提示词 prompt、参考图 images（按数组顺序对应图一到图九）、视频画幅 ratio、视频时长 duration。',
+    '字段：分镜名称 title、视频提示词 prompt、参考图 images（按数组顺序对应图一到图九）、视频画幅 ratio、视频时长 duration、视频模型 model。',
     '参考图写在 images 里：path 为绝对路径（或相对素材库的路径），note 说明这张图是什么。',
-    'ratio / duration 可留空，留空时使用创建页所选渠道的默认值。',
+    'ratio / duration / model 可留空，留空时使用创建页所选渠道的默认值。',
+    'model 只对管理器豆包有用：Seedance 2.0 Mini 或 Seedance 2.0 Fast；Gemini 留空。',
   ],
   items: [
     {
@@ -59,13 +61,15 @@ const JSON_TEMPLATE = {
       ],
       duration: 10,
       ratio: '16:9',
+      model: 'Seedance 2.0 Fast',
     },
     {
       title: '镜头 02',
       prompt: '清晨的咖啡馆，窗边一束光落在桌面的手账上，镜头缓慢横移。',
       images: [],
       duration: 10,
-      ratio: '16:9',
+      ratio: '9:16',
+      model: '',
     },
   ],
 };
@@ -76,8 +80,8 @@ function jsonTemplate() {
 
 const XLSX_ROWS = [
   HEADERS,
-  ['镜头 01', '雨夜的旧城街道，霓虹灯倒映在积水里，镜头缓慢推近一名撑透明伞的少女。', 'D:/素材/ref-01.png;D:/素材/ref-02.png', '女主正面;女主背影', '16:9', '10'],
-  ['镜头 02', '清晨的咖啡馆，窗边一束光落在桌面的手账上，镜头缓慢横移。', '', '', '16:9', '10'],
+  ['镜头 01', '雨夜的旧城街道，霓虹灯倒映在积水里，镜头缓慢推近一名撑透明伞的少女。', 'D:/素材/ref-01.png;D:/素材/ref-02.png', '女主正面;女主背影', '16:9', '10', 'Seedance 2.0 Fast'],
+  ['镜头 02', '清晨的咖啡馆，窗边一束光落在桌面的手账上，镜头缓慢横移。', '', '', '9:16', '10', ''],
 ];
 const XLSX_HELP = [
   ['列名', '是否必填', '说明'],
@@ -87,6 +91,7 @@ const XLSX_HELP = [
   ['参考图说明（按顺序）', '否', '与参考图一一对应，说明这张图是什么（角色 / 首帧 / 场景）'],
   ['视频画幅', '否', '16:9 / 9:16 / 1:1 / 4:3 / 3:4；留空使用渠道默认值'],
   ['视频时长', '否', '1–15 的整数秒；留空使用渠道默认值'],
+  ['视频模型', '否', '只对管理器豆包生效：Seedance 2.0 Mini / Seedance 2.0 Fast；Gemini 留空'],
   [],
   ['注意', '', '表头按列名识别，顺序可以调整；多出来的列会原样保留并在页面上提示'],
   ['', '', '参考图路径不存在时，解析会在页面上标出具体行号，不会静默忽略'],
@@ -389,17 +394,19 @@ function normalizeItem(raw, line, errors, warnings) {
   }
   let ratio = null;
   if (raw.ratio != null && String(raw.ratio).trim() !== '') {
-    ratio = String(raw.ratio).trim();
+    // 中文输入法的全角冒号照样认
+    ratio = String(raw.ratio).trim().replace(/[：]/g, ':').replace(/\s+/g, '');
     if (!RATIOS.includes(ratio)) errors.push(`第 ${line} 行 画幅只能是 ${RATIOS.join(' / ')}`);
   }
   const prefixPrompt = raw.prefixPrompt == null ? '' : String(raw.prefixPrompt).trim().slice(0, 4000);
+  const model = raw.model == null ? '' : String(raw.model).trim().slice(0, 80);
   const images = normalizeImages(raw.images || [], raw.notes || [], line, errors);
   const extra = raw.extra && typeof raw.extra === 'object' ? raw.extra : {};
   for (const key of Object.keys(extra)) {
     if (['resolution', 'count', 'audios', 'audio', '参考音频', '参考音频路径', '参考音频说明', '分辨率', '生成张数', '张数'].includes(key)) delete extra[key];
   }
   void warnings;
-  return { line, title, prompt, prefixPrompt, images, duration, ratio, extra };
+  return { line, title, prompt, prefixPrompt, images, duration, ratio, model, extra };
 }
 
 const JSON_FIELD_ALIAS = {
@@ -408,6 +415,7 @@ const JSON_FIELD_ALIAS = {
   prefixPrompt: ['prefixPrompt', 'prefix', '视频前置提示词', '前置提示词'],
   duration: ['duration', 'seconds', '时长'],
   ratio: ['ratio', 'aspectRatio', 'aspect', '画幅', '比例'],
+  model: ['model', '模型', '视频模型'],
   images: ['images', 'refs', '参考图'],
 };
 const JSON_KNOWN_KEYS = new Set(Object.values(JSON_FIELD_ALIAS).flat());
@@ -434,7 +442,7 @@ function parseJson(buffer) {
     const line = index + 1;
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
       errors.push(`第 ${line} 条 item 必须是对象`);
-      return { line, title: '', prompt: '', images: [], duration: null, ratio: null, extra: {} };
+      return { line, title: '', prompt: '', images: [], duration: null, ratio: null, model: '', extra: {} };
     }
     const rawImages = pickJsonField(entry, 'images');
     const imageList = Array.isArray(rawImages) ? rawImages : [];
@@ -454,6 +462,7 @@ function parseJson(buffer) {
       prefixPrompt: pickJsonField(entry, 'prefixPrompt'),
       duration: pickJsonField(entry, 'duration'),
       ratio: pickJsonField(entry, 'ratio'),
+      model: pickJsonField(entry, 'model'),
       images: paths, notes,
       extra,
     }, line, errors, warnings);
@@ -506,6 +515,7 @@ function parseXlsx(buffer) {
       notes: splitList(cell('notes')),
       duration: cell('duration'),
       ratio: cell('ratio'),
+      model: cell('model'),
       extra,
     }, line, errors, warnings);
   });

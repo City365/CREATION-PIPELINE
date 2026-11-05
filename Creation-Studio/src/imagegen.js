@@ -3,6 +3,9 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const config = require('./config');
+const projects = require('./projects');
+const workspace = require('./workspace');
+const projectPaths = require('./project-paths');
 const { httpJson, fetchBuffer, encodeMultipart, mimeFor, extForMime, ensureDir, dayFolder, uid, kindOf } = require('./util');
 
 function apiUrl(baseUrl, suffix) {
@@ -242,9 +245,73 @@ async function generate(channel, input) {
   return buffers;
 }
 
-function saveImages(buffers, jobId) {
-  const cfg = config.load();
-  const dir = ensureDir(path.join(cfg.saveFolder, 'images', dayFolder()));
+/**
+ * 生图落盘目录：有项目就跟视频一样进 `<项目>/media/images/<日期>/`，
+ * 只有没有项目归属时才写到设置里的「媒体库目录」（旧数据的位置）。
+ * 以前这里写死 cfg.saveFolder，所以项目里的图跑去了旧媒体库，项目媒体库还看不到。
+ */
+function imagesRoot(projectId) {
+  let project = null;
+  try { project = projectId ? projects.get(String(projectId)) : null; } catch { project = null; }
+  return project ? workspace.pathsFor(project).media : config.load().saveFolder;
+}
+
+function stampName() {
+  return new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, '').replace('T', '-');
+}
+
+/**
+ * 覆盖前留档：同名资产被重新生成时，旧图挪到 `assets/.版本/<原目录>/<时间>-<文件名>`。
+ * `.版本` 以点开头，素材树不会把它当素材显示；聊天里之前的链接也就不会突然换脸。
+ */
+function backupExisting(projectId, rel, file) {
+  const root = projectPaths.dirOf(projectId);
+  if (!root || !fs.existsSync(file)) return '';
+  const dir = ensureDir(path.join(root, 'assets', '.版本', path.dirname(rel)));
+  const target = path.join(dir, `${stampName()}-${path.basename(file)}`);
+  fs.copyFileSync(file, target);
+  return target;
+}
+
+/** 固定路径落盘：项目资产图用它，路径传什么就存哪儿，同名覆盖并留档。 */
+function saveToTarget(buffers, projectId, targetPath) {
+  const target = projectPaths.targetFor(projectId, targetPath);
+  if (!projectPaths.hasExt(target.rel, projectPaths.IMAGE_EXT)) {
+    throw new Error('目标路径要写到图片文件名（.png / .jpg / .webp）：' + target.rel);
+  }
+  const ext = path.extname(target.rel);
+  const base = target.rel.slice(0, target.rel.length - ext.length);
+  const items = buffers.map((item, index) => {
+    const rel = index === 0 ? target.rel : `${base}-${index + 1}${ext}`;
+    const file = projectPaths.abs(projectId, rel);
+    ensureDir(path.dirname(file));
+    const backup = backupExisting(projectId, rel, file);
+    fs.writeFileSync(file, item.buffer);
+    return {
+      path: file,
+      rel,
+      name: path.basename(file),
+      bytes: item.buffer.length,
+      mime: item.mime,
+      kind: 'image',
+      url: projectPaths.fileUrl(projectId, rel),
+      replaced: Boolean(backup),
+      backup,
+    };
+  });
+  return { id: uid('img-'), dir: path.dirname(items[0].path), items, target: true };
+}
+
+/**
+ * 生图落盘。
+ * - 传了 targetPath（项目相对路径）→ 固定写到那个位置，用于「确定要当项目资产」的图；
+ * - 没传 → 走默认位置（`<项目>/media/images/<日期>/`，没有项目才落旧媒体库），
+ *   聊天里随手生成的图属于这一类，不进素材库、不覆盖任何资产。
+ */
+function saveImages(buffers, jobId, projectId, options = {}) {
+  const targetPath = String(options.targetPath || options.rel || '').trim();
+  if (targetPath) return saveToTarget(buffers, projectId, targetPath);
+  const dir = ensureDir(path.join(imagesRoot(projectId), 'images', dayFolder()));
   const id = jobId || uid('img-');
   const items = [];
   buffers.forEach((item, index) => {
@@ -252,7 +319,16 @@ function saveImages(buffers, jobId) {
     const name = `${id}-${String(index + 1).padStart(2, '0')}${ext}`;
     const file = path.join(dir, name);
     fs.writeFileSync(file, item.buffer);
-    items.push({ path: file, name, bytes: item.buffer.length, mime: item.mime, kind: 'image', url: '/api/file?path=' + encodeURIComponent(file) });
+    const rel = projectPaths.relOf(projectId, file);
+    items.push({
+      path: file,
+      rel,
+      name,
+      bytes: item.buffer.length,
+      mime: item.mime,
+      kind: 'image',
+      url: rel ? projectPaths.fileUrl(projectId, rel) : '/api/file?path=' + encodeURIComponent(file),
+    });
   });
   return { id, dir, items };
 }

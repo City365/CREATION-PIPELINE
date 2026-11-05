@@ -7,7 +7,7 @@ const path = require('node:path');
 
 const source = fs.readFileSync(path.join(__dirname, '../src/server.js'), 'utf8');
 const start = source.indexOf('function proxyAgent');
-const end = source.indexOf('async function route', start);
+const end = source.indexOf('async function handle', start);
 assert.ok(start > 0 && end > start, '在 server.js 里找不到 proxyAgent');
 
 const fn = source.slice(start, end);

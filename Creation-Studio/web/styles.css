@@ -420,6 +420,37 @@ tbody tr:hover { background: var(--wmd-bg-2); }
 
 .stage-live { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: var(--wmd-sp-3); padding: var(--wmd-sp-4); overflow: hidden; }
 
+/* 生成历史：抽卡要能对比前几版。一排放四个，点哪个舞台就回看哪个 */
+.stage-history { flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; }
+.stage-history-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--wmd-sp-2); font-size: var(--wmd-fs-1); color: var(--wmd-text-3); }
+.stage-history-head .hint { color: var(--wmd-text-3); opacity: .75; }
+.stage-history-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--wmd-sp-2); }
+.stage-history-card {
+  position: relative;
+  display: block;
+  min-width: 0;
+  padding: 0;
+  aspect-ratio: 16 / 9;
+  border: 1px solid var(--wmd-border);
+  background: var(--wmd-bg-1);
+  overflow: hidden;
+  cursor: pointer;
+}
+.stage-history-card video { display: block; width: 100%; height: 100%; object-fit: cover; background: #000; pointer-events: none; }
+.stage-history-card:hover { border-color: var(--wmd-border-strong); }
+.stage-history-card.is-on { border-color: var(--wmd-accent); box-shadow: inset 0 0 0 1px var(--wmd-accent); }
+.stage-history-tag {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  padding: 1px 5px;
+  font-size: var(--wmd-fs-1);
+  line-height: 1.5;
+  color: #fff;
+  background: rgba(0, 0, 0, .66);
+}
+.stage-history-card.is-on .stage-history-tag { color: var(--wmd-text-on-accent); background: var(--wmd-accent); }
+
 /* 舞台的两块用 display:contents 包起来：布局与原来一致，SSE 到达时只改这两块里的数字，不整页重画（整页重画就是屏幕一直闪） */
 #studio-stage, #studio-queue { display: contents; }
 .stage-video {
@@ -492,6 +523,33 @@ tbody tr:hover { background: var(--wmd-bg-2); }
 .zd-filemenu-pop .zd-filemenu-item { justify-content: flex-start; }
 .image-source-chip { flex: 1; min-width: 0; }
 .zs-panel-body > .zs-panel-foot { margin-top: auto; }
+/* 媒体库详情里的成片预览：不能被 modal 的 flex 压扁后裁掉上下（原来会只剩一条画面） */
+.media-detail-preview {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  background: #111;
+  border-radius: 10px;
+  overflow: hidden;
+}
+.media-detail-preview video {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 60vh;
+  object-fit: contain;
+  background: #111;
+}
+.media-detail-preview img {
+  display: block;
+  max-width: 100%;
+  max-height: 60vh;
+  object-fit: contain;
+}
+/* 图像反推：反推出来的提示词直接展开显示，不折叠——这块是要改的重点 */
+.zs-reverse-prompt { display: grid; gap: 6px; }
+.zs-reverse-hint { font-size: 12px; color: var(--wmd-text-3); }
+.zs-reverse-prompt .zs-textarea { width: 100%; line-height: 1.6; }
 .zs-panel-body .zs-generate-btn { text-transform: uppercase; letter-spacing: var(--wmd-track-btn); }.image-source-chip .zs-select { color: var(--wmd-text-2); }
 .zs-keystate-ready { color: var(--wmd-text-2); border-color: var(--wmd-border-strong); }
 .zs-keystate-ready .zs-keystate-dot { background: var(--wmd-text); }
@@ -530,6 +588,12 @@ tbody tr:hover { background: var(--wmd-bg-2); }
 .settings-pane { flex: 1; min-width: 0; overflow-y: auto; padding: var(--wmd-sp-4); display: flex; flex-direction: column; gap: var(--wmd-sp-4); }
 .settings-block { display: flex; flex-direction: column; gap: var(--wmd-sp-2); }
 .settings-block + .settings-block { padding-top: var(--wmd-sp-3); border-top: 1px solid var(--wmd-border); }
+.team-members { display: flex; flex-direction: column; gap: 6px; }
+.team-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--wmd-border); }
+.team-row .team-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.team-row .team-role { color: var(--wmd-text-2); font-size: 12px; }
+.team-add-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.team-add-row .input { flex: 1; min-width: 120px; }
 .settings-block-head { display: flex; align-items: center; gap: var(--wmd-sp-2); }
 .settings-block-head h3 {
   margin: 0;
@@ -1037,6 +1101,15 @@ html[data-theme="studio-mint"] .toast { box-shadow: 0 10px 26px rgba(32, 26, 70,
 
 .wmd-workflow-tag.is-manager { color: var(--wmd-info); border-color: var(--wmd-info); }
 .wmd-compose-field.is-model { flex: 1 1 200px; min-width: 180px; }
+/* 管理器豆包才有的「模型名称」：Seedance 2.0 Mini / Fast，跟画幅、时长并排一行。
+   多这一栏后其余几栏一起收窄，正好排进一行；模型名比「豆包」长，留够宽度别被截断。 */
+.wmd-compose-field.is-name { flex: 0 0 180px; min-width: 180px; }
+.wmd-compose-params.is-with-name .wmd-compose-field.is-model { flex: 0 1 130px; min-width: 120px; }
+.wmd-compose-params.is-with-name .wmd-compose-field.is-aspect { flex: 0 1 140px; min-width: 128px; }
+/* 模型名比「管理器 · 16:9 · 15s」长，单独占一行显示，不要截成省略号 */
+.wmd-generate-hint.is-two-line { white-space: normal; }
+.wmd-generate-hint .hint-seg { white-space: nowrap; }
+.wmd-generate-hint.is-two-line .hint-seg + .hint-seg { display: block; }
 
 /* ==================================================================
    剧本创作台：ask 页复刻（三栏 + 执行轨迹 + 命令/提及 + 管理页）
@@ -2504,6 +2577,37 @@ body.is-pane-resizing * { user-select: none !important; }
 .revise-form label em{font-style:normal;font-size:11px;font-weight:400;color:var(--wmd-text-3)}
 .revise-form .textarea{width:100%;resize:vertical;line-height:1.6;font-size:12px}
 .revise-form #revise-prompt{min-height:320px}
+/* 编辑分镜里直接改要发给管理器的比例 / 模型 */
+.revise-form .revise-params{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+.revise-form .revise-params label{min-width:0}
+.revise-form .revise-params .select{width:100%;height:32px;font-size:12px}
+.revise-form .revise-params .hint{padding-top:4px}
+/* 分镜卡片里失败提示的容器：自动刷新时只换这一块，空的时候不占位 */
+.evt-shot-flags{display:grid;gap:6px}
+.evt-shot-flags:empty{display:none}
+/* 排队 / 执行中的分镜：当前环节 + 进度条，等的时候有东西看 */
+.evt-shot-progress-slot:empty{display:none}
+.evt-shot-progress-head{display:flex;align-items:center;gap:8px;min-width:0;font-size:11px;color:var(--wmd-text-3)}
+.evt-shot-progress-head b{min-width:0;font-size:12px;font-weight:600;color:var(--wmd-text-1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.evt-shot-progress-head em{font-style:normal;font-variant-numeric:tabular-nums;font-weight:600;color:var(--wmd-text-2)}
+.evt-shot-bar{height:6px;margin-top:6px;border-radius:999px;overflow:hidden;background:var(--wmd-bg-3,var(--wmd-bg-2))}
+.evt-shot-bar i{display:block;height:100%;border-radius:999px;background:var(--task-blue,var(--wmd-accent,#5189ca));transition:width .45s ease}
+/* 编辑分镜里的参考图：图1、图2… 可放大 / 替换 / 删除 */.revise-refs{display:grid;gap:8px}
+.revise-refs .evt-section-head{align-items:center;gap:8px}
+.revise-refs-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:10px}
+.revise-ref{display:grid;gap:6px;margin:0;padding:6px;border:1px solid var(--wmd-border);border-radius:10px;background:var(--wmd-bg-2)}
+.revise-ref-zoom{position:relative;display:block;width:100%;padding:0;border:0;background:#000;border-radius:8px;overflow:hidden;cursor:zoom-in;aspect-ratio:1/1}
+.revise-ref-zoom img{display:block;width:100%;height:100%;object-fit:cover}
+.revise-ref figcaption{display:flex;align-items:center;gap:6px;min-width:0;font-size:11px;color:var(--wmd-text-2)}
+.revise-ref figcaption b{flex:0 0 auto;font-size:11px;font-weight:700;color:var(--wmd-text-1)}
+.revise-ref figcaption span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.revise-ref-ops{display:flex;gap:6px}
+.revise-ref-ops .btn{flex:1;justify-content:center;padding:0 6px;height:24px;font-size:11px}
+/* 参考图原图预览 */
+.evt-image-backdrop{position:fixed;inset:0;z-index:1200;display:flex;align-items:center;justify-content:center;padding:32px;background:#000c;cursor:zoom-out}
+.evt-image-modal{margin:0;display:grid;gap:8px;justify-items:center;max-width:min(1400px,92vw);max-height:92vh}
+.evt-image-modal img{display:block;max-width:100%;max-height:calc(92vh - 34px);object-fit:contain;border-radius:10px;background:#000}
+.evt-image-modal figcaption{font-size:12px;color:#e8e8ea}
 /* 媒体库：按项目 + 任务分组，成片按分镜名展示 */
 .media-project{display:inline-block;margin-right:10px;font-weight:600;color:var(--wmd-text-1)}
 .media-project-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
@@ -3202,8 +3306,9 @@ html[data-theme="studio-mint"] .modal { box-shadow: 0 34px 80px -30px #1d183a4d,
 .ask-plan-head{min-height:32px;padding:6px 10px;line-height:20px}
 .ask-plan-scroll{max-height:112px;padding:0 10px 6px}.ask-plan-scroll>p{display:none}.ask-plan-scroll li{min-height:24px;padding:2px 0;line-height:20px}.ask-plan-scroll li>b{font-size:11px}.ask-plan-scroll small{font-size:10px}
 
-/* User bubbles stay on the right; their wrapped text starts at the left edge. */
-.ask-message.is-user .ask-message-body{max-width:78%;margin-left:auto;margin-right:0}.ask-message.is-user .ask-message-text{text-align:left}.ask-message.is-user .ask-files,.ask-message.is-user .ask-media-grid,.ask-message.is-user .ask-reply-actions{justify-content:flex-end}
+/* 用户消息靠右，宽度贴合内容：短句不再撑成整行、正文和右下角的「删除这一轮/时间」隔着半个屏幕。
+   正文仍左对齐（长段落从左边起读），操作行贴这条消息的右下角。 */
+.ask-message.is-user .ask-message-body{width:fit-content;max-width:min(78%,640px);margin-left:auto;margin-right:0}.ask-message.is-user .ask-message-text{text-align:left}.ask-message.is-user .ask-files,.ask-message.is-user .ask-media-grid,.ask-message.is-user .ask-reply-actions{justify-content:flex-end}
 .ask-composer-bar>.ask-ref-toggle,.ask-composer-bar>.ask-perm{flex-shrink:0;white-space:nowrap}.ask-composer-context{flex-shrink:0}.ask-qpanel{max-height:36vh;overflow:auto}
 
 /* Only one stop control while a reply is running; sending uses Enter and the queue. */
@@ -3229,3 +3334,33 @@ html[data-theme="studio-mint"] .modal { box-shadow: 0 34px 80px -30px #1d183a4d,
 .ask-trace-row-detail > summary::before {content:"›";flex:none;color:var(--ask-muted)}
 .ask-trace-row-detail[open] > summary::before {content:"⌄"}
 .ask-trace-row-detail > pre {white-space:pre-wrap;overflow-wrap:anywhere;max-height:360px;overflow:auto;margin:6px 0 4px;padding:10px;border:1px solid var(--wmd-border,#ddd);border-radius:6px;font:11px/1.65 monospace;color:var(--wmd-text,#111);user-select:text}
+
+/* 素材库左侧资产树：整行可点，箭头跟在名称后面，右侧只列文件不列文件夹 */
+.lib-dir-row{display:flex;align-items:center;gap:6px;width:100%;box-sizing:border-box;border:0;background:transparent;color:var(--wmd-text-2);cursor:pointer;padding:5px 8px;border-radius:5px;text-align:left;font:inherit}
+.lib-dir-row:hover{background:var(--wmd-bg-2)}
+.lib-dir-row.active{background:var(--task-blue-soft,var(--wmd-bg-2));color:var(--task-blue)}
+.lib-dir-row .lib-node-main{flex:0 1 auto;width:auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:500}
+/* 箭头用 CSS 画三角：8px 的字形基线跟中文对不齐，画出来才和名称垂直居中 */
+.lib-dir-row .lib-caret{flex:none;width:0;height:0;margin:0 3px 0 1px;border-left:5px solid var(--wmd-text-3);border-top:4px solid transparent;border-bottom:4px solid transparent;transition:transform .12s ease}
+.lib-dir-row .lib-caret.is-open{transform:rotate(90deg)}
+.lib-dir-row:hover .lib-caret{border-left-color:var(--wmd-text)}
+.lib-dir-row.active .lib-caret{border-left-color:var(--task-blue)}
+.lib-dir-row .lib-count{flex:none;margin-left:auto;min-width:16px;text-align:right;font-style:normal;font-size:10px;color:var(--wmd-text-3)}
+.asset-folders{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 14px}
+.asset-folder{display:flex;align-items:center;gap:8px;max-width:260px;padding:8px 10px;border:1px solid var(--wmd-border);background:var(--wmd-bg-1);color:var(--wmd-text);cursor:pointer;border-radius:6px;font-size:12px}
+.asset-folder:hover{border-color:var(--wmd-border-strong);background:var(--wmd-bg-2)}
+.asset-folder-icon{font-size:14px;line-height:1}
+.asset-folder-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.asset-folder em{font-style:normal;font-size:10px;color:var(--wmd-text-3)}
+/* 点图的详情弹窗：左边放大看，右边资料卡 */
+.asset-detail-body{display:flex;flex-direction:row;gap:16px;align-items:flex-start}
+.asset-detail-preview{flex:1 1 auto;min-width:0;max-height:64vh;flex-shrink:1;display:grid;place-items:center;background:var(--wmd-bg-1);border:1px solid var(--wmd-border);padding:8px}
+.asset-detail-preview img{max-width:100%;max-height:60vh;object-fit:contain;cursor:zoom-in}
+.asset-detail-preview audio{width:100%}
+.asset-detail-facts{flex:0 0 300px;margin:0;display:grid;grid-template-columns:1fr;gap:6px 10px;font-size:12px;align-self:stretch}
+.asset-detail-facts>div{display:grid;grid-template-columns:76px minmax(0,1fr);gap:8px;align-items:start;padding:3px 0;border-bottom:1px dashed var(--wmd-border)}
+.asset-detail-facts>div.wide{grid-template-columns:76px minmax(0,1fr)}
+.asset-detail-facts dt{color:var(--wmd-text-3);font-size:11px}
+.asset-detail-facts dd{margin:0;color:var(--wmd-text);overflow-wrap:anywhere;font-size:12px;line-height:1.5}
+.asset-detail-facts dd.mono{font-family:var(--wmd-mono);font-size:11px}
+@media (max-width: 900px){ .asset-detail-body{flex-direction:column} .asset-detail-facts{flex:1 1 auto;width:100%} }

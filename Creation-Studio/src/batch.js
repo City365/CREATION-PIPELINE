@@ -43,11 +43,37 @@ function promptText(value) {
   return String(value).trim();
 }
 
-function pickAspect(value, fallback) {
-  if (!value) return fallback;
-  const raw = String(value).trim();
+function aspectShort(value) {
+  if (!value) return '';
+  // 中文输入法容易打出全角冒号，画幅写作 16：9 也要认
+  const raw = String(value).trim().replace(/[：]/g, ':').replace(/\s+/g, '');
   const hit = workflows.ASPECTS.find((a) => a.key === raw || a.short === raw || raw.includes(a.short));
-  return hit ? hit.key : fallback;
+  return hit ? hit.short : '';
+}
+
+function pickAspect(value, fallback) {
+  const short = aspectShort(value);
+  return short ? (workflows.ASPECTS.find((a) => a.short === short) || {}).key || fallback : fallback;
+}
+
+// 批量 JSON 里的画幅可以写 ratio / aspectRatio / aspect / 画幅 / 比例，统一成工作流的画幅键。
+function pickRatio(task, defaults, fallback) {
+  for (const value of [task.ratio, task.aspectRatio, task.aspect, task['画幅'], task['比例'], defaults.ratio, defaults.aspectRatio]) {
+    if (value !== undefined && value !== null && String(value).trim() !== '') return String(value).trim();
+  }
+  return '';
+}
+
+// 批量 JSON 里的模型可以写 model / 模型 / 视频模型。豆包是 Seedance 2.0 Mini / Fast，Gemini 留空。
+function pickModel(task, defaults) {
+  for (const value of [task.model, task['模型'], task['视频模型'], defaults.model, defaults['模型']]) {
+    if (value !== undefined && value !== null && String(value).trim() !== '') {
+      // 归一成管理器页面上看得见的文案（seedance-2.0-fast → Seedance 2.0 Fast），认不出的原样保留
+      const { normalizeModel } = require('../plugins/video/browser-manager/protocol');
+      return normalizeModel(value);
+    }
+  }
+  return '';
 }
 
 function parseBatch(input, opts = {}) {
@@ -103,13 +129,18 @@ function parseBatch(input, opts = {}) {
     const duration = Number(t.duration ?? defaults.duration ?? 10);
     if (!Number.isInteger(duration) || duration < 1 || duration > 15) errors.push('duration 必须是 1–15 的整数秒');
     const repeat = Math.max(1, Math.min(20, Number(t.repeat ?? defaults.repeat ?? 1)));
+    const ratioValue = pickRatio(t, defaults, workflows.ASPECTS[0].key);
+    if (ratioValue && !aspectShort(ratioValue)) {
+      errors.push(`画幅只能是 ${workflows.ASPECTS.map((a) => a.short).join(' / ')}（收到 ${ratioValue}）`);
+    }
     return {
       index: index + 1,
       title: String(t.title || t.name || `任务 ${index + 1}`).slice(0, 60),
       prompt,
       images,
       audios,
-      aspectRatio: pickAspect(t.aspectRatio ?? defaults.aspectRatio, workflows.ASPECTS[0].key),
+      aspectRatio: pickAspect(ratioValue, workflows.ASPECTS[0].key),
+      model: pickModel(t, defaults),
       resolution: String(t.resolution ?? defaults.resolution ?? ''),
       megapixels: Number(t.megapixels ?? defaults.megapixels ?? 0) || 0,
       megapixels2: Number(t.megapixels2 ?? defaults.megapixels2 ?? 0) || 0,
@@ -142,6 +173,7 @@ function toJobInputs(batch, workflowId) {
         audios: task.audios.map((a) => ({ path: a.path, name: a.name })),
         workflowId,
         aspectRatio: task.aspectRatio,
+        ...(task.model ? { model: task.model } : {}),
         resolution: task.resolution || wf.defaultResolution,
         megapixels: task.megapixels || wf.megapixelsDefault,
         megapixels2: task.megapixels2 || (wf.pass2 ? wf.pass2.default : 0),
@@ -153,4 +185,4 @@ function toJobInputs(batch, workflowId) {
   return out;
 }
 
-module.exports = { parseBatch, toJobInputs, promptText, resolveFile, SECTION_ORDER };
+module.exports = { parseBatch, toJobInputs, promptText, resolveFile, pickAspect, pickRatio, pickModel, aspectShort, SECTION_ORDER };

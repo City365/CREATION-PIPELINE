@@ -7,10 +7,12 @@
  */
 const path = require('node:path');
 const config = require('./config');
-const { readJson, writeJson, uid } = require('./util');
+const { uid } = require('./util');
+const db = require('./db');
 
+/** 剧集分组存 SQLite：按项目一行，和项目数据一起走。 */
 function storeFile() {
-  return path.join(config.DATA, 'media-episodes.json');
+  return db.file();
 }
 
 function normalize(raw) {
@@ -40,11 +42,32 @@ function normalize(raw) {
 }
 
 function read() {
-  return normalize(readJson(storeFile(), null));
+  const rows = db.open().prepare('SELECT project, payload FROM media_episodes').all();
+  const raw = { version: 1, projects: {} };
+  for (const row of rows) {
+    try { raw.projects[row.project] = JSON.parse(row.payload); } catch { /* 坏行跳过，不影响其它项目 */ }
+  }
+  return normalize(raw);
 }
 
 function write(data) {
-  writeJson(storeFile(), data);
+  const conn = db.open();
+  const now = Date.now();
+  const projects = (data && data.projects) || {};
+  conn.exec('BEGIN');
+  try {
+    for (const [project, row] of Object.entries(projects)) {
+      conn.prepare('INSERT INTO media_episodes(project, payload, updated_at) VALUES (?,?,?) ON CONFLICT(project) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at')
+        .run(String(project), JSON.stringify(row || {}), now);
+    }
+    const keep = Object.keys(projects);
+    if (keep.length) conn.prepare('DELETE FROM media_episodes WHERE project NOT IN (' + keep.map(() => '?').join(',') + ')').run(...keep);
+    else conn.prepare('DELETE FROM media_episodes').run();
+    conn.exec('COMMIT');
+  } catch (error) {
+    try { conn.exec('ROLLBACK'); } catch { /* ignore */ }
+    throw error;
+  }
 }
 
 function rowOf(data, projectId) {

@@ -1,0 +1,117 @@
+{
+  "schemaVersion": "0.4.2",
+  "authorization": {
+    "overloadOnly": true,
+    "basis": "用户明确允许：语义不变且台词真实过载时改写，特别焦急允许6—6.5字/秒；护士句按本次事故＋患者状态示例取舍"
+  },
+  "edits": [
+    {
+      "group": 1,
+      "shot": 2,
+      "voiceIndex": 1,
+      "speaker": "护士长",
+      "channel": "现场对白",
+      "original": "林副教授！调度台紧急呼叫，清潭洞隧道多车翻滚追尾，两分钟后送达一名重度创伤男性，进行性意识障碍伴随胸腔闭锁不全！",
+      "revised": "清潭洞隧道车祸，患者将到！进行性意识障碍，伴胸腔闭锁不全！",
+      "triggerReason": "原条全声窗内，合理并行及特别焦急语速下原句仍超过容量；见before与同ID计时",
+      "parallelismReviewed": true,
+      "sceneRateReviewed": true,
+      "before": {
+        "spokenText": "林副教授！调度台紧急呼叫，清潭洞隧道多车翻滚追尾，两分钟后送达一名重度创伤男性，进行性意识障碍伴随胸腔闭锁不全！"
+      },
+      "protectedSpans": [
+        "清潭洞隧道",
+        "进行性意识障碍",
+        "胸腔闭锁不全"
+      ],
+      "semanticReview": {
+        "status": "reviewed",
+        "reviewer": "本地转换编写者；未进行真人复审或临床核验",
+        "preservedFacts": [
+          "清潭洞隧道事故",
+          "患者即将送达",
+          "进行性意识障碍",
+          "伴胸腔闭锁不全"
+        ],
+        "omissions": [
+          {
+            "text": "称呼、调度套话、事故具体翻滚追尾形式；用户示例已允许将两分钟概括为即将并省略男性/重度修饰，原背景仍保留这些设定",
+            "reason": "仅本次用户明确示例允许的核心取舍，不推广到其他剧情"
+          }
+        ]
+      }
+    },
+    {
+      "group": 1,
+      "shot": 3,
+      "voiceIndex": 1,
+      "speaker": "林知夏",
+      "channel": "现场对白",
+      "original": "推一号抢救室，备血400cc，让神经外科二组值班医生待命！",
+      "revised": "推一号抢救室，备血400cc，神外二组值班医生待命！",
+      "triggerReason": "原条全声窗内，合理并行及特别焦急语速下原句仍超过容量；见before与同ID计时",
+      "parallelismReviewed": true,
+      "sceneRateReviewed": true,
+      "before": {
+        "spokenText": "推一号抢救室，备血四百西西，让神经外科二组值班医生待命！"
+      },
+      "protectedSpans": [
+        "一号抢救室",
+        "400cc",
+        "二组值班医生待命"
+      ],
+      "semanticReview": {
+        "status": "reviewed",
+        "reviewer": "本地转换编写者；未进行真人复审或临床核验",
+        "preservedFacts": [
+          "一号抢救室",
+          "备血400cc",
+          "神经外科二组值班医生待命"
+        ],
+        "omissions": [
+          {
+            "text": "让；神经外科使用原看点中已有简称神外",
+            "reason": "同义简称或冗余结构；核心数字、侧别及目标保留"
+          }
+        ]
+      }
+    },
+    {
+      "group": 2,
+      "shot": 1,
+      "voiceIndex": 1,
+      "speaker": "急救员",
+      "channel": "现场对白",
+      "original": "血压70/40，心率130，双侧瞳孔不等大，左侧对光反射迟钝！",
+      "revised": "血压70/40，心率130，双瞳不等大，左侧对光迟钝！",
+      "triggerReason": "原条全声窗内，合理并行及特别焦急语速下原句仍超过容量；见before与同ID计时",
+      "parallelismReviewed": true,
+      "sceneRateReviewed": true,
+      "before": {
+        "spokenText": "血压七十，四十，心率一三零，双侧瞳孔不等大，左侧对光反射迟钝！"
+      },
+      "protectedSpans": [
+        "70/40",
+        "130",
+        "左侧",
+        "迟钝"
+      ],
+      "semanticReview": {
+        "status": "reviewed",
+        "reviewer": "本地转换编写者；未进行真人复审或临床核验",
+        "preservedFacts": [
+          "血压70/40",
+          "心率130",
+          "双侧瞳孔大小不等",
+          "左侧对光反应迟钝"
+        ],
+        "omissions": [
+          {
+            "text": "双侧瞳孔→双瞳；对光反射迟钝→对光迟钝；不改数值、侧别或迟钝程度",
+            "reason": "同义简称或冗余结构；核心数字、侧别及目标保留"
+          }
+        ]
+      }
+    }
+  ]
+}

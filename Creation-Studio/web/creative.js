@@ -28,13 +28,18 @@ async function openLayerEditor(item){
 /* ---------------------------------------------------------------- 场景建模
    流程与「图像反推」一致：源图（可选）→ 场景描述 → 四条机位提示词 → 逐张出图 → 合成 16:9 四宫格。 */
 const SCENE_VIEW_DEFS = [['front', '正视', '正面机位'], ['side', '侧视', '侧面机位'], ['back', '反视', '背面机位'], ['top', '俯视', '俯视全景']];
-function sceneFlowKey() { return 'wmd.sceneFlow.' + ceProject(); }
+/* 每个「画面」条目各自一份场景建模数据：新建/切换条目不能继承上一个的内容。
+   条目 id 来自画面目录（WB），没有条目时退回项目级默认，保证旧数据还能读出来。 */
+function ceSceneItemId() {
+  try { return (typeof WB !== 'undefined' && WB.context && WB.context('image').itemId) || ''; } catch { return ''; }
+}
+function sceneFlowKey() { return 'wmd.sceneFlow.' + ceProject() + (ceSceneItemId() ? '.' + ceSceneItemId() : ''); }
 function sceneFlow() {
   const key = sceneFlowKey();
   if (creativeState.flowKey !== key) {
     creativeState.flowKey = key;
-    let saved = null;
-    try { saved = JSON.parse(localStorage.getItem(key) || 'null'); } catch { saved = null; }
+    // 先看这个条目自己的本地存档，再看它自己的草稿；都没有才是空场景，绝不继承别的画面
+    const saved = sceneFlowSavedFor(key);
     const views = SCENE_VIEW_DEFS.map(([id, label, hint]) => {
       const old = (saved && saved.views || []).find((v) => v.id === id) || {};
       return { id, label, hint, prompt: old.prompt || '', image: old.image || null };
@@ -42,6 +47,8 @@ function sceneFlow() {
     creativeState.flow = {
       name: '', description: '', source: null, prefix: '', summary: '', composite: null,
       llmChannel: '', imageChannel: '', busy: '', viewBusy: {}, ...(saved || {}), views,
+      // 记住这份数据属于哪个条目：跑批途中切换画面时，结果不能写进别的条目
+      _key: key, _itemId: ceSceneItemId(),
     };
   }
   return creativeState.flow;
@@ -49,13 +56,32 @@ function sceneFlow() {
 function sceneFlowSave() {
   const f = creativeState.flow;
   if (!f) return;
+  const payload = {
+    name: f.name, description: f.description, source: f.source, prefix: f.prefix, summary: f.summary,
+    composite: f.composite, llmChannel: f.llmChannel, imageChannel: f.imageChannel,
+    views: f.views.map((v) => ({ id: v.id, prompt: v.prompt, image: v.image })),
+  };
+  try { localStorage.setItem(f._key || sceneFlowKey(), JSON.stringify(payload)); } catch { /* 本地保存失败不影响使用 */ }
+  // 同时写进当前「画面」条目的草稿，换机器/清缓存也能跟着条目走；条目已经换了就不写
   try {
-    localStorage.setItem(sceneFlowKey(), JSON.stringify({
-      name: f.name, description: f.description, source: f.source, prefix: f.prefix, summary: f.summary,
-      composite: f.composite, llmChannel: f.llmChannel, imageChannel: f.imageChannel,
-      views: f.views.map((v) => ({ id: v.id, prompt: v.prompt, image: v.image })),
-    }));
-  } catch { /* 本地保存失败不影响使用 */ }
+    const owner = f._itemId || '';
+    const active = ceSceneItemId();
+    if (typeof state !== 'undefined' && state.image && (!owner || owner === active)) {
+      state.image.sceneFlow = payload;
+      if (typeof WB !== 'undefined' && WB.schedule) WB.schedule('image');
+    }
+  } catch { /* ignore */ }
+}
+function sceneFlowSavedFor(key) {
+  try {
+    const local = JSON.parse(localStorage.getItem(key) || 'null');
+    if (local && (local.views || local.name || local.description)) return local;
+  } catch { /* ignore */ }
+  try {
+    const draft = (typeof state !== 'undefined' && state.image && state.image.sceneFlow) || null;
+    if (draft && (draft.views || draft.name || draft.description)) return draft;
+  } catch { /* ignore */ }
+  return null;
 }
 function sceneProjectStylePrefix() { return String((state.styleDetail && state.styleDetail.scene) || '').trim(); }
 function sceneCaptureInputs() {
@@ -91,16 +117,72 @@ function sceneSourceHtml(f) {
   </div>`;
 }
 
+function sceneWaitElapsedText(startedAt) {
+  const seconds = Math.max(0, Math.round((Date.now() - (Number(startedAt) || Date.now())) / 1000));
+  return seconds >= 60 ? `已等 ${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒` : `已等 ${seconds} 秒`;
+}
+
+/** 出图中：图片区中间转圈 + 已等时长 + 进度条（整批生成时按第几张走） */
+function sceneWaitHtml(view, f, startedAt) {
+  const all = f.busy === 'all';
+  const withPrompt = f.views.filter((x) => String(x.prompt || '').trim());
+  const index = withPrompt.findIndex((x) => x.id === view.id) + 1;
+  const done = withPrompt.filter((x) => x.image).length;
+  const bar = all && withPrompt.length
+    ? `<div class="scn-wait-bar is-live"><i style="width:${Math.max(6, Math.round((done / withPrompt.length) * 100))}%"></i></div>`
+    : '<div class="scn-wait-bar is-indeterminate"><i></i></div>';
+  const title = all && index > 0 ? `第 ${index}/${withPrompt.length} 张 · 生成中` : '正在生成';
+  return `<div class="scn-wait" data-scn-wait="${esc(view.id)}">
+    <span class="scn-ring" aria-hidden="true"></span>
+    <b>${esc(title)}</b>
+    <em data-scn-wait-elapsed="${Number(startedAt) || Date.now()}">${esc(sceneWaitElapsedText(startedAt))}</em>
+    ${bar}
+  </div>`;
+}
+
+let sceneWaitTimer = 0;
+function sceneWaitTick() {
+  const nodes = document.querySelectorAll('[data-scn-wait-elapsed]');
+  const elapsed = document.querySelectorAll('[data-scn-elapsed]');
+  if (!nodes.length && !elapsed.length) { if (sceneWaitTimer) { clearInterval(sceneWaitTimer); sceneWaitTimer = 0; } return; }
+  for (const node of nodes) {
+    const text = sceneWaitElapsedText(node.dataset.scnWaitElapsed);
+    if (node.textContent !== text) node.textContent = text;
+  }
+  // 「反推提示词」跑在智能体里要几分钟，给个已等时长，用户不会以为卡死
+  for (const node of elapsed) {
+    const text = sceneWaitElapsedText(node.dataset.scnElapsed).replace('已等 ', '');
+    if (node.textContent !== text) node.textContent = text;
+  }
+}
+function sceneStartWaitTicker() {
+  if (!document.querySelector('[data-scn-wait-elapsed]') && !document.querySelector('[data-scn-elapsed]')) {
+    if (sceneWaitTimer) { clearInterval(sceneWaitTimer); sceneWaitTimer = 0; }
+    return;
+  }
+  if (!sceneWaitTimer) sceneWaitTimer = setInterval(sceneWaitTick, 1000);
+  sceneWaitTick();
+}
+
 function sceneViewCard(v) {
   const f = sceneFlow();
-  const busy = f.viewBusy[v.id] || f.busy === 'all';
+  const startedAt = typeof f.viewBusy[v.id] === 'number' ? f.viewBusy[v.id] : 0;
+  const active = !!startedAt;
+  const queued = !active && f.busy === 'all' && !v.image;
+  const busy = active || f.busy === 'all';
+  const buttonText = active ? '生成中…' : queued ? '排队中…' : v.image ? '重画' : '生成';
+  const placeholder = !v.image
+    ? (queued
+      ? `<span class="scn-shot-empty">排队中 · 等前面一张出完</span>`
+      : `<span class="scn-shot-empty">${v.prompt ? '等待生成' : '先出提示词'}</span>`)
+    : '';
   return `<article class="scn-card ${v.image ? 'has-image' : ''}">
     <header class="scn-card-head">
       <b>${esc(v.label)}</b><span>${esc(v.hint)}</span>
-      <button type="button" class="btn sm" data-scn-gen="${esc(v.id)}" ${v.prompt && !busy ? '' : 'disabled'}>${busy ? '生成中…' : v.image ? '重画' : '生成'}</button>
+      <button type="button" class="btn sm" data-scn-gen="${esc(v.id)}" ${v.prompt && !busy ? '' : 'disabled'}>${buttonText}</button>
     </header>
     <textarea class="scn-prompt" data-scn-prompt="${esc(v.id)}" placeholder="四条机位提示词生成后会自动填进这里，也可以自己改写">${esc(v.prompt)}</textarea>
-    <div class="scn-shot">${v.image ? `<img src="${esc(v.image.url)}" alt="">` : `<span class="scn-shot-empty">${v.prompt ? '等待生成' : '先出提示词'}</span>`}</div>
+    <div class="scn-shot">${v.image ? `<img src="${esc(v.image.url)}" alt="">` : ''}${placeholder}${active ? sceneWaitHtml(v, f, startedAt) : ''}</div>
   </article>`;
 }
 
@@ -120,14 +202,14 @@ function sceneWorkspaceHtml() {
     </div>
     <aside class="ce-side scn-side">
       <label>名称<input class="input" id="scn-name" value="${esc(f.name)}" placeholder="例如：青竹书房"></label>
-      <label>场景描述<textarea id="scn-description" class="textarea scn-textarea" rows="8" placeholder="空间用途、门窗、家具与摆放、材质色彩、光线；没有图就直接写，有图可以先反推">${esc(f.description)}</textarea></label>
+      <label class="scn-desc">场景描述<textarea id="scn-description" class="textarea scn-textarea" rows="8" placeholder="空间用途、门窗、家具与摆放、材质色彩、光线；没有图就直接写，有图可以先反推">${esc(f.description)}</textarea></label>
       <div class="scn-label">源图（可选）</div>
       ${sceneSourceHtml(f)}
       <div class="scn-actions">
         <button type="button" class="btn primary" data-scn="prompts" ${f.busy ? 'disabled' : ''}>${f.busy === 'prompts' ? sceneBusyText('prompts') : '生成四视图提示词'}</button>
         <button type="button" class="btn" data-scn="reset" ${f.busy ? 'disabled' : ''}>清空</button>
       </div>
-      ${f.busy === 'prompts' ? '<div class="scn-busy"><i class="scn-spin"></i>正在推理四条机位提示词，通常 20–60 秒…</div>' : ''}
+      ${f.busy === 'prompts' ? `<div class="scn-busy"><i class="scn-spin"></i>智能体正在按「场景4视图反推」技能推理（读技能 → 建坐标 → 算机位 → 写提示词，约 3–5 分钟）：已等 <span data-scn-elapsed="${Number(f.promptsStartedAt) || Date.now()}">0 秒</span></div>` : ''}
       <p class="hint">有图：先反推成场景描述，再推理四条机位提示词；没图：直接按描述推理。四条提示词同一空间，只换机位。</p>
     </aside>
     <section class="ce-main scn-main">
@@ -266,34 +348,72 @@ function bindSceneWorkspace(root) {
     finally { f.busy = ''; render(); }
   }
 
+  // 把一套推理结果写进当前画面：四条提示词 + 摘要 + 合集
+  function sceneApplyPrompts(data) {
+    if (!data || !Array.isArray(data.views)) return false;
+    let filled = 0;
+    f.summary = data.summary || '';
+    for (const view of data.views) {
+      const target = f.views.find((v) => v.id === view.id);
+      if (target && view.prompt) { target.prompt = view.prompt; filled += 1; }
+    }
+    if (data.composite && !f.composite) f.compositeNote = data.composite;
+    sceneFlowSave();
+    return filled > 0;
+  }
+
   async function makePrompts() {
     sceneCaptureInputs();
     if (!String(f.description || '').trim()) return toast('先写场景描述，或用源图反推', true);
+    const itemId = ceSceneItemId();
+    f.promptsStartedAt = Date.now();
     f.busy = 'prompts'; render();
     try {
       const data = await ceCall('scene/view-prompts', {
-        name: f.name, description: f.description, channelId: llmId(), sourcePath: f.source ? f.source.path : '',
+        name: f.name, description: f.description, channelId: llmId(), itemId, sourcePath: f.source ? f.source.path : '',
       });
       if (projectKey !== ceProject()) return;
-      f.summary = data.summary || '';
-      for (const view of data.views) {
-        const target = f.views.find((v) => v.id === view.id);
-        if (target) target.prompt = view.prompt;
-      }
-      sceneFlowSave();
+      if (!sceneApplyPrompts(data)) throw new Error('智能体没有返回可用的四条机位提示词');
       toast('四条机位提示词已生成');
-    } catch (err) { toast(err.message, true); }
-    finally { f.busy = ''; render(); }
+    } catch (err) {
+      // 推理要好几分钟，连接断了（服务重启、超时）时把这条画面上一次的存底取回来，不让白等
+      let rescued = false;
+      try {
+        const last = await api('/api/creative/scene/view-prompts/last?projectId=' + encodeURIComponent(ceProject()) + '&itemId=' + encodeURIComponent(itemId || ''));
+        if (projectKey === ceProject() && sceneApplyPrompts(last)) {
+          rescued = true;
+          toast('已取回上次的推理结果（刚才的连接中断了，结果没丢）');
+        }
+      } catch { /* 没有存底就照原样报错 */ }
+      if (!rescued) toast(err.message, true);
+    }
+    finally { f.busy = ''; f.promptsStartedAt = 0; render(); }
+  }
+
+  // 出图参考：源图只借材质；非正视时把已经出好的正视图当参考，但机位必须按本图换——
+  // 否则四张会被参考图带着画成一模一样的构图。
+  function sceneViewReferences(view) {
+    const sourceRef = f.source && f.source.path
+      ? { path: f.source.path, name: f.source.name || '场景源图', role: '场景源图：只借材质、家具造型与配色；机位必须按本图机位重画，不许照抄这张图的视角与构图' }
+      : null;
+    if (view.id === 'front') return sourceRef ? [sourceRef] : [];
+    // 非正视优先挂已经出好的正视图：源图那张的角度会把这四张都带成同一个构图，所以只留正视图
+    const front = f.views.find((v) => v.id === 'front' && v.image && v.image.path);
+    if (front) {
+      return [{ path: front.image.path, name: '同一空间正视图', role: '同一房间的正视图：只借家具造型、材质与配色；本图必须换成本图机位，不许复制这张图的构图、遮挡与视角' }];
+    }
+    return sourceRef ? [sourceRef] : [];
   }
 
   async function generateOne(view) {
     if (!view.prompt.trim()) return toast('这条机位还没有提示词', true);
     sceneCaptureInputs();
-    f.viewBusy[view.id] = true; render();
+    f.viewBusy[view.id] = Date.now(); render();
     try {
       const data = await ceCall('scene/view-image', {
         view: view.id, prompt: view.prompt, prefix: f.prefix || sceneProjectStylePrefix(),
         channelId: imageId(), sourcePath: f.source ? f.source.path : '',
+        references: sceneViewReferences(view),
       });
       if (projectKey !== ceProject()) return;
       if (data.items && data.items[0]) view.image = data.items[0];
@@ -308,11 +428,12 @@ function bindSceneWorkspace(root) {
     try {
       for (const view of f.views) {
         if (!view.prompt.trim()) continue;
-        f.viewBusy[view.id] = true; render();
+        f.viewBusy[view.id] = Date.now(); render();
         try {
           const data = await ceCall('scene/view-image', {
             view: view.id, prompt: view.prompt, prefix: f.prefix || sceneProjectStylePrefix(),
             channelId: imageId(), sourcePath: f.source ? f.source.path : '',
+            references: sceneViewReferences(view),
           });
           if (projectKey !== ceProject()) return;
           if (data.items && data.items[0]) view.image = data.items[0];
@@ -379,6 +500,9 @@ function bindSceneWorkspace(root) {
       }
     } catch (err) { toast(err.message, true); }
   });
+
+  // 出图期间让「已等 xx 秒」自己走：只改文字，不重画整页，画面不闪
+  sceneStartWaitTicker();
 }
 
 

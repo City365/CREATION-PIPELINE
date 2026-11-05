@@ -51,14 +51,21 @@ test('成片维护：重命名 / 删除进 _trash / 上传补片 / 替换成片'
     if (!res.ok || !json.ok) throw new Error(JSON.stringify(json));
     return json.data;
   };
-  const jobState = () => JSON.parse(fs.readFileSync(path.join(dir, 'jobs.json'), 'utf8')).jobs.find((job) => job.id === 'job-out-1');
+  const { DatabaseSync } = require('node:sqlite');
+  const jobState = () => {
+    const db = new DatabaseSync(path.join(dir, 'wmd.sqlite'));
+    try {
+      const row = db.prepare('SELECT data FROM jobs WHERE id = ?').get('job-out-1');
+      return row ? JSON.parse(row.data) : null;
+    } finally { db.close(); }
+  };
   const params = () => JSON.parse(fs.readFileSync(path.join(mediaDir, 'params.json'), 'utf8'));
   try {
     await until(async () => (await fetch(base + '/api/health')).ok);
 
     // 重命名：文件和两处记录一起改
     const renamed = await post('/api/jobs/job-out-1/output/rename?path=' + encodeURIComponent(original), { name: '抢救室-定稿' });
-    await delay(250); // jobs.json 是延迟落盘，等它写完再读文件校验
+    await delay(250); // 任务状态延迟落库，等它写完再查库校验
     assert.equal(renamed.out.name, '抢救室-定稿.mp4');
     const renamedPath = path.join(mediaDir, '抢救室-定稿.mp4');
     assert.ok(fs.existsSync(renamedPath), '文件应该改成新名字');

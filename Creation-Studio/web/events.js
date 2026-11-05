@@ -426,6 +426,7 @@ const Events = (() => {
         duration: Math.max(1, Math.min(15, Number(item.duration) || defaultDuration)),
         ratio,
         aspectRatio: ratio,
+        ...(item.model ? { model: item.model } : {}),
         workflowId: draft.workflowId,
       };
     });
@@ -906,7 +907,8 @@ const Events = (() => {
         prompt: String(input.userPrompt || input.prompt || ''),
         images: (Array.isArray(input.images) ? input.images : Array.isArray(input.refs) ? input.refs : []).map((image) => ({ path: image.path, name: image.name || '', note: image.note || '' })),
         duration: input.duration || null,
-        ratio: input.aspectRatio || input.imageRatio || '16:9',
+        ratio: (String(input.aspectRatio || input.imageRatio || '').match(/\d+:\d+/) || ['16:9'])[0],
+        model: input.model || '',
         extra: input.extra || {},
       })),
     };
@@ -933,12 +935,20 @@ const Events = (() => {
   }
 
   function closeDrawer(immediate = false) {
+    stopDrawerAutoRefresh();
     const drawer = document.getElementById('evt-drawer');
     if (!drawer) return;
     drawer.classList.remove('is-open');
     if (immediate) drawer.remove();
     else setTimeout(() => drawer.remove(), 180);
     if (!document.querySelector('#modal:not([hidden])')) document.body.style.overflow = '';
+  }
+
+  /* ---------------- 任务详情自动刷新：跑着的任务自己更新，不用切 tab ---------------- */
+
+  let drawerAutoTimer = 0;
+  function stopDrawerAutoRefresh() {
+    if (drawerAutoTimer) { clearInterval(drawerAutoTimer); drawerAutoTimer = 0; }
   }
 
   /* ---------------- 成片右键菜单：播放 / 重命名 / 替换 / 删除 ---------------- */
@@ -998,6 +1008,33 @@ const Events = (() => {
     };
     document.body.append(input);
     input.click();
+  }
+
+  /** 参考图换图 / 加图：选本地图片 → 走原始上传接口落盘，拿到新路径 */
+  function pickLocalImage(onPick) {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.style.display = 'none';
+    input.onchange = () => {
+      const file = input.files && input.files[0];
+      input.remove();
+      if (file) onPick(file);
+    };
+    document.body.append(input);
+    input.click();
+  }
+
+  async function uploadRefImage(file) {
+    const query = new URLSearchParams({ name: file.name || 'reference.png' });
+    const res = await fetch('/api/upload/raw?' + query.toString(), {
+      method: 'POST',
+      headers: { 'Content-Type': file.type || 'image/png' },
+      body: file,
+    });
+    const payload = await res.json().catch(() => null);
+    if (!payload || !payload.ok) throw new Error((payload && payload.error) || `上传失败 HTTP ${res.status}`);
+    return payload.data;
   }
 
   async function uploadOutput(jobId, action, outPath, file) {
@@ -1175,6 +1212,19 @@ const Events = (() => {
     void refresh;
   }
 
+  /** 图片原图预览：编辑分镜里的参考图点一下就放大看，点任意处或 Esc 关掉。 */
+  function openImageLightbox(src, caption) {
+    if (!src) return;
+    const overlay = document.createElement('div');
+    overlay.className = 'evt-image-backdrop';
+    overlay.innerHTML = `<figure class="evt-image-modal"><img src="${esc(src)}" alt="${esc(caption || '')}" /><figcaption>${esc(caption || '')}</figcaption></figure>`;
+    document.body.append(overlay);
+    const onKey = (event) => { if (event.key === 'Escape') close(); };
+    const close = () => { overlay.remove(); document.removeEventListener('keydown', onKey); };
+    overlay.addEventListener('click', close);
+    document.addEventListener('keydown', onKey);
+  }
+
   function openOutputRename(jobId, outPath, title, onChanged) {
     const current = String(outPath).split(/[\\/]/).pop() || '';
     const base = current.replace(/\.[^.]+$/, '');
@@ -1221,6 +1271,16 @@ const Events = (() => {
     ].find((value) => value !== undefined && value !== null && String(value).trim() !== '');
     const short = (String(raw || '').match(/\d+:\d+/) || [])[0];
     return short || '';
+  }
+
+  // 模型：批量任务里带的（豆包 Seedance 2.0 Mini / Fast，Gemini 空）优先，其次看任务上的
+  function itemModel(item, job) {
+    const raw = [
+      item && item.input && item.input.model,
+      item && item.model,
+      job && job.model,
+    ].find((value) => value !== undefined && value !== null && String(value).trim() !== '');
+    return raw ? String(raw).trim() : '';
   }
 
   function itemDuration(item, job) {
@@ -1387,6 +1447,8 @@ const Events = (() => {
   }
 
   async function openDetail(id) {
+    // 每次重画都换一个新的自动刷新计时器，避免叠加
+    stopDrawerAutoRefresh();
     // 先取数据再替换抽屉：重试/编辑后刷新失败时保持当前抽屉，不会退回任务列表。
     const [event, jobData] = await Promise.all([
       api('/api/events/' + encodeURIComponent(id)),
@@ -1398,16 +1460,15 @@ const Events = (() => {
     const s = event.stats || {};
     const pct = s.total ? Math.round(((s.done || 0) / s.total) * 100) : 0;
     const managerBase = 'http://127.0.0.1:17778/tasks';
-    const itemCards = (event.items || []).map((item) => {
-      const job = jobByItem.get(item.id) || jobByItem.get(item.refId) || null;
+    // 一条分镜拆成「状态 / 元信息 / 失败提示 / 成片 / 操作」几块，自动刷新时只换变了的块，整页不重画才不会闪
+    const itemParts = (item, job) => {
       const managerId = item.remoteId || (job && job.remotePromptId) || '';
       const input = item.input || {};
-      const prompt = input.userPrompt == null ? input.prompt : input.userPrompt;
-      const prefix = input.prefixPrompt || '';
       const video = (job && (job.outputs || []).find((out) => out.type === 'video' && out.path)) || null;
       const analysis = (job && job.failureAnalysis) || null;
       const reason = (analysis && analysis.reason) || item.error || '';
       const advice = (analysis && analysis.advice) || '';
+      const broken = ['failed', 'unknown', 'canceled'].includes(item.status);
       const actions = [];
       actions.push(`<button class="btn sm ghost" data-drawer-item-action="detail" data-item="${esc(item.id)}">详情</button>`);
       if (['failed', 'canceled', 'skipped'].includes(item.status)) actions.push(`<button class="btn sm ghost" data-drawer-item-action="retry" data-item="${esc(item.id)}">重试</button>`);
@@ -1417,25 +1478,43 @@ const Events = (() => {
       if (['success', 'failed', 'canceled', 'skipped', 'unknown'].includes(item.status)) actions.push(`<button class="btn sm ghost danger" data-drawer-item-action="delete" data-item="${esc(item.id)}">删除</button>`);
       if (item.refId) actions.push(`<button class="btn sm ghost" data-drawer-item-action="probe" data-item="${esc(item.id)}" data-ref="${esc(item.refId)}">探针</button>`);
       if (managerId && ['failed', 'unknown', 'canceled'].includes(item.status)) actions.push(`<button class="btn sm ghost" data-drawer-item-action="resume-original" data-item="${esc(item.id)}">继续查询</button>`);
-      return `<article class="evt-shot-card" data-drawer-item="${esc(item.id)}" data-drawer-item-status="${esc(item.status)}">
+      const metaInner = `<span>比例 ${esc(itemRatio(item, job) || '—')}</span>${itemModel(item, job) ? `<span>模型 ${esc(itemModel(item, job))}</span>` : ''}<span>运行时长 ${itemDuration(item, job)}</span><span>开始 ${item.startedAt ? new Date(item.startedAt).toLocaleString('zh-CN', { hour12: false }) : '—'}</span>`;
+      const flagsInner = `${broken && reason ? `<div class="evt-shot-error" title="${esc(reason)}"><b>原因</b> ${esc(shortText(reason, 80))}</div>` : ''}${broken && advice ? `<div class="evt-shot-advice" title="${esc(advice)}"><b>建议</b> ${esc(shortText(advice, 60))}</div>` : ''}`;
+      // 排队/执行中的分镜显示进度条 + 当前环节，等的时候能看见走到哪一步了
+      const liveStatus = ['queued', 'running', 'paused'].includes(item.status);
+      const percent = Math.max(0, Math.min(100, Math.round(Number(job && job.progress) || 0)));
+      const stageText = String((job && job.stage) || '');
+      const progressInner = !liveStatus ? '' : `<div class="evt-shot-progress-head"><span>当前环节</span><b title="${esc(stageText)}">${esc(shortText(stageText || (item.status === 'queued' ? '排队中' : item.status === 'paused' ? '已暂停' : '执行中'), 24))}</b><span class="grow"></span><em>${percent}%</em></div>
+        <div class="evt-shot-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}"><i style="width:${percent}%"></i></div>`;
+      const mediaInner = video
+        ? `<div class="evt-shot-video" data-drawer-video="${esc(video.path)}" data-drawer-video-item="${esc(item.id)}" title="左键播放，右键改名/替换/删除"><video src="/api/file?path=${encodeURIComponent(video.path)}" preload="metadata" muted></video><span class="evt-shot-play">▶</span></div>`
+        : `<div class="evt-shot-video is-empty" data-drawer-video-item="${esc(item.id)}" title="右键可以上传这条分镜的成片">暂无成片</div>`;
+      // 签名只放会变的东西：状态、耗时、成片路径、失败原因、进度/环节；比例/模型改了也重画
+      const sig = [item.status, itemDuration(item, job), video ? video.path : '', reason, advice, itemRatio(item, job), itemModel(item, job), liveStatus ? percent : '', liveStatus ? stageText : ''].join('\u0001');
+      return { managerId, prompt: input.userPrompt == null ? input.prompt : input.userPrompt, prefix: input.prefixPrompt || '', metaInner, flagsInner, progressInner, mediaInner, actionsInner: actions.join('') || '<span class="hint">没有可执行的操作</span>', statusInner: itemStatusBadge(item.status), videoPath: video ? video.path : '', sig };
+    };
+    const itemCardHtml = (item, job) => {
+      const p = itemParts(item, job);
+      return `<article class="evt-shot-card" data-drawer-item="${esc(item.id)}" data-drawer-item-status="${esc(item.status)}" data-shot-sig="${esc(p.sig)}">
         <div class="evt-shot-head">
-          <div class="evt-shot-id"><span class="hint">任务ID</span>${managerId ? `<a class="mono" href="${managerBase}#${encodeURIComponent(managerId)}" target="_blank" rel="noreferrer" title="打开管理器任务">${esc(managerId)}</a>` : '<span class="hint">未提交</span>'}<small class="mono">${esc(item.id)}</small></div>
-          ${itemStatusBadge(item.status)}
+          <div class="evt-shot-id"><span class="hint">任务ID</span>${p.managerId ? `<a class="mono" href="${managerBase}#${encodeURIComponent(p.managerId)}" target="_blank" rel="noreferrer" title="打开管理器任务">${esc(p.managerId)}</a>` : '<span class="hint">未提交</span>'}<small class="mono">${esc(item.id)}</small></div>
+          <span data-shot-status>${p.statusInner}</span>
         </div>
         <div class="evt-shot-body">
           <div class="evt-shot-info">
             <h4>${esc(item.title || '分镜')}</h4>
-            <div class="evt-shot-meta"><span>比例 ${esc(itemRatio(item, job) || '—')}</span><span>运行时长 ${itemDuration(item, job)}</span><span>开始 ${item.startedAt ? new Date(item.startedAt).toLocaleString('zh-CN', { hour12: false }) : '—'}</span></div>
-            <div class="evt-shot-prompt"><b>提示词</b><span title="${esc(prompt || '')}">${esc(shortText(prompt, 10))}</span></div>
-            <div class="evt-shot-prompt"><b>前置提示词</b><span title="${esc(prefix || '')}">${esc(shortText(prefix, 10))}</span></div>
-            ${['failed', 'unknown', 'canceled'].includes(item.status) && reason ? `<div class="evt-shot-error" title="${esc(reason)}"><b>原因</b> ${esc(shortText(reason, 80))}</div>` : ''}
-            ${['failed', 'unknown', 'canceled'].includes(item.status) && advice ? `<div class="evt-shot-advice" title="${esc(advice)}"><b>建议</b> ${esc(shortText(advice, 60))}</div>` : ''}
+            <div class="evt-shot-meta" data-shot-meta>${p.metaInner}</div>
+            <div class="evt-shot-prompt"><b>提示词</b><span title="${esc(p.prompt || '')}">${esc(shortText(p.prompt, 10))}</span></div>
+            <div class="evt-shot-prompt"><b>前置提示词</b><span title="${esc(p.prefix || '')}">${esc(shortText(p.prefix, 10))}</span></div>
+            <div class="evt-shot-flags" data-shot-flags>${p.flagsInner}</div>
+            <div class="evt-shot-progress-slot" data-shot-progress>${p.progressInner}</div>
           </div>
-          <div class="evt-shot-media">${video ? `<div class="evt-shot-video" data-drawer-video="${esc(video.path)}" data-drawer-video-item="${esc(item.id)}" title="左键播放，右键改名/替换/删除"><video src="/api/file?path=${encodeURIComponent(video.path)}" preload="metadata" muted></video><span class="evt-shot-play">▶</span></div>` : `<div class="evt-shot-video is-empty" data-drawer-video-item="${esc(item.id)}" title="右键可以上传这条分镜的成片">暂无成片</div>`}</div>
+          <div class="evt-shot-media" data-shot-media>${p.mediaInner}</div>
         </div>
-        <div class="evt-shot-actions">${actions.join('') || '<span class="hint">没有可执行的操作</span>'}</div>
+        <div class="evt-shot-actions" data-shot-actions>${p.actionsInner}</div>
       </article>`;
-    }).join('');
+    };
+    const itemCards = (event.items || []).map((item) => itemCardHtml(item, jobByItem.get(item.id) || jobByItem.get(item.refId) || null)).join('');
 
     const taskActions = [
       (event.draft || event.pendingSchedule) ? `<button class="btn" data-drawer-task-action="schedule">配置调度</button>` : '',
@@ -1452,7 +1531,7 @@ const Events = (() => {
     const filterChips = () => {
       const other = (s.queued || 0) + (s.paused || 0) + (s.canceled || 0) + (s.skipped || 0) + (s.unknown || 0);
       const chips = [['all', '全部', s.total || 0], ['success', '成功', s.success || 0], ['failed', '失败', s.failed || 0], ['running', '执行中', s.running || 0], ['other', '其他', other]];
-      return `<div class="evt-filter-chips" role="group" aria-label="按分镜状态筛选">${chips.map(([key, label, count]) => `<button type="button" data-drawer-filter="${key}" aria-selected="${key === 'all'}">${label} <b>${count}</b></button>`).join('')}</div>`;
+      return `<div class="evt-filter-chips" role="group" aria-label="按分镜状态筛选">${chips.map(([key, label, count]) => `<button type="button" data-drawer-filter="${key}" aria-selected="${key === 'all'}">${label} <b data-chip-count="${key}">${count}</b></button>`).join('')}</div>`;
     };
 
     const previous = document.getElementById('evt-drawer');
@@ -1465,7 +1544,7 @@ const Events = (() => {
     drawer.innerHTML = `<aside class="evt-drawer" role="dialog" aria-modal="true" aria-label="任务详情">
       <header class="evt-drawer-head">
         <div><div class="eyebrow">TASK DETAIL</div><h2>${esc(event.title)}</h2><div class="hint">${esc(event.id)} · ${esc(SOURCE[event.source] || event.source)} · 创建 ${new Date(event.createdAt).toLocaleString('zh-CN', { hour12: false })}</div></div>
-        <div class="evt-drawer-head-right">${taskBadge(event.status)}<button type="button" class="btn ghost sm" data-drawer-close>关闭</button></div>
+        <div class="evt-drawer-head-right"><span data-task-badge>${taskBadge(event.status)}</span><button type="button" class="btn ghost sm" data-drawer-refresh title="重新读取这条任务的最新状态和成片">刷新</button><span class="hint" data-drawer-refreshed></span><button type="button" class="btn ghost sm" data-drawer-close>关闭</button></div>
       </header>
       <nav class="evt-drawer-tabs" role="tablist">
         <button type="button" data-drawer-tab="detail" aria-selected="true">分镜与成片</button>
@@ -1475,16 +1554,16 @@ const Events = (() => {
       <div class="evt-drawer-body">
         <section class="evt-drawer-panel" data-drawer-panel="overview">
           <div class="evt-summary">
-            <div class="evt-summary-top">${taskBadge(event.status)}<div class="evt-progress"><span style="width:${pct}%"></span></div><b>${s.done || 0}/${s.total || 0}</b></div>
+            <div class="evt-summary-top"><span data-task-badge>${taskBadge(event.status)}</span><div class="evt-progress" data-progress><span style="width:${pct}%"></span></div><b data-summary-done>${s.done || 0}/${s.total || 0}</b></div>
             <div class="evt-kpis">
-              <div><span>总条目</span><b>${s.total || 0}</b></div>
-              <div><span>成功</span><b class="is-ok">${s.success || 0}</b></div>
-              <div><span>失败</span><b class="is-bad">${s.failed || 0}</b></div>
-              <div><span>执行中</span><b>${s.running || 0}</b></div>
+              <div><span>总条目</span><b data-kpi="total">${s.total || 0}</b></div>
+              <div><span>成功</span><b class="is-ok" data-kpi="success">${s.success || 0}</b></div>
+              <div><span>失败</span><b class="is-bad" data-kpi="failed">${s.failed || 0}</b></div>
+              <div><span>执行中</span><b data-kpi="running">${s.running || 0}</b></div>
               <div><span>调度</span><b>${event.schedule?.startAt ? new Date(event.schedule.startAt).toLocaleString('zh-CN', { hour12: false }) : (event.pendingSchedule ? '待调度' : '立即')}</b></div>
-              <div><span>耗时</span><b>${duration(event)}</b></div>
+              <div><span>耗时</span><b data-kpi="duration">${duration(event)}</b></div>
             </div>
-            ${taskActions ? `<div class="evt-detail-actions">${taskActions}</div>` : ''}
+            ${taskActions ? `<div class="evt-detail-actions" data-task-actions>${taskActions}</div>` : ''}
           </div>
           ${filterChips()}
           <div class="evt-drawer-section">
@@ -1497,7 +1576,7 @@ const Events = (() => {
         <section class="evt-drawer-panel" data-drawer-panel="detail" hidden>
           <div class="evt-drawer-section">
             ${filterChips()}
-            <div class="evt-section-head"><h3>分镜列表</h3><span class="hint">共 ${(event.items || []).length} 条</span></div>
+            <div class="evt-section-head"><h3>分镜列表</h3><span class="hint" data-shot-count>共 ${(event.items || []).length} 条</span></div>
             <div class="evt-shot-list">${itemCards || '<div class="hint">这个任务还没有分镜。</div>'}</div>
             <div class="hint" data-drawer-filter-empty hidden>当前筛选下没有分镜。</div>
           </div>
@@ -1533,9 +1612,121 @@ const Events = (() => {
       drawer.querySelectorAll('[data-drawer-panel]').forEach((panel) => { panel.hidden = panel.dataset.drawerPanel !== name; });
     };
 
+    /**
+     * 静默刷新：新数据合进现有抽屉，只替换真的变了的节点。
+     * 整页重画会闪屏，所以自动刷新一律走这里；结构变了（条目增减）才退回 openDetail。
+     */
+    const patchDrawer = (nextEvent, nextJobByItem) => {
+      const nextItems = nextEvent.items || [];
+      const cards = drawer.querySelectorAll('[data-drawer-item]');
+      if (cards.length !== nextItems.length) return false;
+      // 先合并数据：抽屉里已绑好的点击/右键/重试都读同一批对象，合并后它们拿到的就是新值
+      const { items: ignoredItems, ...rest } = nextEvent;
+      void ignoredItems;
+      Object.assign(event, rest);
+      for (const item of nextItems) {
+        const current = (event.items || []).find((row) => row.id === item.id);
+        if (!current) return false;
+        Object.assign(current, item);
+      }
+      jobByItem.clear();
+      for (const [key, value] of nextJobByItem) jobByItem.set(key, value);
+      // 内容没变的节点连写都不写，避免任何多余重排
+      const setInner = (node, html) => { if (node && node.innerHTML !== html) node.innerHTML = html; };
+      for (const item of event.items || []) {
+        const card = drawer.querySelector(`[data-drawer-item="${item.id}"]`);
+        if (!card) return false;
+        const job = jobByItem.get(item.id) || jobByItem.get(item.refId) || null;
+        const parts = itemParts(item, job);
+        if (card.dataset.shotSig === parts.sig) continue;
+        if (card.dataset.drawerItemStatus !== item.status) {
+          card.dataset.drawerItemStatus = item.status;
+          setInner(card.querySelector('[data-shot-status]'), itemStatusBadge(item.status));
+          setInner(card.querySelector('[data-shot-actions]'), parts.actionsInner);
+        }
+        setInner(card.querySelector('[data-shot-meta]'), parts.metaInner);
+        setInner(card.querySelector('[data-shot-flags]'), parts.flagsInner);
+        setInner(card.querySelector('[data-shot-progress]'), parts.progressInner);
+        const mediaBox = card.querySelector('[data-shot-media]');
+        const shownVideo = (card.querySelector('[data-drawer-video]') || {}).dataset?.drawerVideo || '';
+        if (mediaBox && shownVideo !== parts.videoPath) setInner(mediaBox, parts.mediaInner);
+        card.dataset.shotSig = parts.sig;
+      }
+      const stats = event.stats || {};
+      const pctNow = stats.total ? Math.round(((stats.done || 0) / stats.total) * 100) : 0;
+      const setText = (node, text) => { if (node && node.textContent !== String(text)) node.textContent = String(text); };
+      drawer.querySelectorAll('[data-task-badge]').forEach((node) => { const html = taskBadge(event.status); if (node.innerHTML !== html) node.innerHTML = html; });
+      const bar = drawer.querySelector('[data-progress] span');
+      if (bar && bar.style.width !== pctNow + '%') bar.style.width = pctNow + '%';
+      setText(drawer.querySelector('[data-summary-done]'), `${stats.done || 0}/${stats.total || 0}`);
+      const setKpi = (key, value) => setText(drawer.querySelector(`[data-kpi="${key}"]`), value);
+      setKpi('total', stats.total || 0);
+      setKpi('success', stats.success || 0);
+      setKpi('failed', stats.failed || 0);
+      setKpi('running', stats.running || 0);
+      setKpi('duration', duration(event));
+      const other = (stats.queued || 0) + (stats.paused || 0) + (stats.canceled || 0) + (stats.skipped || 0) + (stats.unknown || 0);
+      const chipCounts = { all: stats.total || 0, success: stats.success || 0, failed: stats.failed || 0, running: stats.running || 0, other };
+      drawer.querySelectorAll('[data-chip-count]').forEach((node) => { setText(node, chipCounts[node.dataset.chipCount] ?? ''); });
+      setText(drawer.querySelector('[data-shot-count]'), `共 ${(event.items || []).length} 条`);
+      applyFilter();
+      return true;
+    };
+
+    const refreshSilently = async () => {
+      const node = document.getElementById('evt-drawer');
+      if (!node) { stopDrawerAutoRefresh(); return; }
+      if ([...node.querySelectorAll('video')].some((video) => !video.paused && !video.ended)) return;
+      const [nextEvent, nextJobData] = await Promise.all([
+        api('/api/events/' + encodeURIComponent(id)),
+        api('/api/jobs?eventId=' + encodeURIComponent(id)).catch(() => ({ jobs: [] })),
+      ]);
+      const nextJobs = nextJobData.jobs || [];
+      const nextJobByItem = new Map(nextJobs.map((job) => [job.eventItemId || job.refId, job]));
+      if (!patchDrawer(nextEvent, nextJobByItem)) { await openDetail(id); return; }
+      const stillLive = ['queued', 'running', 'scheduled', 'paused'].includes(nextEvent.status)
+        || (nextEvent.items || []).some((row) => ['queued', 'running'].includes(row.status));
+      if (!stillLive) stopDrawerAutoRefresh();
+    };
+
     showTab(keptTab);
     applyFilter();
     requestAnimationFrame(() => { drawer.querySelector('.evt-drawer-body').scrollTop = keptScroll; });
+
+    // 手动刷新：静默打补丁；执行记录/报告页开着时顺带刷新它们
+    const refreshBtn = drawer.querySelector('[data-drawer-refresh]');
+    if (refreshBtn) {
+      refreshBtn.onclick = async () => {
+        refreshBtn.disabled = true;
+        refreshBtn.textContent = '刷新中…';
+        try {
+          await refreshSilently();
+          if (!drawer.isConnected) return;
+          if (drawer.querySelector('[data-drawer-tab="overview"][aria-selected="true"]')) await loadAttempts(1, false).catch(() => {});
+          if (drawer.querySelector('[data-drawer-tab="report"][aria-selected="true"]')) await loadReport();
+          const stamp = drawer.querySelector('[data-drawer-refreshed]');
+          if (stamp) stamp.textContent = '已刷新 ' + new Date().toLocaleTimeString('zh-CN', { hour12: false });
+        } catch (error) {
+          if (drawer.isConnected) toast(error.message, true);
+        } finally {
+          if (drawer.isConnected && refreshBtn.isConnected) {
+            refreshBtn.disabled = false;
+            refreshBtn.textContent = '刷新';
+          }
+        }
+      };
+    }
+    // 自己刷新：还有分镜在排队/执行时每 5 秒静默打补丁（不重画整页，不闪屏）
+    const live = ['queued', 'running', 'scheduled', 'paused'].includes(event.status)
+      || (event.items || []).some((row) => ['queued', 'running'].includes(row.status));
+    if (live) {
+      drawerAutoTimer = setInterval(() => {
+        const node = document.getElementById('evt-drawer');
+        if (!node) { stopDrawerAutoRefresh(); return; }
+        if (node.querySelector('[data-drawer-refresh]')?.disabled) return;
+        refreshSilently().catch(() => {});
+      }, 5000);
+    }
 
     const showLog = async (attemptId) => {
       try {
@@ -1600,7 +1791,7 @@ const Events = (() => {
       const entries = [];
       if (videoPath) {
         entries.push({ label: '播放成片', onSelect: () => openVideoPreview(videoPath, { jobId, title: label, onChanged: refreshAfterOutput }) });
-        entries.push({ label: '在文件夹中显示', onSelect: () => api('/api/reveal', { method: 'POST', body: { path: videoPath } }).catch((error) => toast(error.message, true)) });
+        entries.push({ label: '在文件夹中显示', onSelect: () => api('/api/reveal', { method: 'POST', body: { path: videoPath, select: true } }).catch((error) => toast(error.message, true)) });
         entries.push({ sep: true });
       }
       if (jobId) {
@@ -1848,6 +2039,8 @@ const Events = (() => {
           <div><span>结束</span><b>${esc(timeText(finished))}</b></div>
           <div><span>耗时</span><b>${itemDuration(item, job)}</b></div>
           <div><span>比例</span><b>${esc(itemRatio(item, job) || '—')}</b></div>
+          <div><span>模型</span><b>${esc(itemModel(item, job) || '—')}</b></div>
+          <div><span>进度</span><b>${['queued', 'running', 'paused'].includes(item.status) ? `${Math.max(0, Math.min(100, Math.round(Number(job && job.progress) || 0)))}% · ${esc(String((job && job.stage) || '排队中'))}` : '—'}</b></div>
           <div><span>管理器任务</span><b>${remoteId ? `<a href="${managerBase}#${encodeURIComponent(remoteId)}" target="_blank" rel="noreferrer">${esc(remoteId)}</a>` : '—'}</b></div>
         </div>
         ${reason ? `<div class="evt-shot-error"><b>原因</b> ${esc(reason)}</div>` : ''}
@@ -1921,15 +2114,49 @@ const Events = (() => {
     const { out } = shotJobInfo(item, job || null);
     const jobId = item.refId || (job && job.id) || '';
     const refresh = async () => { closeModal(); try { await load(); } catch { /* ignore */ } await openDetail(eventId); };
+
+    // 比例 / 模型：这两项是真发给管理器（豆包 / Gemini）的参数，所以放在这里能改
+    const workflow = workflowFor(String(input.workflowId || ''));
+    const ratioOptions = (workflow && (workflow.ratios || []).length) ? workflow.ratios.slice() : ['16:9', '9:16'];
+    if (!ratioOptions.includes('16:9') && workflow && workflow.platform === 'doubao') ratioOptions.unshift('16:9');
+    const currentRatio = itemRatio(item, job) || ratioOptions[0];
+    const ratioLabel = (ratio) => (ratio === '16:9' ? '16:9 横屏' : ratio === '9:16' ? '9:16 竖屏' : ratio);
+    const ratioSelect = `<select class="select" id="revise-ratio">${ratioOptions.map((ratio) => `<option value="${esc(ratio)}"${ratio === currentRatio ? ' selected' : ''}>${esc(ratioLabel(ratio))}</option>`).join('')}${ratioOptions.includes(currentRatio) ? '' : `<option value="${esc(currentRatio)}" selected>${esc(ratioLabel(currentRatio))}</option>`}</select>`;
+
+    const isGemini = workflow && workflow.platform === 'gemini';
+    const isManager = workflow && workflow.provider === 'manager';
+    const currentModel = itemModel(item, job);
+    const modelChoices = ['Seedance 2.0 Mini', 'Seedance 2.0 Fast'];
+    const modelCell = !isManager ? '<div class="hint">这个模型不需要指定模型名</div>'
+      : isGemini ? '<div class="hint">Gemini 页面上没有模型选项，只能留空</div>' : `<select class="select" id="revise-model"><option value=""${currentModel ? '' : ' selected'}>不指定（用管理器当前设置）</option>${modelChoices.map((model) => `<option value="${esc(model)}"${model === currentModel ? ' selected' : ''}>${esc(model)}</option>`).join('')}</select>`;
+
+    // 参考图：图1、图2… 的顺序就是提示词里 <Picture n> 的顺序，可以替换 / 删除 / 追加
+    let refs = ((input.images || []) || []).filter((image) => image && image.path).map((image) => ({
+      path: image.path,
+      name: image.name || String(image.path).split(/[\\/]/).pop() || '图片',
+      subject: image.subject || '',
+      note: image.note || '',
+    }));
+    const maxRefs = Math.min(9, Number(workflow && workflow.images) > 0 ? Number(workflow.images) : 9);
+    const refsCell = `<div class="revise-refs">
+        <div class="evt-section-head"><h3>参考图</h3><span class="hint">顺序就是图1、图2…；点击图片放大，可替换或删除</span><span class="grow"></span><button type="button" class="btn sm ghost" id="revise-ref-add">添加图片</button></div>
+        <div class="revise-refs-grid" id="revise-refs-grid"></div>
+      </div>`;
+
     const panel = openModal(`<div class="modal-head">
-        <div><h2>编辑分镜 · ${esc(item.title || item.refId || '分镜')}</h2><div class="hint">提示词和成片都只影响这一条子任务</div></div>
+        <div><h2>编辑分镜 · ${esc(item.title || item.refId || '分镜')}</h2><div class="hint">提示词、比例、模型、参考图和成片都只影响这一条子任务</div></div>
         <button class="btn ghost sm" id="revise-back">返回详情</button>
       </div>
       <div class="modal-body revise-form">
-        <p class="hint">这里改的是真正发给豆包的提示词。保存后不会自动提交；点「保存并重试」才会按新内容重新生成这一条。</p>
+        <p class="hint">这里改的是真正发给豆包的提示词和参数。保存后不会自动提交；点「保存并重试」才会按新内容重新生成这一条。</p>
         ${out ? `<div class="revise-media"><div class="evt-section-head"><h3>当前成片</h3><span class="grow"></span><button class="btn sm ghost" id="revise-replace">替换视频</button><button class="btn sm ghost danger" id="revise-delete">删除视频</button></div>
           <video src="/api/file?path=${encodeURIComponent(out.path)}" controls preload="metadata" playsinline></video><div class="hint">${esc(out.name)} · ${fmtSize(out.bytes || 0)}</div></div>`
         : `<div class="revise-media"><div class="evt-section-head"><h3>当前成片</h3><span class="grow"></span><button class="btn sm ghost" id="revise-add">上传视频</button></div><div class="hint">这条分镜还没有成片，可以直接上传一个。</div></div>`}
+        <div class="revise-params">
+          <label>比例<em>发给管理器的画幅</em>${ratioSelect}</label>
+          <label>视频模型<em>发给管理器的模型名</em>${modelCell}</label>
+        </div>
+        ${refsCell}
         <label>视频前置提示词<em>会拼在视频提示词前面；只影响这一条</em><textarea class="textarea" id="revise-prefix" rows="3" placeholder="留空表示不加前置">${esc(prefix)}</textarea></label>
         <label>视频提示词<em>删掉触发违禁的字句即可，不用重传整个文件</em><textarea class="textarea" id="revise-prompt" rows="12" placeholder="这一条要生成什么">${esc(body)}</textarea></label>
       </div>
@@ -1947,23 +2174,81 @@ const Events = (() => {
     });
     const deleteMedia = panel.querySelector('#revise-delete');
     if (deleteMedia) deleteMedia.onclick = () => openOutputDelete(jobId, out.path, item.title || '成片', async () => { await refresh(); openReviseModal(eventId, item, job); });
+
+    // 参考图：渲染 + 放大预览 + 替换 / 删除 / 追加
+    const refsGrid = panel.querySelector('#revise-refs-grid');
+    const renderRefs = () => {
+      if (!refsGrid) return;
+      refsGrid.innerHTML = refs.length
+        ? refs.map((image, order) => `<figure class="revise-ref">
+            <button type="button" class="revise-ref-zoom" data-ref-zoom="${order}" title="点击放大看这张图"><img src="/api/file?path=${encodeURIComponent(image.path)}" alt="图${order + 1}" loading="lazy" /></button>
+            <figcaption><b>图${order + 1}</b><span title="${esc(image.name || '')}">${esc(shortText(image.name || '', 14))}</span></figcaption>
+            <div class="revise-ref-ops"><button type="button" class="btn sm ghost" data-ref-replace="${order}">替换</button><button type="button" class="btn sm ghost danger" data-ref-remove="${order}">删除</button></div>
+          </figure>`).join('')
+        : '<div class="hint">这条分镜没有参考图；提交时会按纯文生视频处理。</div>';
+    };
+    renderRefs();
+    if (refsGrid) {
+      refsGrid.addEventListener('click', async (event) => {
+        const zoom = event.target.closest('[data-ref-zoom]');
+        if (zoom) {
+          const order = Number(zoom.dataset.refZoom);
+          const image = refs[order];
+          if (image) openImageLightbox('/api/file?path=' + encodeURIComponent(image.path), `图${order + 1} · ${image.name || ''}`);
+          return;
+        }
+        const remove = event.target.closest('[data-ref-remove]');
+        if (remove) { refs.splice(Number(remove.dataset.refRemove), 1); renderRefs(); return; }
+        const replace = event.target.closest('[data-ref-replace]');
+        if (replace) {
+          const order = Number(replace.dataset.refReplace);
+          pickLocalImage(async (file) => {
+            try {
+              const saved = await uploadRefImage(file);
+              refs[order] = { path: saved.path, name: saved.name || file.name, subject: refs[order]?.subject || '', note: '' };
+              renderRefs();
+              toast('已替换图' + (order + 1));
+            } catch (error) { toast(error.message, true); }
+          });
+        }
+      });
+    }
+    const addRef = panel.querySelector('#revise-ref-add');
+    if (addRef) addRef.onclick = () => {
+      if (refs.length >= maxRefs) { toast(`这个视频模型最多 ${maxRefs} 张参考图`, true); return; }
+      pickLocalImage(async (file) => {
+        try {
+          const saved = await uploadRefImage(file);
+          refs.push({ path: saved.path, name: saved.name || file.name });
+          renderRefs();
+          toast('已添加图' + refs.length);
+        } catch (error) { toast(error.message, true); }
+      });
+    };
     const submit = async (retry) => {
       const prompt = String(panel.querySelector('#revise-prompt').value || '');
       const prefixPrompt = String(panel.querySelector('#revise-prefix').value || '');
       if (!prompt.trim()) { toast('视频提示词不能为空', true); return; }
+      const ratioEl = panel.querySelector('#revise-ratio');
+      const modelEl = panel.querySelector('#revise-model');
+      const payload = { prompt, prefixPrompt };
+      if (ratioEl) payload.ratio = ratioEl.value;
+      if (modelEl) payload.model = modelEl.value;
+      // 参考图顺序就是图1、图2…，服务端会重新校验存在性和张数上限
+      payload.images = refs.map((image) => ({ path: image.path, name: image.name, subject: image.subject || '', note: image.note || '' }));
       const buttons = panel.querySelectorAll('#revise-save,#revise-retry');
       buttons.forEach((button) => { button.disabled = true; });
       try {
         await api('/api/events/' + encodeURIComponent(eventId) + '/items/' + encodeURIComponent(item.id) + '/revise', {
           method: 'POST',
-          body: { prompt, prefixPrompt },
+          body: payload,
         });
         if (retry) {
           await api('/api/events/' + encodeURIComponent(eventId) + '/items/' + encodeURIComponent(item.id) + '/retry', { method: 'POST', body: {} });
         }
         closeModal();
         await openDetail(eventId);
-        toast(retry ? '已保存并重新排队' : '提示词已保存；点「重试」按新内容重新提交');
+        toast(retry ? '已保存并重新排队' : '已保存；点「重试」会按新的提示词 / 比例 / 模型 / 参考图重新提交');
       } catch (err) {
         buttons.forEach((button) => { button.disabled = false; });
         toast(err.message, true);

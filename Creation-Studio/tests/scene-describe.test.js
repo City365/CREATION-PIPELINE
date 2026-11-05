@@ -24,7 +24,7 @@ test('反推期间有可见的进行中状态', () => {
 });
 
 test('生成四视图提示词也有进行中提示', () => {
-  assert.ok(js.includes('正在推理四条机位提示词'), '提示词生成要有状态行');
+  assert.ok(js.includes('智能体正在按「场景4视图反推」技能推理'), '提示词生成要有状态行');
   assert.ok(js.includes("${f.busy ? 'disabled' : ''}>${f.busy === 'prompts'"), '按钮文案切换');
 });
 
@@ -35,6 +35,6 @@ test('左栏加宽、源图框加高', () => {
 });
 
 test('creative 资源版本号已更新，避免吃到旧缓存', () => {
-  assert.ok(html.includes('/creative.js?v=3'), '脚本版本号');
-  assert.ok(html.includes('/creative.css?v=3'), '样式版本号');
+  assert.ok(html.includes('/creative.js?v=10'), '脚本版本号');
+  assert.ok(html.includes('/creative.css?v=6'), '样式版本号');
 });

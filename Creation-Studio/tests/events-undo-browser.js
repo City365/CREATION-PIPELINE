@@ -25,16 +25,18 @@ async function until(fn, ms = 15000) {
 }
 
 function seedJobs(dataDir, mediaFile, projectId) {
-  fs.mkdirSync(dataDir, { recursive: true });
-  fs.writeFileSync(path.join(dataDir, 'jobs.json'), JSON.stringify({
-    version: 1,
-    jobs: [{
-      id: 'job-done-1', provider: 'local', workflowId: 'wf-local', status: 'success', stage: '完成', progress: 100,
-      title: '镜头 01', shotLabel: '镜头 01', taskTitle: '撤销验收任务', eventId: 'evt_ui_done', eventItemId: 'evt_ui_done_i1',
-      projectId, prompt: 'seed prompt', createdAt: 1, finishedAt: 2, outputDir: path.dirname(mediaFile),
-      outputs: [{ type: 'video', name: path.basename(mediaFile), path: mediaFile, bytes: fs.statSync(mediaFile).size, url: '' }],
-    }],
-  }, null, 2));
+  const job = {
+    id: 'job-done-1', provider: 'local', workflowId: 'wf-local', status: 'success', stage: '完成', progress: 100,
+    title: '镜头 01', shotLabel: '镜头 01', taskTitle: '撤销验收任务', eventId: 'evt_ui_done', eventItemId: 'evt_ui_done_i1',
+    projectId, tenantId: 'tnt_default', prompt: 'seed prompt', createdAt: 1, finishedAt: 2, outputDir: path.dirname(mediaFile),
+    outputs: [{ type: 'video', name: path.basename(mediaFile), path: mediaFile, bytes: fs.statSync(mediaFile).size, url: '' }],
+  };
+  // 任务状态已入库；直接写 jobs 表，服务重启后从库里加载。
+  const db = new DatabaseSync(path.join(dataDir, 'wmd.sqlite'));
+  db.exec('CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY,project_id TEXT NOT NULL DEFAULT \'\',status TEXT NOT NULL,order_no INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,data TEXT NOT NULL)');
+  db.prepare('INSERT OR REPLACE INTO jobs(id, project_id, status, order_no, created_at, updated_at, data) VALUES(?,?,?,?,?,?,?)')
+    .run(job.id, projectId, job.status, 1, job.createdAt, Date.now(), JSON.stringify(job));
+  db.close();
 }
 
 function seedEvents(dataDir, projectId) {
@@ -51,10 +53,10 @@ function seedEvents(dataDir, projectId) {
     createdAt: Date.now() - 1000, finishedAt: Date.now(),
   };
   const db = new DatabaseSync(path.join(dataDir, 'task-events.sqlite'));
-  db.exec('CREATE TABLE IF NOT EXISTS task_events(id TEXT PRIMARY KEY,kind TEXT NOT NULL,project_id TEXT NOT NULL,created_at INTEGER NOT NULL,payload TEXT NOT NULL)');
-  const insert = db.prepare('INSERT OR REPLACE INTO task_events VALUES(?,?,?,?,?)');
-  insert.run(draft.id, 'video', projectId, draft.createdAt, JSON.stringify(draft));
-  insert.run(done.id, 'video', projectId, done.createdAt, JSON.stringify(done));
+  db.exec('CREATE TABLE IF NOT EXISTS task_events(id TEXT PRIMARY KEY,kind TEXT NOT NULL,project_id TEXT NOT NULL,tenant_id TEXT NOT NULL DEFAULT \'\',created_at INTEGER NOT NULL,payload TEXT NOT NULL)');
+  const insert = db.prepare('INSERT OR REPLACE INTO task_events(id,kind,project_id,tenant_id,created_at,payload) VALUES(?,?,?,?,?,?)');
+  insert.run(draft.id, 'video', projectId, 'tnt_default', draft.createdAt, JSON.stringify(draft));
+  insert.run(done.id, 'video', projectId, 'tnt_default', done.createdAt, JSON.stringify(done));
   db.close();
 }
 

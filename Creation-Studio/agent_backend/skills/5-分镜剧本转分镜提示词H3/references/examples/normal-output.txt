@@ -1,0 +1,55 @@
+_::~OUTPUT_START::~_
+人物：@周春明、@付尚
+场景：@高三六班教室
+道具：@扩音器
+===
+DURATION: [总时长6s]
+subject_definitions:
+<Subject 1> is @周春明.
+<Subject 2> is @付尚.
+<Scene 1> is @高三六班教室.
+<Prop 1> is @扩音器.
+
+summary:
+[reference generation] A continuous classroom exchange: the teacher answers with an amused rhetorical question, and the seated student responds with mock seriousness. Preserve the established teacher-student relationship, both original lines and the unchanged seated state.
+
+retention_analysis:
+<Subject 1>(appears in [Shot 1]): fully_preserved
+<Subject 2>(appears in [Shot 1], [Shot 2]): fully_preserved
+
+detailed_description:
+16:9 horizontal widescreen framing.
+Widescreen composition with clear left-right relationships and foreground/midground/background depth. Use motivated camera movement and physically consistent in-scene lighting. No vertical-video framing. No center-crop-safe composition.
+No subtitles. No captions. No burned-in text. No on-screen text overlay of any kind. Clean plate.
+No background music. No score. No non-diegetic music.
+All characters maintain the wardrobe of their bound @ references; scene context, role, emotion and posture do not change costumes.
+Soft diffused daylight enters through the east-wall windows. Keep this physical source, the northern teaching area and the southern front-row desks consistent throughout.
+
+[Shot 1] At 00:00.000
+LOCATION: @高三六班教室 <Scene 1>, interior, day; the lectern and blackboard occupy the northern teaching area, with front-row desks immediately south. Soft east-window daylight remains unchanged.
+CAMERA POSITION & SHOOTING DIRECTION: The camera is in the west aisle, between the lectern and the front row, looking across the teacher-student axis. @周春明 <Subject 1> stands on screen left, facing the seated @付尚 <Subject 2> on screen right. The lectern edge, blackboard and front-row desk establish three stable references and readable depth.
+SHOT TYPE / FRAMING / CAMERA MOVEMENT: Relationship dialogue shot / medium-wide two-shot / static / sufficient depth of field to retain both positions and the room references.
+TIME MARKER: None (continuous).
+Action & Performance: @周春明 <Subject 1> remains standing beside the lectern, torso and gaze toward @付尚 <Subject 2>, with @扩音器 <Prop 1> already worn. Primary Event: he delivers the original question without approaching or changing position. VISIBLE REACTIONS: a restrained smile and lightly raised brow support the amused question. @付尚 <Subject 2> remains seated, hands resting on the desk, torso and gaze toward the teacher, listening without standing.
+END FRAME / END BEAT: The teacher stays beside the lectern on screen left, his question finished and gaze on the student. The student remains seated on screen right, facing the teacher; the amplifier and room layout are unchanged.
+Dialogue: @周春明 <Subject 1> (onscreen diegetic; relaxed rhetorical question, clear articulation, normal delivery around 4.5 Chinese characters per second, lightly rising question ending), says:<d>[Chinese]你还得意上了是吧？</d>
+SOUND: The teacher's voice retains a stable middle-aged male identity through the already-worn amplifier, with light classroom reflections. Keep room tone quiet and continuous; no added intelligible background speech and no music.
+DURATION: 3s
+
+[Shot 2] At 00:03.000
+LOCATION: @高三六班教室 <Scene 1>, interior, day; the same front-row desk, northern lectern area and soft east-window daylight.
+CAMERA POSITION & SHOOTING DIRECTION: Stay on the west side of the established axis and move the viewpoint closer to the student's northwest side. @付尚 <Subject 2> is on screen right in a readable three-quarter view, looking screen left toward the teacher, who remains standing offscreen in the lectern area.
+SHOT TYPE / FRAMING / CAMERA MOVEMENT: Reply and reaction shot / medium close-up / static / shallow depth of field with the student's face clear.
+TIME MARKER: None (continuous).
+Action & Performance: @付尚 <Subject 2> stays seated with both hands on the desk and his torso directed toward the teacher. Primary Event: he speaks the complete original reply, giving the second repetition a lighter tone. VISIBLE REACTIONS: he holds a deliberately composed expression with a small restrained smile; he does not rise, turn away or add another gesture.
+END FRAME / END BEAT: The student remains seated at the same desk, mouth closed after the final word, gaze toward the offscreen teacher. The teacher remains in the lectern area; neither changes position or props.
+Dialogue: @付尚 <Subject 2> (onscreen diegetic; mock-serious, normal delivery around 4.5 Chinese characters per second, a short comma pause and a lighter second repetition), says:<d>[Chinese]做人要谦虚，谦虚。</d>
+SOUND: The student's stable youthful male voice is clear and unamplified, with the same classroom acoustic space and quiet room tone. Do not add a teacher response or intelligible student chatter; no music.
+DURATION: 3s
+
+overall_soundscape:
+One continuous quiet classroom acoustic space. Maintain a middle-aged male voice identity for the teacher, with the physical amplifier's light coloration, and a youthful male identity for the student's reply. Only the two original lines are spoken; room tone does not interrupt across the cut. No background music or score.
+
+non_diegetic_music:
+N/A (No background music, no score, and no non-diegetic music.)
+_::~OUTPUT_END::~_

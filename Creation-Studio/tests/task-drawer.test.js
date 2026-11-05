@@ -78,3 +78,41 @@ test('调度并发：上限从 4 提到 10', () => {
   const config = fs.readFileSync(path.join(__dirname, '../src/config.js'), 'utf8');
   assert.ok(config.includes('Math.min(10, Number(cfg.concurrency)'), '全局并发上限为 10');
 });
+
+test('详情页：在文件夹中显示要定位文件，另加手动刷新与自动刷新', () => {
+  assert.ok(eventsWeb.includes("body: { path: videoPath, select: true }"), '定位成片要带 select，不能直接播放视频');
+  assert.ok(eventsWeb.includes('data-drawer-refresh'), '任务详情要有刷新按钮');
+  assert.ok(eventsWeb.includes("refreshBtn.textContent = '刷新中…'"), '刷新要给出即时反馈');
+  assert.ok(eventsWeb.includes('drawerAutoTimer'), '详情页要有自动刷新计时器');
+  assert.ok(eventsWeb.includes('stopDrawerAutoRefresh()'), '重画和关闭抽屉都要清掉计时器');
+  assert.ok(eventsWeb.includes('[data-drawer-refresh]'), '刷新按钮要能绑定');
+});
+
+test('自动刷新不能整页重画（会闪屏），只打补丁', () => {
+  assert.ok(eventsWeb.includes('const patchDrawer ='), '要有局部打补丁函数');
+  assert.ok(eventsWeb.includes('const refreshSilently ='), '自动刷新走静默刷新');
+  const timerBlock = eventsWeb.slice(eventsWeb.indexOf('drawerAutoTimer = setInterval'), eventsWeb.indexOf('const showLog = async'));
+  assert.ok(timerBlock.includes('refreshSilently()'), '计时器里只能静默刷新');
+  assert.ok(!timerBlock.includes('openDetail('), '计时器里不能整页重画');
+  const buttonBlock = eventsWeb.slice(eventsWeb.indexOf('refreshBtn.onclick'), eventsWeb.indexOf('drawerAutoTimer = setInterval'));
+  assert.ok(buttonBlock.includes('await refreshSilently()'), '刷新按钮走静默刷新');
+  assert.ok(!buttonBlock.includes('openDetail('), '刷新按钮不能整页重画');
+  assert.ok(eventsWeb.includes('if (!patchDrawer(nextEvent, nextJobByItem)) { await openDetail(id); return; }'), '条目增减时才允许整页重画');
+  for (const marker of ['data-shot-status', 'data-shot-meta', 'data-shot-flags', 'data-shot-media', 'data-shot-actions', 'data-shot-sig']) {
+    assert.ok(eventsWeb.includes(marker), `缺少可局部替换的块：${marker}`);
+  }
+  assert.ok(eventsWeb.includes('data-task-badge') && eventsWeb.includes('data-kpi=') && eventsWeb.includes('data-progress'), '统计区也要能局部更新');
+  assert.ok(eventsWeb.includes('jobByItem.clear()'), '补丁要把新任务数据合进原来的 Map，右键/重试才拿到新值');
+  assert.ok(eventsWeb.includes('.evt-shot-flags') || fs.readFileSync(path.join(__dirname, '../web/styles.css'), 'utf8').includes('.evt-shot-flags'), '失败提示容器要有样式');
+});
+
+test('编辑分镜：参考图能看、能换、能删，点图放大', () => {
+  assert.ok(eventsWeb.includes('id="revise-refs-grid"'), '编辑弹窗要有参考图区');
+  assert.ok(eventsWeb.includes('data-ref-zoom='), '缩略图要能点开大图');
+  assert.ok(eventsWeb.includes('data-ref-replace=') && eventsWeb.includes('data-ref-remove='), '每张图要能替换和删除');
+  assert.ok(eventsWeb.includes('function openImageLightbox('), '要有原图预览浮层');
+  assert.ok(eventsWeb.includes("'/api/upload/raw?'"), '换图走原始上传接口');
+  assert.ok(eventsWeb.includes('payload.images = refs.map'), '保存时把参考图列表发给 revise');
+  assert.ok(eventsServer.includes('Array.isArray(patch.images)'), '服务端要接收参考图修改');
+  assert.ok(eventsServer.includes('参考图不存在'), '服务端要校验图片真实存在');
+});

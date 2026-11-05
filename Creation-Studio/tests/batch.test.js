@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -62,5 +62,41 @@ test('toJobInputs 跳过有错误的条目并按 repeat 展开', () => {
 test('无效 JSON 报错', () => {
   assert.throws(() => batch.parseBatch('{oops'), /JSON 解析失败/);
   assert.throws(() => batch.parseBatch({ tasks: [] }), /没有 tasks/);
+});
+
+test('批量 JSON 携带 model 与 ratio：单任务覆盖 defaults，缺省留空', () => {
+  const data = {
+    defaults: { ratio: '16:9', duration: 10, model: 'Seedance 2.0 Mini' },
+    tasks: [
+      { title: 'A', prompt: 'p', model: 'Seedance 2.0 Fast', ratio: '9:16' },
+      { title: 'B', prompt: 'p' },
+      { title: 'C', prompt: 'p', aspectRatio: '1:1', '模型': 'seedance-2.0-fast' },
+    ],
+  };
+  const parsed = batch.parseBatch(data);
+  assert.equal(parsed.tasks[0].model, 'Seedance 2.0 Fast');
+  assert.equal(parsed.tasks[0].aspectRatio, '9:16 (Portrait Widescreen)');
+  assert.equal(parsed.tasks[1].model, 'Seedance 2.0 Mini', '没写就继承 defaults');
+  assert.equal(parsed.tasks[1].aspectRatio, '16:9 (Widescreen)');
+  assert.equal(parsed.tasks[2].model, 'Seedance 2.0 Fast', '中文键也认，并归一成页面文案');
+  assert.equal(parsed.tasks[2].aspectRatio, '1:1 (Square)');
+  const inputs = batch.toJobInputs(parsed, 'minimax_h3_image_audio_to_video_v2_15s');
+  assert.equal(inputs[0].model, 'Seedance 2.0 Fast');
+  assert.equal(inputs[0].aspectRatio, '9:16 (Portrait Widescreen)');
+});
+
+test('批量 JSON 不写 model 时不产生该字段，交给渠道默认', () => {
+  const parsed = batch.parseBatch({ defaults: { duration: 10 }, tasks: [{ prompt: 'p' }] });
+  assert.equal(parsed.tasks[0].model, '');
+  const inputs = batch.toJobInputs(parsed, 'minimax_h3_image_audio_to_video_v2_15s');
+  assert.equal('model' in inputs[0], false);
+});
+
+test('画幅认全角冒号，写错画幅要报错而不是悄悄换成 16:9', () => {
+  const ok = batch.parseBatch({ defaults: { duration: 10 }, tasks: [{ prompt: 'p', ratio: '9：16' }] });
+  assert.deepEqual(ok.tasks[0].errors, []);
+  assert.equal(ok.tasks[0].aspectRatio, '9:16 (Portrait Widescreen)');
+  const bad = batch.parseBatch({ defaults: { duration: 10 }, tasks: [{ prompt: 'p', ratio: '21:9' }] });
+  assert.ok(bad.tasks[0].errors.some((text) => /画幅只能是/.test(text)), bad.tasks[0].errors.join(';'));
 });
 

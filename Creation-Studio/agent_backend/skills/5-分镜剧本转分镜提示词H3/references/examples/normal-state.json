@@ -1,0 +1,61 @@
+{
+  "interface": "小行星v0.4.1本地交接示例；需调用方实际传入，不代表自动写回",
+  "group": "教学例-6s",
+  "scene": {
+    "name": "高三六班教室",
+    "story_time": "日，连续",
+    "physical_anchors": [
+      "讲台/黑板在北",
+      "前排课桌在南",
+      "相机可用的西侧过道"
+    ],
+    "light": "东墙窗的柔和日间漫射光",
+    "source": "normal-assets.json"
+  },
+  "characters": [
+    {
+      "name": "周春明",
+      "bound_reference": "@周春明",
+      "position": "北端讲台前",
+      "posture": "站立",
+      "facing": "付尚座位方向",
+      "prop_state": "扩音器已佩戴",
+      "origin": "教学资料+本组未更新位置"
+    },
+    {
+      "name": "付尚",
+      "bound_reference": "@付尚",
+      "position": "南侧前排原座位",
+      "posture": "坐姿",
+      "facing": "讲台/周春明方向",
+      "hands": "放在课桌上",
+      "origin": "当前输入及教学例末态"
+    }
+  ],
+  "camera": {
+    "last_position": "学生西北侧、西侧轴线同侧",
+    "last_framing": "付尚中近景",
+    "screen_relation": "付尚在右，望向画外左侧老师",
+    "focus": "付尚面部",
+    "origin": "本例摄影设计，不是永久世界坐标"
+  },
+  "voices": [
+    {
+      "name": "周春明",
+      "identity": "中年男声",
+      "processing": "现场扩音器轻微染色；与身份音色分开",
+      "origin": "本地教学预设，在本例输入的声音设定中显式提供"
+    },
+    {
+      "name": "付尚",
+      "identity": "青年男声，清楚自然",
+      "processing": "现场未扩声",
+      "origin": "本地教学预设，在本例输入的声音设定中显式提供"
+    }
+  ],
+  "last_frame": "付尚仍坐，回应结束、嘴部闭合，视线朝老师；周春明仍在讲台前；无新事件。",
+  "unknowns": [
+    "未给出房间绝对尺寸",
+    "没有配音实测"
+  ]
+}

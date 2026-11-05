@@ -1,5 +1,44 @@
 'use strict';
 const path=require('node:path');
+
+// ══════════════════════════════════════════════════════════════════════════
+// 【已停用】豆包原生 @ 图片引用（2026-11-01 起默认关闭，代码完整保留）
+//
+// 停用范围：下面 bindReferences() / pickCandidate() 代表的整条链路——
+//   在提示词里敲 "@" → 输入图片文件名 → 等豆包的素材候选弹层（role=option）
+//   → 按完整文件名精确点选 → 生成 .node-inputEngineMention 图片芯片 → 再按
+//   attachment-image-card 的 alt/src 逐个核验绑定结果。
+//   停用后这条链路不会被调用，但函数、候选去重逻辑、核验逻辑一行都没删。
+//
+// 停用期间的替代行为：图片引用一律降级为纯文本，pictureTagsToText() 负责转换—
+//   <Picture 1>  → 图1
+//   @图片1 / @图1 → 图1
+//   多个标记按出现顺序依次变成 图1、图2……正文其余部分原样保留。转换后的字符串
+//   直接 editor.fill() 写进输入框，不产生任何 mention 芯片，豆包按普通文字收到。
+//
+// 为什么停：
+//   1) 候选弹层只滚出前几张图的候选，第 6 张起必须先输文件名，前 5 张又是另一套行为；
+//   2) 候选是模糊匹配（"办公室.png" 也会命中 "主管办公室.png"），必须靠 pickCandidate
+//      按完整文件名唯一命中，一旦重名或多命中就直接中止，跑一次任务容易白等；
+//   3) 素材卡片的 alt/src 顺序必须与上传顺序完全一致才允许发送，任何顺序抖动都会拦下；
+//   4) 现在的提示词直接用 "图1/图2" 指代图片，模型自己理解对应关系，链路更短更稳。
+//
+// 什么时候会被启用（即"何时禁用"的对照）：只有在显式要求原生 @ 绑定、
+//   DBM_NATIVE_MENTIONS=1（或调用方 nativeMentions=true）时，submitText 才走
+//   bindReferences；其余所有情况——默认值、未设置、设为 0/其它任何值——都禁用。
+//   注意它依赖上传已完成（attachment-image-card 已渲染），上传没完成时启用它会直接报错。
+//
+// 恢复原生 @ 绑定的做法：设置环境变量 DBM_NATIVE_MENTIONS=1 后重启管理器（17778），
+//   提示词里的标记会重新变成真芯片；要彻底回到旧行为，只需把 submitText 里的
+//   nativeMentionsEnabled() 判断改成 true。
+// ══════════════════════════════════════════════════════════════════════════
+function nativeMentionsEnabled(){
+  return String(process.env.DBM_NATIVE_MENTIONS||'').trim()==='1';
+}
+// 纯文本降级：<Picture n> / @图片n / @图n 一律写成「图n」，其余文字不动。
+function pictureTagsToText(text){
+  return String(text??'').replace(/<Picture\s+(\d+)>|@(?:图片|图)\s*(\d+)(?!\d)/gi,(all,a,b)=>'图'+(a||b));
+}
 function referenceParts(text,files){
  const parts=[];let last=0;
  const pattern=/<Picture\s+(\d+)>|@(?:图片|图)\s*(\d+)(?!\d)/gi;
@@ -72,4 +111,4 @@ async function bindReferences(page,editor,text,files,signal){
  if(actual.replace(/\s+/g,'')!==expectedText.replace(/\s+/g,''))throw new Error('图片引用插入后全文顺序或内容不一致，已停止发送');
  return {text:actual,bindings};
 }
-module.exports={referenceParts,bindReferences,pickCandidate};
+module.exports={referenceParts,bindReferences,pickCandidate,nativeMentionsEnabled,pictureTagsToText};

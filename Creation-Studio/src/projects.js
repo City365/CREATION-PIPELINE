@@ -1,32 +1,38 @@
 'use strict';
-/** 项目管理：一个项目绑定一个风格，并在项目根目录下拥有独立的文件子目录。 */
+/**
+ * 项目管理：一个项目绑定一个风格，并在项目根目录下拥有独立的文件子目录。
+ *
+ * 项目记录存 SQLite（src/db.js），不再是 data/projects.json——项目归属决定谁能看到
+ * 哪些任务、素材和成片，这份数据不能被随手改写。
+ */
 const fs = require('node:fs');
 const path = require('node:path');
-const config = require('./config');
+const db = require('./db');
 const styles = require('./styles');
+const tenants = require('./tenants');
 const workspace = require('./workspace');
 const { uid } = require('./util');
 
-function dataDir() {
-  return config.load().dataDir || path.join(__dirname, '..', 'data');
+function toProject(row) {
+  if (!row) return null;
+  let sourceFolders = [];
+  try { sourceFolders = JSON.parse(row.source_folders || '[]'); } catch { sourceFolders = []; }
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    ownerUserId: row.owner_user_id || '',
+    folder: row.folder || '',
+    name: row.name,
+    description: row.description || '',
+    styleId: row.style_id || '',
+    sourceFolders: Array.isArray(sourceFolders) ? sourceFolders : [],
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
 }
 
-function file() {
-  return path.join(dataDir(), 'projects.json');
-}
-
-function load() {
-  try {
-    const list = JSON.parse(fs.readFileSync(file(), 'utf8'));
-    return Array.isArray(list) ? list : [];
-  } catch {
-    return [];
-  }
-}
-
-function save(list) {
-  fs.mkdirSync(dataDir(), { recursive: true });
-  fs.writeFileSync(file(), JSON.stringify(list, null, 2) + '\n', 'utf8');
+function persistWorkspace(project) {
+  db.open().prepare('UPDATE projects SET folder = ? WHERE id = ?').run(String(project.folder || ''), project.id);
 }
 
 function normalize(input, base = {}) {
@@ -46,6 +52,8 @@ function normalize(input, base = {}) {
   return {
     sourceFolders: roots,
     id: base.id || 'proj-' + uid('').slice(0, 10),
+    tenantId: String(input.tenantId ?? base.tenantId ?? tenants.DEFAULT_TENANT),
+    ownerUserId: String(input.ownerUserId ?? base.ownerUserId ?? ''),
     folder: base.folder || String(input.folder || ''),
     name: name.slice(0, 60),
     description: String(input.description ?? base.description ?? '').slice(0, 500),
@@ -66,54 +74,61 @@ function ensureWorkspace(project) {
   return changed;
 }
 
-function list() {
-  const all = load();
-  let changed = false;
-  for (const project of all) {
+/**
+ * 项目列表。传 tenantId 时只返回该租户的项目（业务入口必须传）；
+ * 不传只给内部工具用（路径解析、迁移），不要拿它直接喂给接口。
+ */
+function list(tenantId) {
+  const conn = db.open();
+  const rows = tenantId
+    ? conn.prepare('SELECT * FROM projects WHERE tenant_id = ? ORDER BY updated_at DESC').all(String(tenantId))
+    : conn.prepare('SELECT * FROM projects ORDER BY updated_at DESC').all();
+  return rows.map(toProject).map((project) => {
     try {
-      if (ensureWorkspace(project)) changed = true;
+      if (ensureWorkspace(project)) persistWorkspace(project);
     } catch { /* 目录建不出来不应让整个项目列表失败 */ }
-  }
-  if (changed) save(all);
-  return all.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    return project;
+  });
 }
 
 function get(id) {
-  const project = load().find((p) => p.id === id) || null;
-  if (project) {
-    try {
-      if (ensureWorkspace(project)) save(load().map((p) => (p.id === id ? project : p)));
-    } catch { /* ignore */ }
-  }
+  const project = toProject(db.open().prepare('SELECT * FROM projects WHERE id = ?').get(String(id || '')));
+  if (!project) return null;
+  try {
+    if (ensureWorkspace(project)) persistWorkspace(project);
+  } catch { /* ignore */ }
   return project;
 }
 
 function create(input) {
   const project = normalize(input);
   ensureWorkspace(project);
-  const all = load();
-  all.push(project);
-  save(all);
+  db.open().prepare(`INSERT INTO projects(id, tenant_id, owner_user_id, name, description, style_id, folder, source_folders, created_at, updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?)`).run(
+    project.id, project.tenantId, project.ownerUserId, project.name, project.description,
+    project.styleId, project.folder, JSON.stringify(project.sourceFolders), project.createdAt, project.updatedAt,
+  );
   return project;
 }
 
 function update(id, patch) {
-  const all = load();
-  const index = all.findIndex((p) => p.id === id);
-  if (index < 0) throw new Error('项目不存在');
-  const merged = normalize({ ...all[index], ...patch, id }, all[index]);
-  merged.folder = all[index].folder || merged.folder;
-  all[index] = merged;
+  const conn = db.open();
+  const existing = get(id);
+  if (!existing) throw new Error('项目不存在');
+  const merged = normalize({ ...existing, ...patch, id: existing.id }, existing);
+  merged.folder = existing.folder || merged.folder;
   ensureWorkspace(merged);
-  save(all);
+  conn.prepare(`UPDATE projects SET tenant_id = ?, owner_user_id = ?, name = ?, description = ?, style_id = ?, folder = ?, source_folders = ?, updated_at = ?
+    WHERE id = ?`).run(
+    merged.tenantId, merged.ownerUserId, merged.name, merged.description, merged.styleId,
+    merged.folder, JSON.stringify(merged.sourceFolders), merged.updatedAt, merged.id,
+  );
   return merged;
 }
 
 function remove(id) {
-  const all = load();
-  const next = all.filter((p) => p.id !== id);
-  save(next);
-  return next.length !== all.length;
+  const result = db.open().prepare('DELETE FROM projects WHERE id = ?').run(String(id || ''));
+  return Number(result.changes) > 0;
 }
 
 function publicProject(project) {

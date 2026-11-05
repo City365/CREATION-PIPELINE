@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 /* Shared directory for image/video workbenches. Runtime objects retain in-flight ownership. */
 const WB = (() => {
   const books={image:null,video:null}, defaults={}, timers={}, queues=new Map();
@@ -8,12 +8,12 @@ const WB = (() => {
   const current=k=>books[k]?.items.find(i=>i.id===books[k].activeId);
   const context=k=>({projectId:books[k]?.projectId||studioProjectId(),kind:k,itemId:books[k]?.activeId||null});
   function snapshot(k,source=runtime(k)) {
-    const keys=k==='video'?['workflowId','channelId','prompt','promptMode','images','audios','videos','aspectRatio','resolution','megapixels','megapixels2','duration','seed','count','panelWidth','prefixPrompt']:['channelId','tab','prompt','size','count','refs','source','reverseText','results','previewIndex','zoom','panelWidth','_imageRunId','prefixPrompt','styleLayer','imageRatio','imageLayoutId','layoutPrompt'];
+    const keys=k==='video'?['workflowId','channelId','prompt','promptMode','images','audios','videos','aspectRatio','resolution','megapixels','megapixels2','duration','seed','count','panelWidth','prefixPrompt']:['channelId','tab','prompt','size','count','refs','source','reverseText','results','previewIndex','zoom','panelWidth','_imageRunId','prefixPrompt','styleLayer','imageRatio','imageLayoutId','layoutPrompt','sceneFlow'];
     const out={};for(const key of keys)if(source[key]!==undefined)out[key]=clone(source[key]);return out;
   }
   function adopt(k,item) {
     const obj=item.runtime||(item.runtime={...clone(defaults[k]),...clone(item.draft),_restored:true,busy:false});
-    if(k==='video'){state.studio=obj;state.lastJobId=(state.jobs||[]).find(j=>j.itemId===item.id)?.id||null;}
+    if(k==='video'){const own=(state.jobs||[]).filter(j=>j.itemId===item.id);state.studio=obj;state.lastJobId=own.length?own.slice().sort((a,b)=>(b.createdAt||0)-(a.createdAt||0))[0].id:null;}
     else state.image=obj;
   }
   const cacheKey=(p,k,id)=>'wmd.workbench.'+p+'.'+k+'.'+id;
@@ -84,16 +84,28 @@ const WB = (() => {
       else state.image={...clone(defaults[k]),prompt:'',results:[],source:null};
     }
   }
-  function layout(k,html) {
-    const b=books[k];if(!b)return html;
-    const i=current(k),collapsed=localStorage.getItem('wmd.workbench.collapsed.'+k)==='1';
-    const rows=b.items.map((item,n)=>{
+  function rowsHtml(k) {
+    const b=books[k];
+    if(!b)return '';
+    return b.items.map((item,n)=>{
       const d=item.id===b.activeId?snapshot(k):item.draft;
       const thumb=k==='image'?(d.results||[])[0]:(d.images||[]).find(Boolean);
       const jobs=(state.jobs||[]).filter(j=>j.itemId===item.id);
       const status=jobs.find(j=>j.status==='running'||j.status==='queued') || (k==='image'?(state.imageTasks||[]).find(t=>t.itemId===item.id&&['running','queued','paused'].includes(t.status)):null);
       return '<div class="wb-row '+(item.id===b.activeId?'is-selected':'')+'" draggable="true" data-wb-id="'+esc(item.id)+'"><button type="button" class="wb-select" data-wb="select" data-id="'+esc(item.id)+'" aria-current="'+(item.id===b.activeId?'true':'false')+'">'+(thumb?.path?'<img alt="" src="/api/file?path='+enc(thumb.path)+'">':'<span class="wb-number">'+String(n+1).padStart(2,'0')+'</span>')+'<span><b>'+esc(item.title)+'</b><small>'+esc(status?(status.status==='paused'?'已暂停':STATUS_LABEL[status.status]):d.prompt?String(d.prompt).slice(0,30):'待编辑')+'</small></span></button><button type="button" class="wb-more" data-wb="menu" data-id="'+item.id+'" aria-label="管理 '+esc(item.title)+'">⋯</button></div>';
     }).join('');
+  }
+  // 任务状态变了只重画目录这几行：整页重画会闪，还会打断正在输入的提示词
+  function paintSidebar(k) {
+    const host=document.querySelector('.wb-directory .wb-list');
+    if(!host||!books[k])return false;
+    host.innerHTML=rowsHtml(k)||'<p class="wb-empty">还没有条目，点击新建开始。</p>';
+    return true;
+  }
+  function layout(k,html) {
+    const b=books[k];if(!b)return html;
+    const i=current(k),collapsed=localStorage.getItem('wmd.workbench.collapsed.'+k)==='1';
+    const rows=rowsHtml(k);
     const sidebar='<aside class="wb-directory '+(collapsed?'is-collapsed':'')+'" aria-label="'+(k==='video'?'视频分镜':'图像画面')+'目录"><header><b>'+(k==='video'?'分镜目录':'画面目录')+'</b><button type="button" data-wb="collapse" title="收起 / 展开目录">'+(collapsed?'›':'‹')+'</button></header><div class="wb-tools"><button type="button" data-wb="new">＋ 新建</button><button type="button" data-wb="trash">回收站</button></div><div class="wb-list">'+(rows||'<p class="wb-empty">还没有条目，点击新建开始。</p>')+'</div><footer><span data-wb-status="'+k+'">'+(i?.error?'保存失败 · 本地已保留':'已自动保存')+'</span><button type="button" data-wb="save">保存</button></footer></aside>';
     return '<div class="wb-layout" data-workbench="'+k+'">'+sidebar+'<div class="wb-content">'+(b.activeId?html:'<div class="wb-blank"><h2>新建'+(k==='video'?'分镜':'画面')+'</h2><p>每个条目独立保存提示词、参考图和生成记录。</p><button type="button" class="btn primary" data-wb="new">＋ 新建</button></div>')+'</div></div>';
   }
@@ -110,7 +122,8 @@ const WB = (() => {
   }
   async function newItem(k,draft,title) {
     await flush(k);const b=books[k];
-    const blank=k==='video'?{...defaults[k],prompt:'',images:[],audios:[],videos:[]}:{...defaults[k],prompt:'',source:null,refs:[],results:[],reverseText:''};
+    // 新建条目必须是干净的：场景建模数据显式清空，绝不继承上一个画面
+    const blank=k==='video'?{...defaults[k],prompt:'',images:[],audios:[],videos:[]}:{...defaults[k],prompt:'',source:null,refs:[],results:[],reverseText:'',sceneFlow:null};
     const item=await api('/api/workbench/items',{method:'POST',body:{projectId:b.projectId,kind:k,title,draft:draft||blank}});
     b.items.push(item);await selectItem(k,item.id);
   }
@@ -230,6 +243,6 @@ const WB = (() => {
       const origin=host.querySelector('#wb-open-origin');if(origin)origin.onclick=async()=>{try{await flushAll();if(d.projectId!==studioProjectId()){await setActiveProject(d.projectId,{silent:true});if(d.projectId!==studioProjectId())throw Error('原项目不存在');}await selectItem(d.kind,d.itemId);closeModal();location.hash=d.kind==='video'?'#studio':'#image';}catch(e){toast(e.message,true);}};
     }catch(e){host.textContent='生成资料读取失败：'+e.message;}
   }
-  return {reconcileImageTask,layout,bind,load,flush,flushAll,schedule,context,complete,mediaDetails,current,snapshot};
+  return {reconcileImageTask,layout,paintSidebar,bind,load,flush,flushAll,schedule,context,complete,mediaDetails,current,snapshot};
 })();
 

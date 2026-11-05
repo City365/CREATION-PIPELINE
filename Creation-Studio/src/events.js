@@ -8,7 +8,11 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const config = require('./config');
 const jobs = require('./jobs');
+const workflows = require('./workflows');
 const channels=require('./channels');
+const quotas=require('./quotas');
+const tenantContext = require('./tenant-context');
+const tenantScope = require('./tenant-scope');
 
 const state = { events: [] };
 const repository = require('./event-store');
@@ -146,6 +150,8 @@ function create(input = {}) {
     id: uid(),
     title: String(input.title || '').trim().slice(0, 120) || ('事件 ' + new Date().toLocaleString('zh-CN', { hour12: false })),
     kind: input.kind || (input.source === 'image' ? 'image' : 'video'),
+    // 事件所属租户：后台调度没有请求上下文，靠它解析该租户的渠道。
+    tenantId: String(input.tenantId || config.load().tenantId || ''),
     source: ['batch', 'studio', 'image', 'api'].includes(input.source) ? input.source : 'api',
     spec: {
       channelId: String(input.channelId || ''),
@@ -187,6 +193,11 @@ function attach(event, refType, refId, extra = {}) {
 function prepareInputs(inputs,kind){return inputs.map(input=>{const copy={...input};if(kind==='image'){const ch=copy.channelId?channels.get('image',copy.channelId):channels.active('image');if(!ch)throw Object.assign(new Error('没有启用的图像渠道'),{status:422});copy.channelId=ch.id;copy.model=copy.model||ch.model;}delete copy.apiKey;delete copy.authorization;for(const field of ['images','refs','audios','videos'])if(Array.isArray(copy[field]))copy[field]=copy[field].map(asset=>{if(!asset?.path||/^https?:/i.test(asset.path))return asset;const full=path.resolve(asset.path);if(!fs.existsSync(full))throw Object.assign(new Error('参考素材不存在：'+asset.path),{status:400});const digest=crypto.createHash('sha256').update(fs.readFileSync(full)).digest('hex');return {...asset,path:full,assetFingerprint:digest};});return copy;});}
 function createFromJobInputs(inputs, meta = {}) {
   if (!Array.isArray(inputs) || !inputs.length) { const error = new Error('没有可创建的任务条目'); error.status = 400; throw error; }
+  // 租户每日任务配额；草稿/定时也算一次，重试沿用已有事件的不再重复计数。
+  // 存储已超限时不再接新任务；并发在任务真正开跑时由 jobs.pump 兜底。
+  const tenantId = config.load().tenantId;
+  quotas.assertTasks(tenantId);
+  quotas.assertStorage(tenantId, 0);
   inputs=prepareInputs(inputs,meta.kind);
   const kind = meta.kind === 'image' ? 'image' : 'video';
   load();
@@ -341,6 +352,33 @@ function capture(event, item, map) {
   const record = { id: attemptId, eventId: event.id, itemId: item.id, refId: item.refId, kind: event.kind || repository.kind(event), createdAt: source.createdAt || Date.now(), startedAt: source.startedAt, finishedAt: source.finishedAt, status: source.status, remoteId: source.remotePromptId || null, error: source.error, outputs: source.outputs || source.result?.items || [], snapshot: source.snapshot || item.input || {}, logs: item.refType === 'imageTask' ? source.logs || [] : jobs.readLog(item.refId) };
   if (!previous || previous.status !== record.status || previous.logs.length !== record.logs.length) repository.attempt(record);
 }
+function processEvent(event, map) {
+  let changed = false;
+  for (const item of event.items || []) capture(event,item,map);
+  if (event.legacy || event.paused || event.canceled || event.draft || event.pendingSchedule || !event.items?.length) return false;
+  if (event.schedule?.startAt && Date.parse(event.schedule.startAt) > Date.now()) return false;
+  if (event.items.some(i => i.dispatchState === 'pending')) { try { materialize(event); changed=true; } catch { return false; } }
+  const statuses = event.items.map(item => itemStatusOf(item,map));
+  if (statuses.every(status => TERMINAL_ITEM.has(status))) return changed;
+  if (event.policy?.onItemFail === 'stop' && statuses.includes('failed')) {
+    for (const [index,item] of event.items.entries()) if (['queued','paused'].includes(statuses[index])) {
+      cancelPending(item); item.override='skipped'; changed=true;
+    }
+    return changed;
+  }
+  const dispatched = event.items.filter(item => { const source=sourceOf(item,map); return source && source.status==='queued' && !source.held; }).length;
+  let occupied = statuses.filter(status => status==='running').length + dispatched;
+  const limit = Math.max(1,Number(event.policy?.concurrency)||1);
+  for (const [index,item] of event.items.entries()) {
+    if (occupied>=limit) break;
+    if (!['queued','paused'].includes(statuses[index])) continue;
+    const source=sourceOf(item,map);
+    if (!source || !source.held) continue;
+    hold(item,false); occupied++; changed=true;
+  }
+  return changed;
+}
+
 function tick() {
   state.events=repository.active();
   const map = jobMapNow();
@@ -350,28 +388,9 @@ function tick() {
   if(jobs.reorder&&queueIds.length){const keys=new Set(queueIds),existing=[...map.values()].filter(j=>keys.has(j.id)).sort((a,b)=>(a.order||0)-(b.order||0)).map(j=>j.id);if(existing.join(',')!==queueIds.join(','))jobs.reorder(queueIds);}
   let imageOrder=0;for(const event of ordered)for(const item of event.items||[])if(item.refType==='imageTask'&&item.refId&&imageTasks()?.setOrder)imageTasks().setOrder(item.refId,imageOrder++);
   for (const event of ordered) {
-    for (const item of event.items || []) capture(event,item,map);
-    if (event.legacy || event.paused || event.canceled || event.draft || event.pendingSchedule || !event.items?.length) continue;
-    if (event.schedule?.startAt && Date.parse(event.schedule.startAt) > Date.now()) continue;
-    if (event.items.some(i => i.dispatchState === 'pending')) { try { materialize(event); changed=true; } catch { continue; } }
-    const statuses = event.items.map(item => itemStatusOf(item,map));
-    if (statuses.every(status => TERMINAL_ITEM.has(status))) continue;
-    if (event.policy?.onItemFail === 'stop' && statuses.includes('failed')) {
-      for (const [index,item] of event.items.entries()) if (['queued','paused'].includes(statuses[index])) {
-        cancelPending(item); item.override='skipped'; changed=true;
-      }
-      continue;
-    }
-    const dispatched = event.items.filter(item => { const source=sourceOf(item,map); return source && source.status==='queued' && !source.held; }).length;
-    let occupied = statuses.filter(status => status==='running').length + dispatched;
-    const limit = Math.max(1,Number(event.policy?.concurrency)||1);
-    for (const [index,item] of event.items.entries()) {
-      if (occupied>=limit) break;
-      if (!['queued','paused'].includes(statuses[index])) continue;
-      const source=sourceOf(item,map);
-      if (!source || !source.held) continue;
-      hold(item,false); occupied++; changed=true;
-    }
+    // 事件可能属于不同租户；materialize 会建任务、解析渠道，必须在事件所属租户里跑。
+    const tenantId = event.tenantId || tenantScope.tenantOfProject(event.spec && event.spec.projectId);
+    if (tenantContext.run(tenantId, () => processEvent(event, map))) changed = true;
   }
   for(const event of state.events){const current=hydrate(event,{jobMap:jobMapNow()});if(current.status!==event.status||current.finishedAt!==event.finishedAt){event.status=current.status;event.finishedAt=current.finishedAt;event.startedAt=current.startedAt;changed=true;}}
   if (changed) save();
@@ -474,17 +493,62 @@ function reviseItem(id, itemId, patch = {}) {
   if (!body.trim()) throw Object.assign(new Error('提示词不能为空'), { status: 400 });
   const prefix = patch.prefixPrompt != null ? String(patch.prefixPrompt).trim() : currentPrefix;
   const full = prefix ? prefix + '\n\n' + body : body;
-  item.input = { ...input, prompt: full, userPrompt: body, prefixPrompt: prefix, applyStyle: false };
-  if (item.refType === 'job' && item.refId) jobs.revisePrompt(item.refId, { prompt: full, userPrompt: body, prefixPrompt: prefix });
+  // 模型 / 画幅：和提示词一样属于「发给管理器」的参数，改动只影响这一条子任务
+  const extra = {};
+  if (patch.model != null) extra.model = String(patch.model).trim() || '';
+  if (patch.ratio != null || patch.aspectRatio != null) {
+    const want = String(patch.ratio != null ? patch.ratio : patch.aspectRatio).trim();
+    const wf = workflows.get(input.workflowId || '');
+    const short = want.replace(/[：]/g, ':').match(/\d+\s*:\s*\d+/);
+    const ratio = short ? short[0].replace(/\s+/g, '') : '';
+    if (!ratio) throw Object.assign(new Error('画幅要写成 16:9 或 9:16 这种格式'), { status: 400 });
+    const allowed = (wf && wf.ratios && wf.ratios.length) ? wf.ratios : ['16:9', '9:16'];
+    if (!allowed.includes(ratio)) {
+      throw Object.assign(new Error(`这个视频模型只支持 ${allowed.join(' / ')} 画幅`), { status: 400 });
+    }
+    extra.aspectRatio = ratio;
+    extra.ratio = ratio;
+  }
+  if (patch.duration != null && String(patch.duration).trim() !== '') {
+    const seconds = Number(patch.duration);
+    if (!Number.isInteger(seconds) || seconds < 1 || seconds > 15) {
+      throw Object.assign(new Error('视频时长仅支持 1–15 秒的整数秒'), { status: 400 });
+    }
+    extra.duration = seconds;
+  }
+  // 参考图：顺序就是图1、图2…（对应 <Picture n>），换图 / 删图后随重试一起发给管理器
+  if (Array.isArray(patch.images)) {
+    const wf = workflows.get(input.workflowId || '');
+    const limit = Number(wf && wf.images) > 0 ? Math.min(9, Number(wf.images)) : 9;
+    if (patch.images.length > limit) {
+      throw Object.assign(new Error(`这个视频模型最多 ${limit} 张参考图`), { status: 400 });
+    }
+    extra.images = patch.images.map((image, order) => {
+      const raw = typeof image === 'string' ? { path: image } : (image || {});
+      const wanted = String(raw.path || '').trim();
+      if (!wanted) throw Object.assign(new Error(`第 ${order + 1} 张参考图没有路径`), { status: 400 });
+      const abs = path.resolve(wanted);
+      let ok = false;
+      try { ok = fs.existsSync(abs) && fs.statSync(abs).isFile(); } catch { ok = false; }
+      if (!ok) throw Object.assign(new Error(`第 ${order + 1} 张参考图不存在：${wanted}`), { status: 400 });
+      const out = { path: abs, name: String(raw.name || path.basename(abs)) };
+      if (raw.subject) out.subject = String(raw.subject).trim();
+      if (raw.note) out.note = String(raw.note).trim();
+      return out;
+    });
+  }
+  item.input = { ...input, prompt: full, userPrompt: body, prefixPrompt: prefix, applyStyle: false, ...extra };
+  if (item.refType === 'job' && item.refId) jobs.revisePrompt(item.refId, { prompt: full, userPrompt: body, prefixPrompt: prefix, ...extra });
   const index = event.items.indexOf(item);
   const snapshot = event.spec && Array.isArray(event.spec.items) ? event.spec.items[index] : null;
   if (snapshot) {
     snapshot.prompt = full;
     if (snapshot.params && typeof snapshot.params === 'object') {
-      snapshot.params = { ...snapshot.params, prompt: full, userPrompt: body, prefixPrompt: prefix, applyStyle: false };
+      snapshot.params = { ...snapshot.params, prompt: full, userPrompt: body, prefixPrompt: prefix, applyStyle: false, ...extra };
     }
   }
-  audit(event, 'revise', `修改分镜提示词 ${item.title || item.id}（${String(full).length} 字）`);
+  const changed = Object.keys(extra).length ? '，参数：' + Object.entries(extra).map(([k, v]) => `${k}=${v}`).join(' / ') : '';
+  audit(event, 'revise', `修改分镜 ${item.title || item.id}（提示词 ${String(full).length} 字${changed}）`);
   save();
   return get(id);
 }
@@ -631,40 +695,27 @@ function updateDraft(id,inputs,meta={}){const event=rawEvent(id);inputs=prepareI
 function queueEvent(id) {const event=rawEvent(id);event.draft=false;event.pendingSchedule=false;event.paused=false;const future=event.schedule?.startAt&&Date.parse(event.schedule.startAt)>Date.now();if(future){event.status='scheduled';audit(event,'queue','按计划时间等待执行');save();return get(id);}event.status='queued';audit(event,'queue','加入队列');save();materialize(event);save();setTimeout(safeTick,50);return get(id);}
 /** 保存任务但先不调度：出现在调度页的「未分配」里。 */
 function prepareEvent(id) {const event=rawEvent(id);const status=get(id).status;if(['running','completed','failed','partial','canceled','interrupted'].includes(status))throw Object.assign(new Error('任务已开始或已结束，不能重新调度'),{status:409});event.draft=false;event.pendingSchedule=true;event.status='unscheduled';event.paused=false;event.canceled=false;event.finishedAt=null;audit(event,'prepare','保存任务，等待调度');save();return get(id);}
-/** 删除尚未开始或已取消的任务；执行中的任务必须先取消。删掉的任务进回收站，可恢复。 */
-function trashFile() {
-  return path.join(config.DATA, 'events-trash.json');
-}
-
-function readTrash() {
-  const { readJson } = require('./util');
-  const raw = readJson(trashFile(), null);
-  const rows = raw && Array.isArray(raw.items) ? raw.items : [];
-  return rows.filter((row) => row && row.event && row.event.id);
-}
-
-function writeTrash(rows) {
-  const { writeJson } = require('./util');
-  writeJson(trashFile(), { version: 1, items: rows.slice(0, 100) });
+/** 回收站按租户存 SQLite；旧 events-trash.json 由 event-store 首次打开时导入。 */
+function currentTenant() {
+  return tenantContext.current() || tenantScope.DEFAULT_TENANT;
 }
 
 function removeEvent(id){
   const event = rawEvent(id);
   const status=get(id).status;
   if(!['draft','unscheduled','canceled','completed','failed','partial','interrupted'].includes(status))throw Object.assign(new Error('运行中或排队中的任务不能删除，请先取消'),{status:409});
-  const removed = readTrash().filter((row) => row.event.id !== id);
-  removed.unshift({ event, removedAt: Date.now(), items: (event.items || []).length });
-  writeTrash(removed);
+  const tenantId = currentTenant();
+  repository.trashPush(tenantId, { event, removedAt: Date.now(), items: (event.items || []).length });
   load();
   state.events=state.events.filter((item)=>item.id!==id);
   save();
   repository.remove(id);
-  return {ok:true,id,title:event.title||'',trash:removed.length};
+  return {ok:true,id,title:event.title||'',trash:repository.trashCount(tenantId)};
 }
 
 /** 回收站列表（不带完整 payload，避免列表太重）。 */
 function listTrash() {
-  return readTrash().map((row) => ({
+  return repository.trashList(currentTenant()).map((row) => ({
     id: row.event.id,
     title: row.event.title || '',
     kind: row.event.kind || 'video',
@@ -677,17 +728,15 @@ function listTrash() {
 
 /** 从回收站恢复任务（按 id，或最近一条）。 */
 function restoreEvent(id) {
-  const rows = readTrash();
-  if (!rows.length) throw Object.assign(new Error('回收站是空的'), { status: 404 });
-  const at = id ? rows.findIndex((row) => row.event.id === id) : 0;
-  if (at < 0) throw Object.assign(new Error('回收站里没有这个任务'), { status: 404 });
-  const [entry] = rows.splice(at, 1);
+  const entry = repository.trashTake(currentTenant(), id || '');
+  if (!entry) {
+    throw Object.assign(new Error(id ? '回收站里没有这个任务' : '回收站是空的'), { status: 404 });
+  }
   const event = entry.event;
   load();
   state.events = state.events.filter((row) => row.id !== event.id);
   state.events.push(event);
   save();
-  writeTrash(rows);
   return get(event.id);
 }
 

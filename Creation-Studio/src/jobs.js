@@ -3,8 +3,14 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { EventEmitter } = require('node:events');
 const config = require('./config');
+const db = require('./db');
+const quotas = require('./quotas');
+const processLog = require('./process-log');
+const tenantContext = require('./tenant-context');
+const tenantScope = require('./tenant-scope');
 const projects = require('./projects');
 const workspace = require('./workspace');
+const projectPaths = require('./project-paths');
 const workbenchStore = require('./workbench-store');
 const workflows = require('./workflows');
 const providers = require('./providers');
@@ -27,10 +33,106 @@ const state = { jobs: [] };
 const active = new Map(); // jobId -> { slot, canceled }
 const slotBusy = new Map(); // slotKey -> jobId
 let pumping = false;
+let dirty = new Set(); // 需要落库的任务 id
+
+/* ------------------------------- 任务落库 ------------------------------- */
+
+function repo() { return db.open(); }
+
+function upsertJob(job) {
+  const now = Date.now();
+  const tenantId = job.tenantId || tenantScope.tenantOfProject(job.projectId) || 'tnt_default';
+  repo().prepare(`INSERT INTO jobs(id, project_id, tenant_id, status, order_no, created_at, updated_at, data)
+    VALUES (?,?,?,?,?,?,?,?)
+    ON CONFLICT(id) DO UPDATE SET project_id=excluded.project_id, tenant_id=excluded.tenant_id,
+      status=excluded.status, order_no=excluded.order_no, updated_at=excluded.updated_at, data=excluded.data`)
+    .run(
+      String(job.id), String(job.projectId || ''), String(tenantId), String(job.status || ''),
+      Number(job.order) || 0, Number(job.createdAt) || now, now, JSON.stringify(job),
+    );
+}
+
+function deleteJobRow(id) {
+  repo().prepare('DELETE FROM jobs WHERE id = ?').run(String(id));
+}
+
+function markDirty(job) {
+  if (job && job.id) dirty.add(job.id);
+}
+
+/** 只写变更行；失败时把 id 放回脏集合，等下一次变更再试。 */
+function flushDirty() {
+  if (!dirty.size) return;
+  const ids = [...dirty];
+  dirty = new Set();
+  const byId = new Map(state.jobs.map((job) => [job.id, job]));
+  const conn = repo();
+  conn.exec('BEGIN');
+  try {
+    for (const id of ids) {
+      const job = byId.get(id);
+      if (job) upsertJob(job);
+      else deleteJobRow(id);
+    }
+    conn.exec('COMMIT');
+  } catch (error) {
+    try { conn.exec('ROLLBACK'); } catch { /* ignore */ }
+    for (const id of ids) dirty.add(id);
+    throw error;
+  }
+}
+
+const IMPORT_MARK = 'jobs_import';
+
+/**
+ * 老版本的任务在 data/jobs.json 里。第一次启动新版本时导入一次：
+ * 先备份 → 单事务写入 → 逐条校验 → 成功后才把原文件改名，失败保留原文件。
+ */
+function importLegacyJobs() {
+  const conn = repo();
+  if (conn.prepare('SELECT value FROM meta WHERE key = ?').get(IMPORT_MARK)) return;
+  if (!fs.existsSync(STATE_FILE)) {
+    conn.prepare('INSERT OR REPLACE INTO meta(key, value) VALUES (?,?)').run(IMPORT_MARK, String(Date.now()));
+    return;
+  }
+  const raw = fs.readFileSync(STATE_FILE, 'utf8');
+  let data;
+  try { data = JSON.parse(raw); } catch (error) {
+    throw new Error('jobs.json 不是合法 JSON，已保留原文件：' + error.message);
+  }
+  const rows = (Array.isArray(data && data.jobs) ? data.jobs : []).filter((job) => job && job.id);
+  try { fs.copyFileSync(STATE_FILE, STATE_FILE + '.bak-' + Date.now()); } catch { /* 备份失败不阻塞导入 */ }
+  conn.exec('BEGIN');
+  try {
+    for (const job of rows) {
+      const createdAt = Number(job.createdAt) || Date.now();
+      conn.prepare(`INSERT OR IGNORE INTO jobs(id, project_id, tenant_id, status, order_no, created_at, updated_at, data)
+        VALUES (?,?,?,?,?,?,?,?)`).run(
+        String(job.id), String(job.projectId || ''), String(job.tenantId || 'tnt_default'), String(job.status || ''),
+        Number(job.order) || 0, createdAt, createdAt, JSON.stringify(job),
+      );
+    }
+    const missing = rows.filter((job) => !conn.prepare('SELECT 1 FROM jobs WHERE id = ?').get(String(job.id)));
+    if (missing.length) throw new Error('任务导入不完整，缺少 ' + missing.length + ' 条');
+    conn.prepare('INSERT OR REPLACE INTO meta(key, value) VALUES (?,?)').run(IMPORT_MARK, String(Date.now()));
+    conn.exec('COMMIT');
+  } catch (error) {
+    try { conn.exec('ROLLBACK'); } catch { /* ignore */ }
+    throw error;
+  }
+  try { fs.renameSync(STATE_FILE, STATE_FILE.replace(/\.json$/, '.imported.json')); } catch { /* 改名失败不影响数据 */ }
+}
 
 function loadState() {
-  const data = readJson(STATE_FILE, { jobs: [] });
-  state.jobs = Array.isArray(data.jobs) ? data.jobs : [];
+  try { importLegacyJobs(); } catch (error) {
+    // 导入失败时保留 jobs.json，服务继续用库里已有的任务，避免启动即挂。
+    processLog.line('jobs-import-failed', error);
+  }
+  state.jobs = repo().prepare('SELECT tenant_id, data FROM jobs ORDER BY created_at, id').all().map((row) => {
+    const job = JSON.parse(row.data);
+    if (!job.tenantId) job.tenantId = row.tenant_id;
+    return job;
+  });
   for (const job of state.jobs) {
     if (job.status === 'running' || (job.status === 'queued' && job.remotePromptId && !job.eventId)) {
       job.status = 'interrupted';
@@ -38,9 +140,11 @@ function loadState() {
       job.error = job.provider === 'manager' && job.remotePromptId ? '服务重启，任务已中断；可点「继续查询／下载」恢复原任务' : '服务重启，任务已中断；可点「重试」重新提交';
       job.finishedAt = Date.now();
       job.progress = 0;
+      markDirty(job);
     }
   }
-  saveState();
+  // 只落中断标记，不要在这里跑一遍工作台终态同步（那是任务结束时的职责）。
+  try { flushDirty(); } catch (error) { processLog.line('jobs-flush-failed', error); }
   ensureDir(LOG_DIR);
 }
 
@@ -49,7 +153,7 @@ function saveState() {
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     saveTimer = null;
-    writeJson(STATE_FILE, { jobs: state.jobs });
+    try { flushDirty(); } catch (error) { processLog.line('jobs-flush-failed', error); }
   }, 120);
 }
 
@@ -59,7 +163,7 @@ function flushState() {
     clearTimeout(saveTimer);
     saveTimer = null;
   }
-  writeJson(STATE_FILE, { jobs: state.jobs });
+  try { flushDirty(); } catch (error) { processLog.line('jobs-flush-failed', error); }
 }
 
 function sameProject(job, projectId) {
@@ -105,6 +209,7 @@ function adoptLegacy(projectId) {
   for (const job of state.jobs) {
     if (job.projectId && job.projectId !== 'unassigned') continue;
     job.projectId = target;
+    markDirty(job);
     changed += 1;
   }
   if (changed) flushState();
@@ -116,6 +221,7 @@ function log(job, level, text) {
   job.logs = job.logs || [];
   job.logs.push(entry);
   if (job.logs.length > 300) job.logs.splice(0, job.logs.length - 300);
+  markDirty(job);
   try {
     ensureDir(LOG_DIR);
     fs.appendFileSync(path.join(LOG_DIR, job.id + '.log'), `[${stamp()}] ${level.toUpperCase()} ${entry.text}\n`, 'utf8');
@@ -142,6 +248,7 @@ function readLog(id) {
 function touch(job, patch = {}) {
   Object.assign(job, patch);
   if(job.runId) workbenchStore.store().finish(job.runId,job.status,job.outputs||[],job.error);
+  markDirty(job);
   saveState();
   emitter.emit('job', publicJob(job));
 }
@@ -181,15 +288,29 @@ function pump() {
       const queued = state.jobs
         .filter((j) => j.status === 'queued' && !j.held)
         .sort((a, b) => (a.order || 0) - (b.order || 0) || a.createdAt - b.createdAt);
-      let next, slot;
+      let next, slot, nextTenant = '';
       for (const candidate of queued) {
-        const wf = workflows.get(candidate.workflowId);
-        if (!wf) {
+        // 每个任务按所属项目切到对应租户，否则会拿到别的租户的渠道和工作流。
+        const tenantId = candidate.tenantId || tenantScope.tenantOfProject(candidate.projectId);
+        const quota = quotas.get(tenantId);
+        if (quota.maxConcurrentTasks) {
+          const running = state.jobs.filter((job) => job.status === 'running' && (job.tenantId || '') === tenantId).length;
+          if (running >= quota.maxConcurrentTasks) continue;
+        }
+        const picked = tenantContext.run(tenantId, () => {
+          const wf = workflows.get(candidate.workflowId);
+          if (!wf) return { missing: true };
+          return { wf, slot: availableSlot(wf.provider, wf.channelId, wf.platform) };
+        });
+        if (picked.missing) {
           failJob(candidate, new Error('工作流不存在或渠道已停用'));
           continue;
         }
-        const available = availableSlot(wf.provider, wf.channelId, wf.platform);
-        if (available) { next = candidate; slot = available; break; }
+        if (!picked.slot) continue;
+        next = candidate;
+        slot = picked.slot;
+        nextTenant = tenantId;
+        break;
       }
       if (!next) break;
       slotBusy.set(slot.key, next.id);
@@ -198,7 +319,7 @@ function pump() {
       if (slot.provider === 'autodl') next.keyId = slot.id;
       else next.channelId = slot.id;
       if (slot.provider === 'manager') next.platform = slot.platform;
-      run(next, slot).catch((err) => {
+      tenantContext.run(nextTenant, () => run(next, slot)).catch((err) => {
         // run() handles its own errors; this is a safety net.
         failJob(next, err);
       }).finally(() => {
@@ -226,6 +347,10 @@ function addJobs(input) {
         : '这个视频渠道已停用或删除，请到「渠道管理」检查');
   }
   const count = Math.max(1, Math.min(20, Number(input.count) || 1));
+  const tenantId = config.load().tenantId;
+  quotas.assertStorage(tenantId, 0);
+  // 排队不占并发；只有直接开跑的任务在创建时检查一次，后台 pump 还会再兜底。
+  if (!input.held) quotas.assertConcurrent(tenantId, count);
   const baseOrder = state.jobs.reduce((max, j) => Math.max(max, j.order || 0), 0);
   const created = [];
   const prompt = String(input.prompt || '').trim();
@@ -244,6 +369,8 @@ function addJobs(input) {
       startedAt: null,
       finishedAt: null,
       projectId: input.projectId || 'unassigned',
+      // 记下创建时的租户；后台执行不再依赖请求上下文。
+      tenantId,
       itemId: input.itemId || null,
       eventId: input.eventId || null,
       eventItemId: input.eventItemId || null,
@@ -279,6 +406,7 @@ function addJobs(input) {
     };
     job.runId = workbenchStore.store().begin({...job,kind:'video',jobId:job.id,channelName:(channels.get('video',job.channelId)||{}).name,model:job.model||(channels.get('video',job.channelId)||{}).model});
     state.jobs.push(job);
+    markDirty(job);
     created.push(job);
     log(job, 'info', `已加入队列（${i + 1}/${count}），工作流 ${wf.id}`);
   }
@@ -395,8 +523,28 @@ function revisePrompt(id, patch = {}) {
   if (patch.prompt != null) job.prompt = String(patch.prompt);
   if (patch.userPrompt != null) job.userPrompt = String(patch.userPrompt);
   if (patch.prefixPrompt != null) job.prefixPrompt = String(patch.prefixPrompt);
+  // 模型 / 画幅也是要发给管理器的参数，改完随重试一起生效
+  const notes = [];
+  if (patch.model != null && String(patch.model).trim() !== String(job.model || '').trim()) {
+    notes.push(`模型 ${job.model || '默认'} → ${String(patch.model).trim() || '默认'}`);
+    job.model = String(patch.model).trim() || null;
+  }
+  if (patch.aspectRatio != null && String(patch.aspectRatio).trim() !== String(job.aspectRatio || '').trim()) {
+    notes.push(`画幅 ${job.aspectRatio || '—'} → ${String(patch.aspectRatio).trim()}`);
+    job.aspectRatio = String(patch.aspectRatio).trim();
+  }
+  if (patch.duration != null && Number(patch.duration) && Number(patch.duration) !== Number(job.duration)) {
+    notes.push(`时长 ${job.duration} → ${Number(patch.duration)} 秒`);
+    job.duration = Number(patch.duration);
+  }
+  // 参考图：重试时按新顺序（图1、图2…）重新上传给管理器
+  if (Array.isArray(patch.images)) {
+    const hadImages = (job.images || []).length;
+    job.images = patch.images.filter(Boolean);
+    notes.push(`参考图 ${hadImages} → ${job.images.length} 张`);
+  }
   job.excerpt = deriveExcerpt(job.prompt);
-  log(job, 'info', `提示词已修改（${before} → ${String(job.prompt || '').length} 字），等待重试`);
+  log(job, 'info', `提示词已修改（${before} → ${String(job.prompt || '').length} 字）${notes.length ? '；' + notes.join('；') : ''}，等待重试`);
   touch(job);
   return publicJob(job);
 }
@@ -407,6 +555,7 @@ function setShotMeta(id, patch = {}) {
   if (!job) return null;
   if (patch.shotLabel != null) job.shotLabel = String(patch.shotLabel);
   if (patch.taskTitle != null) job.taskTitle = String(patch.taskTitle);
+  markDirty(job);
   saveState();
   emitter.emit('job', publicJob(job));
   return publicJob(job);
@@ -417,6 +566,8 @@ function remove(id) {
   if (idx < 0) throw new Error('任务不存在');
   if (state.jobs[idx].status === 'running') throw new Error('任务正在执行，先取消再删除');
   state.jobs.splice(idx, 1);
+  dirty.delete(id);
+  deleteJobRow(id);
   saveState();
   return true;
 }
@@ -437,7 +588,7 @@ function reorder(ids) {
   const base = rest.length ? Math.max(...rest) : 0;
   ids.forEach((id, index) => {
     const job = get(id);
-    if (job) job.order = base + index + 1;
+    if (job) { job.order = base + index + 1; markDirty(job); }
   });
   state.jobs.sort((a, b) => (a.order || 0) - (b.order || 0));
   saveState();
@@ -588,6 +739,7 @@ function renameOutputs(plan) {
   for (const row of prepared) {
     fs.renameSync(row.temp, row.to);
     if (row.job && row.out) {
+      markDirty(row.job);
       row.out.name = path.basename(row.to);
       row.out.path = row.to;
       row.job.outputDir = path.dirname(row.to);
@@ -724,6 +876,7 @@ function addOutput(jobId, tempFile, options = {}) {
   job.outputDir = dir;
   job.outputs = Array.isArray(job.outputs) ? job.outputs : [];
   const out = { type: 'video', name: path.basename(target), path: target, bytes, url: '' };
+  projectPaths.attach(job.projectId, out);
   job.outputs.push(out);
   log(job, 'info', `手动上传成片 ${out.name}（${formatBytes(bytes)}）`);
   touch(job);
@@ -743,7 +896,7 @@ async function saveOutputs(job, dir, items, a) {
     const name = outputName(job, kind, ext, index);
     const file = path.join(dir, name);
     fs.writeFileSync(file, res.buffer);
-    job.outputs.push({ type: kind, name, path: file, bytes: res.buffer.length, url: item.url });
+    job.outputs.push(projectPaths.attach(job.projectId, { type: kind, name, path: file, bytes: res.buffer.length, url: item.url }));
     log(job, 'info', `已下载 ${name}（${formatBytes(res.buffer.length)}）`);
     touch(job, { progress: Math.min(99, job.progress + 2) });
   }

@@ -44,15 +44,18 @@ async def test_controller_auth_fails_closed(monkeypatch):
         async def __aenter__(self):return self
         async def __aexit__(self,*args):pass
         async def get(self,path):
-            data={'ok':True,'data':[{'id':'p','name':'项目'}]}
+            assert path.endswith('/api/internal/projects/p')
+            data={'ok':True,'data':{'id':'p','tenantId':'tnt_demo'}}
             return httpx.Response(200,json=data,request=httpx.Request('GET','http://controller'+path))
     monkeypatch.setattr(identity.httpx,'AsyncClient',Client)
-    assert (await identity.authorize('p'))['user_id']=='controller:p'
+    identity_value=await identity.authorize('p')
+    assert identity_value['user_id']=='controller:p'
+    assert identity_value['tenant_id']=='tnt_demo'
 
     class Denied(Client):
         async def get(self,path):
-            data={'ok':True,'data':[{'id':'other','name':'别的项目'}]}
-            return httpx.Response(200,json=data,request=httpx.Request('GET','http://controller'+path))
+            data={'ok':False,'error':'项目不存在'}
+            return httpx.Response(404,json=data,request=httpx.Request('GET','http://controller'+path))
     monkeypatch.setattr(identity.httpx,'AsyncClient',Denied)
     with pytest.raises(HTTPException) as error:await identity.authorize('p')
     assert error.value.status_code==403
@@ -61,6 +64,15 @@ async def test_controller_auth_fails_closed(monkeypatch):
     monkeypatch.setattr(identity,'_internal_token',lambda:'')
     with pytest.raises(HTTPException) as error:await identity.authorize('p')
     assert error.value.status_code==503
+
+def test_health_is_public_in_controller_mode(monkeypatch):
+    # 启动器在 controller 模式下还没有真实项目；健康检查不能被项目归属卡住。
+    monkeypatch.setenv('HARNESS_AUTH_MODE','controller')
+    from fastapi.testclient import TestClient
+    from app import main
+    response=TestClient(main.app).get('/agent/health')
+    assert response.status_code==200
+    assert response.json()['status']=='ok'
 
 def test_user_and_project_concurrency_are_server_limits(ctx):
     principal={'user_id':'u1','security_mode':'business'}

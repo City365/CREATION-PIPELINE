@@ -1,0 +1,261 @@
+{
+  "schemaVersion": "0.4.2",
+  "readingReview": "本地导演预算，非实测；急救读数需实际配音复核",
+  "utterances": [
+    {
+      "group": 1,
+      "shot": 1,
+      "voiceIndex": 1,
+      "speaker": "林知夏",
+      "channel": "现场对白",
+      "text": "三号丝线，持针器。",
+      "spokenText": "三号丝线，持针器。",
+      "shotDuration": 4,
+      "windowStart": 0,
+      "windowEnd": 4,
+      "start": 1.2,
+      "rate": 4.5,
+      "onset": 0.1,
+      "tail": 0.1,
+      "urgentSpeech": false,
+      "urgentReason": "",
+      "pauses": [
+        {
+          "id": "pause-1",
+          "seconds": 0.3,
+          "reason": "已审阅的实际句读/术语停顿；同一位置不重复累计"
+        },
+        {
+          "id": "pause-2",
+          "seconds": 0.4,
+          "reason": "已审阅的实际句读/术语停顿；同一位置不重复累计"
+        }
+      ]
+    },
+    {
+      "group": 1,
+      "shot": 2,
+      "voiceIndex": 1,
+      "speaker": "护士长",
+      "channel": "现场对白",
+      "text": "清潭洞隧道车祸，患者将到！进行性意识障碍，伴胸腔闭锁不全！",
+      "spokenText": "清潭洞隧道车祸，患者将到！进行性意识障碍，伴胸腔闭锁不全！",
+      "shotDuration": 6,
+      "windowStart": 0,
+      "windowEnd": 6,
+      "start": 0,
+      "rate": 6.5,
+      "onset": 0.2,
+      "tail": 0.1,
+      "urgentSpeech": true,
+      "urgentReason": "特别焦急的抢救通报或抢救指令",
+      "pauses": [
+        {
+          "id": "pause-1",
+          "seconds": 0.4,
+          "reason": "已审阅的实际句读/术语停顿；同一位置不重复累计"
+        },
+        {
+          "id": "pause-2",
+          "seconds": 0.2,
+          "reason": "已审阅的实际句读/术语停顿；同一位置不重复累计"
+        },
+        {
+          "id": "pause-3",
+          "seconds": 0.4,
+          "reason": "已审阅的实际句读/术语停顿；同一位置不重复累计"
+        },
+        {
+          "id": "pause-4",
+          "seconds": 0.2,
+          "reason": "已审阅的实际句读/术语停顿；同一位置不重复累计"
+        },
+        {
+          "id": "pause-5",
+          "seconds": 0.4,
+          "reason": "已审阅的实际句读/术语停顿；同一位置不重复累计"
+        }
+      ]
+    },
+    {
+      "group": 1,
+      "shot": 3,
+      "voiceIndex": 1,
+      "speaker": "林知夏",
+      "channel": "现场对白",
+      "text": "推一号抢救室，备血400cc，神外二组值班医生待命！",
+      "spokenText": "推一号抢救室，备血四百西西，神外二组值班医生待命！",
+      "shotDuration": 5,
+      "windowStart": 0,
+      "windowEnd": 5,
+      "start": 0,
+      "rate": 6,
+      "onset": 0.1,
+      "tail": 0.1,
+      "urgentSpeech": true,
+      "urgentReason": "特别焦急的抢救通报或抢救指令",
+      "pauses": [
+        {
+          "id": "pause-1",
+          "seconds": 0.3,
+          "reason": "已审阅的实际句读/术语停顿；同一位置不重复累计"
+        },
+        {
+          "id": "pause-2",
+          "seconds": 0.3,
+          "reason": "已审阅的实际句读/术语停顿；同一位置不重复累计"
+        },
+        {
+          "id": "pause-3",
+          "seconds": 0.4,
+          "reason": "已审阅的实际句读/术语停顿；同一位置不重复累计"
+        }
+      ]
+    },
+    {
+      "group": 2,
+      "shot": 1,
+      "voiceIndex": 1,
+      "speaker": "急救员",
+      "channel": "现场对白",
+      "text": "血压70/40，心率130，双瞳不等大，左侧对光迟钝！",
+      "spokenText": "血压七十，四十，心率一三零，双瞳不等大，左侧对光迟钝！",
+      "shotDuration": 5,
+      "windowStart": 0,
+      "windowEnd": 5,
+      "start": 0,
+      "rate": 6.5,
+      "onset": 0.1,
+      "tail": 0.1,
+      "urgentSpeech": true,
+      "urgentReason": "特别焦急的抢救通报或抢救指令",
+      "pauses": [
+        {
+          "id": "pause-1",
+          "seconds": 0.3,
+          "reason": "血压七十与四十的读数组间停顿"
+        },
+        {
+          "id": "pause-2",
+          "seconds": 0.2,
+          "reason": "已审阅的实际句读/术语停顿；同一位置不重复累计"
+        },
+        {
+          "id": "pause-3",
+          "seconds": 0.3,
+          "reason": "已审阅的实际句读/术语停顿；同一位置不重复累计"
+        },
+        {
+          "id": "pause-4",
+          "seconds": 0.2,
+          "reason": "已审阅的实际句读/术语停顿；同一位置不重复累计"
+        },
+        {
+          "id": "pause-5",
+          "seconds": 0.4,
+          "reason": "已审阅的实际句读/术语停顿；同一位置不重复累计"
+        }
+      ]
+    },
+    {
+      "group": 3,
+      "shot": 1,
+      "voiceIndex": 1,
+      "speaker": "护士长",
+      "channel": "现场对白",
+      "text": "林医生！室颤了！",
+      "spokenText": "林医生！室颤了！",
+      "shotDuration": 3.5,
+      "windowStart": 0,
+      "windowEnd": 3.5,
+      "start": 0.4,
+      "rate": 4.5,
+      "onset": 0.2,
+      "tail": 0.3,
+      "urgentSpeech": false,
+      "urgentReason": "",
+      "pauses": [
+        {
+          "id": "pause-1",
+          "seconds": 0.4,
+          "reason": "已审阅的实际句读/术语停顿；同一位置不重复累计"
+        },
+        {
+          "id": "pause-2",
+          "seconds": 0.4,
+          "reason": "已审阅的实际句读/术语停顿；同一位置不重复累计"
+        }
+      ]
+    },
+    {
+      "group": 3,
+      "shot": 2,
+      "voiceIndex": 1,
+      "speaker": "林知夏",
+      "channel": "现场对白",
+      "text": "充电200焦耳！所有人离开床体！闪开！",
+      "spokenText": "充电二百焦耳！所有人离开床体！闪开！",
+      "shotDuration": 6,
+      "windowStart": 0,
+      "windowEnd": 6,
+      "start": 1.8,
+      "rate": 6,
+      "onset": 0.2,
+      "tail": 0.2,
+      "urgentSpeech": true,
+      "urgentReason": "特别焦急的抢救通报或抢救指令",
+      "pauses": [
+        {
+          "id": "pause-1",
+          "seconds": 0.4,
+          "reason": "已审阅的实际句读/术语停顿；同一位置不重复累计"
+        },
+        {
+          "id": "pause-2",
+          "seconds": 0.4,
+          "reason": "已审阅的实际句读/术语停顿；同一位置不重复累计"
+        },
+        {
+          "id": "pause-3",
+          "seconds": 0.4,
+          "reason": "已审阅的实际句读/术语停顿；同一位置不重复累计"
+        }
+      ]
+    },
+    {
+      "group": 3,
+      "shot": 3,
+      "voiceIndex": 1,
+      "speaker": "林知夏",
+      "channel": "现场对白",
+      "text": "心率未恢复，再充300焦耳！闪开！",
+      "spokenText": "心率未恢复，再充三百焦耳！闪开！",
+      "shotDuration": 5.5,
+      "windowStart": 0,
+      "windowEnd": 5.5,
+      "start": 1.6,
+      "rate": 6,
+      "onset": 0.2,
+      "tail": 0.2,
+      "urgentSpeech": true,
+      "urgentReason": "特别焦急的抢救通报或抢救指令",
+      "pauses": [
+        {
+          "id": "pause-1",
+          "seconds": 0.3,
+          "reason": "已审阅的实际句读/术语停顿；同一位置不重复累计"
+        },
+        {
+          "id": "pause-2",
+          "seconds": 0.4,
+          "reason": "已审阅的实际句读/术语停顿；同一位置不重复累计"
+        },
+        {
+          "id": "pause-3",
+          "seconds": 0.4,
+          "reason": "已审阅的实际句读/术语停顿；同一位置不重复累计"
+        }
+      ]
+    }
+  ]
+}

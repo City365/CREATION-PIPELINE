@@ -99,7 +99,7 @@ def _source_files(folder):
         rel = path.relative_to(folder)
         if rel.as_posix() == 'SKILL.md' or path.suffix.lower() not in TEXT_SUFFIXES:
             continue
-        if rel.parts and rel.parts[0] in SKIP_DIRS:
+        if any(part in SKIP_DIRS for part in rel.parts):
             continue
         found.append((rel.as_posix(), path))
     return sorted(found, key=lambda item: item[0])

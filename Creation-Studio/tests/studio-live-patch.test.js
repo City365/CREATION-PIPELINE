@@ -63,11 +63,12 @@ test('进度变化不改结构签名，状态变化才改', () => {
   assert.notEqual(studioStageSignature(), base, '状态变了才需要重画');
 });
 
-test('舞台优先跟随 lastJobId，其次 running，最后取有产出的', () => {
-  setState({ jobs: [job('a', 'success', 100, { outputs: [{ type: 'video' }] }), job('b', 'running', 30)], lastJobId: 'a' });
-  assert.equal(studioStageJob().id, 'a');
-  setState({ lastJobId: '' });
-  assert.equal(studioStageJob().id, 'b');
+test('舞台跟当前分镜最新的任务走：有在跑就看在跑的，都跑完看最新那条', () => {
+  // 以前优先 lastJobId，会把它钉在好几天前那条完成的任务上（明明还在生成却显示「完成」）
+  setState({ jobs: [job('a', 'success', 100, { outputs: [{ type: 'video' }] }), job('b', 'running', 30, { createdAt: 200 })], lastJobId: 'a' });
+  assert.equal(studioStageJob().id, 'b', 'lastJobId 指着旧任务也不能盖过正在跑的');
+  setState({ jobs: [job('a', 'success', 100, { outputs: [{ type: 'video' }] }), job('c', 'success', 100, { createdAt: 200 })] });
+  assert.equal(studioStageJob().id, 'c', '都完成了看最新的，不看好几天前那条');
   setState({ jobs: [job('c', 'success', 100, { outputs: [{ type: 'video' }] })] });
   assert.equal(studioStageJob().id, 'c');
 });

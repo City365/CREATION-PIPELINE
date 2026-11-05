@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -181,8 +181,74 @@ test('改提示词只动这一条，并同步到执行任务记录', () => {
   }
 });
 
-test('移除已结束分镜只删除任务记录', () => {
-  const event = events.create({ title: 'remove-item', source: 'batch', items: [{ prompt: 'x' }] });
+test('改分镜可以同时换比例和模型，写错比例直接拒绝', () => {
+  const originalList = jobs.list;
+  const originalRevise = jobs.revisePrompt;
+  const calls = [];
+  jobs.list = () => [{ id: 'j-param', status: 'failed' }];
+  jobs.revisePrompt = (id, patch) => { calls.push({ id, patch }); return patch; };
+  try {
+    const event = events.create({ title: 'revise-params', source: 'batch', items: [{ prompt: 'x' }] });
+    event.items.push({
+      id: 'i-param', refType: 'job', refId: 'j-param', status: 'failed', title: '镜头 03',
+      input: { prompt: '提示词', userPrompt: '提示词', images: [], aspectRatio: '16:9' },
+    });
+    events.save();
+    const out = events.reviseItem(event.id, 'i-param', { prompt: '提示词', ratio: '9：16', model: 'Seedance 2.0 Fast' });
+    assert.equal(out.items[0].input.aspectRatio, '9:16', '全角冒号也要归一');
+    assert.equal(out.items[0].input.model, 'Seedance 2.0 Fast');
+    const patch = calls.at(-1).patch;
+    assert.equal(patch.aspectRatio, '9:16');
+    assert.equal(patch.model, 'Seedance 2.0 Fast');
+    assert.throws(() => events.reviseItem(event.id, 'i-param', { prompt: 'x', ratio: '21:9' }), /只支持/);
+    assert.throws(() => events.reviseItem(event.id, 'i-param', { prompt: 'x', ratio: '竖屏' }), /16:9 或 9:16/);
+  } finally {
+    jobs.list = originalList;
+    jobs.revisePrompt = originalRevise;
+  }
+});
+
+test('改分镜可以换参考图：写回 item.input 和任务记录，图不存在直接拒绝', () => {
+  const os = require('node:os');
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wmd-ref-'));
+  const first = path.join(dir, 'a.png');
+  const second = path.join(dir, 'b.png');
+  fs.writeFileSync(first, 'png');
+  fs.writeFileSync(second, 'png');
+  const originalList = jobs.list;
+  const originalRevise = jobs.revisePrompt;
+  const calls = [];
+  jobs.list = () => [{ id: 'j-refs', status: 'failed' }];
+  jobs.revisePrompt = (id, patch) => { calls.push({ id, patch }); return patch; };
+  try {
+    const event = events.create({ title: 'revise-refs', source: 'batch', items: [{ prompt: 'x' }] });
+    event.items.push({
+      id: 'i-refs', refType: 'job', refId: 'j-refs', status: 'failed', title: '镜头 04',
+      input: { prompt: '提示词', userPrompt: '提示词', images: [{ path: first, name: 'a.png' }] },
+    });
+    events.save();
+    const out = events.reviseItem(event.id, 'i-refs', {
+      prompt: '提示词',
+      images: [{ path: second, name: 'b.png' }, { path: first }],
+    });
+    const saved = out.items[0].input.images;
+    assert.equal(saved.length, 2);
+    assert.equal(saved[0].path, path.resolve(second), '顺序就是图1、图2');
+    assert.equal(saved[1].name, 'a.png', '没写名字就用文件名');
+    assert.equal(calls.at(-1).patch.images.length, 2, '任务记录也要一起换掉参考图');
+    assert.deepEqual(events.reviseItem(event.id, 'i-refs', { prompt: '提示词', images: [] }).items[0].input.images, [], '可以删光参考图');
+    assert.throws(() => events.reviseItem(event.id, 'i-refs', { prompt: '提示词', images: [{ path: path.join(dir, 'nope.png') }] }), /参考图不存在/);
+    assert.throws(() => events.reviseItem(event.id, 'i-refs', { prompt: '提示词', images: Array.from({ length: 10 }, () => ({ path: first })) }), /参考图/);
+  } finally {
+    jobs.list = originalList;
+    jobs.revisePrompt = originalRevise;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('移除已结束分镜只删除任务记录', () => {  const event = events.create({ title: 'remove-item', source: 'batch', items: [{ prompt: 'x' }] });
   event.items.push({ id: 'i-remove', refType: 'job', refId: '', status: 'queued', override: 'skipped', title: '镜头 1', input: { prompt: 'x' } });
   events.save();
   const out = events.removeItem(event.id, 'i-remove');

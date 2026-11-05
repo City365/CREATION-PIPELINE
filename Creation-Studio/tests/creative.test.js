@@ -30,20 +30,7 @@ test('场景四视图：反推描述、四条机位提示词与单张出图', as
     assert.match(described.data.description, /书架/);
     assert.ok(seen.messages[1].content.some((x) => x.type === 'image_url'));
 
-    providers.chat = async () => ({ content: '```json\n' + JSON.stringify({ summary: '朝西书房', views: [{ id: 'front', prompt: '正视提示' }, { id: 'side', prompt: '侧视提示' }, { id: 'back', prompt: '反视提示' }, { id: 'top', prompt: '俯视提示' }] }) + '\n```' });
-    const prompts = await call('/api/creative/scene/view-prompts', { channelId: channel.id, name: '书房', description: '北墙书架' });
-    assert.deepEqual(prompts.data.views.map((v) => v.id), ['front', 'side', 'back', 'top']);
-    assert.deepEqual(prompts.data.views.map((v) => v.label), ['正视', '侧视', '反视', '俯视']);
-    assert.equal(prompts.data.summary, '朝西书房');
-
-    providers.chat = async () => ({ content: JSON.stringify({ views: [{ id: 'front', prompt: '只有一条' }] }) });
-    const partial = await call('/api/creative/scene/view-prompts', { channelId: channel.id, description: '书房' });
-    assert.match(partial.error, /缺少机位/);
-
-    providers.chat = async () => ({ content: '不是 JSON' });
-    const broken = await call('/api/creative/scene/view-prompts', { channelId: channel.id, description: '书房' });
-    assert.ok(broken.error);
-
+    // 四条机位提示词已改由后端智能体按技能推理（覆盖在 tests/scene-agent.test.js），这里只验入参校验
     const noDescription = await call('/api/creative/scene/view-prompts', { channelId: channel.id, description: '   ' });
     assert.match(noDescription.error, /场景描述/);
 
@@ -60,4 +47,17 @@ test('场景四视图：反推描述、四条机位提示词与单张出图', as
   } finally {
     providers.chat = originalChat; imagegen.generate = originalGen; imagegen.saveImages = originalSave;
   }
+});
+
+test('场景建模左栏铺满整列：没有把面板压成 250px 小框的旧规则，描述框跟着长高', () => {
+  const css = fs.readFileSync(path.join(__dirname, '../web/creative.css'), 'utf8');
+  const web = fs.readFileSync(path.join(__dirname, '../web/creative.js'), 'utf8');
+  assert.ok(!/\.ce-side\s*\{[^}]*max-height\s*:\s*250px/.test(css), '旧的 .ce-side{max-height:250px} 会压扁左栏，必须去掉');
+  assert.ok(!/\.ce-scene\s*\{\s*grid-template-columns\s*:\s*1fr\s*\}/.test(css), '旧的单列覆盖会废掉 380px 左栏');
+  assert.ok(/\.ce-side\.scn-side\s*\{[^}]*max-height\s*:\s*none/.test(css), '左栏要显式解除高度上限');
+  assert.ok(/\.ce-side\.scn-side\s*\{[^}]*height\s*:\s*100%/.test(css), '左栏要铺满整列');
+  assert.ok(/label\.scn-desc\s*\{[^}]*flex\s*:\s*1 1 auto/.test(css), '描述这一格要能撑开');
+  assert.ok(/#scn-description\s*\{[^}]*flex\s*:\s*1 1 auto/.test(css), '描述框要跟着长高');
+  assert.ok(web.includes('class="scn-desc"'), '场景描述要带 scn-desc 类');
+  assert.ok(/@keyframes scn-spin\s*\{/.test(css), '正在推理的转圈动画要有完整的 keyframes');
 });

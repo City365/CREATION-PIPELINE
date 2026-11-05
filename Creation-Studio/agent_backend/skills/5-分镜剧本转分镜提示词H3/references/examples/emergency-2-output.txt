@@ -1,0 +1,74 @@
+_::~OUTPUT_START::~_
+人物：林知夏、徐道允、急救员、其余两名急救员
+场景：急诊部一号抢救室
+道具：急救推车、橡胶手套、氧气面罩、监护仪、磨损银色打火机
+===
+DURATION: [总时长15s]
+subject_definitions:
+<Subject 1> is 林知夏 (text-only; same person as the previous group).
+<Subject 2> is 徐道允 (text-only; the newly arriving young man, not the sutured hall patient).
+<Subject 3> is 急救员 (text-only; the reporting member of the three-person crew).
+<Subject 4> is 其余两名急救员 (text-only; two other members, not extra crew).
+<Scene 1> is 急诊部一号抢救室 (text-only).
+<Prop 1> is 急救推车 (text-only).
+<Prop 2> is 橡胶手套 (text-only).
+<Prop 3> is 氧气面罩 (text-only).
+<Prop 4> is 监护仪 (text-only).
+<Prop 5> is 磨损银色打火机 (text-only).
+
+summary:
+[reference generation] The reported casualty arrives in Room One under continuing resuscitation. A compact clinical report preserves BP70/40, pulse130, unequal pupils and delayed left light response. 林知夏 lifts the oxygen mask and recognizes the face by the firm jaw and fine old right-brow scar. An involuntary left-hand grip then reveals the worn lighter's physical D & H engraving; no spoken recognition or flashback is added.
+
+retention_analysis:
+<Subject 1>(appears in [Shot 2]): fully_preserved
+<Subject 2>(appears in [Shot 1], [Shot 2], [Shot 3]): fully_preserved
+<Subject 3>(appears in [Shot 1]): fully_preserved
+<Subject 4>(appears in [Shot 1]): fully_preserved
+
+detailed_description:
+16:9 horizontal widescreen framing.
+Widescreen composition with clear left-right relationships and foreground/midground/background depth. No vertical-video framing. No center-crop-safe composition.
+No subtitles. No captions. No burned-in text. No on-screen text overlay of any kind. Clean plate. Actual in-scene marks explicitly required by the script remain physical objects, not overlays.
+No background music. No score. No non-diegetic music.
+No bound character or prop assets were supplied. Use text-only identity references and maintain consistent appearances across these groups; do not invent @ bindings or claim a supplied fixed voice card.
+Cold clinical overhead light reveals the soaked patient and blood-marked clothing. Use the same head-end, door and monitor layout throughout; no sudden romantic lighting or invented memory scene.
+
+[Shot 1] At 00:00.000
+LOCATION: 急诊部一号抢救室, interior, the same stormy night. The doorway is rear left in the establishing view, trolley centered, patient head toward screen right, and monitor near the head end.
+CAMERA POSITION & SHOOTING DIRECTION: From 0.0-2.5 seconds track low beside the incoming trolley casters over the vinyl floor. Then cut within the Shot to a medium side view of the patient and the three-person crew; retain doorway, trolley and head-end monitor as references. One crew member performs the scripted compressions while the other two steer; the reporting voice belongs to one of these three, not an additional fourth paramedic.
+SHOT TYPE / FRAMING / CAMERA MOVEMENT: Arrival and clinical handoff / low wheel detail to medium side view / short trolley track then static / clear pushing, compression and head-end positions.
+TIME MARKER: The reported casualty has now arrived after the intervening travel interval. The exact elapsed story time is not shown or captioned.
+Action & Performance: Three paramedics bring the soaked, blood-smeared young man, 徐道允, into the room while maintaining the scripted chest-compression action. Primary Event: the designated crew member starts the report at shot start, audible during the wheel view, and finishes while the crew comes into view. VISIBLE REACTIONS: urgent physical effort and projection, without extra diagnoses or new dialogue. This is a different patient from the person whose wound was sutured in the hall.
+END FRAME / END BEAT: The trolley is inside the room, head at the established head-end monitor. The patient remains unresponsive and the crew continues the activity specified by the script; no recovery or new injury is added.
+Dialogue: 急救员 (offscreen diegetic at first, then onscreen diegetic; extremely urgent, clearly separated clinical readings at 6.5 Mandarin characters per second; begin at shot start; read 70/40 as two Mandarin tens with a short internal pause, and 130 digit by digit), says:<d>[Chinese]血压70/40，心率130，双瞳不等大，左侧对光迟钝！</d>
+SOUND: Trolley-wheel scrape and compressed urgent room sound beneath the single clinical report. Enunciate the BP pair separately and read pulse 130 digit by digit in Mandarin. Preserve the numeric and side-specific findings; do not add units or a second report. No music.
+DURATION: 5s
+
+[Shot 2] At 00:05.000
+LOCATION: The same room, head end of 徐道允's trolley, unchanged cold overhead clinical light.
+CAMERA POSITION & SHOOTING DIRECTION: First 0.0-2.5 seconds: medium close view from the open bedside toward the head, with 林知夏 approaching on screen right. At 2.5-4.5 seconds cut to his face, jaw and the anatomical right eyebrow tail. At 4.5-6.0 seconds cut back on the same relationship axis to 林知夏's readable face; no flashback or invented remembered scene.
+SHOT TYPE / FRAMING / CAMERA MOVEMENT: Clinical approach to recognition / medium close-up, facial detail, reaction close-up / static setups and the two specified internal cuts / precise focus on the old scar, then her eyes.
+TIME MARKER: Continuous with the arrival; recognition happens here, not in the previous Shot.
+Action & Performance: 林知夏 pulls on clean gloves, steps to the trolley head and lifts the misted plastic oxygen mask with her left hand as scripted. Primary Event: the exposed face reveals a firm jaw, tight lips and a fine, pale old scratch at the outer end of his anatomical right eyebrow, not a fresh wound or a mirrored left-side scar. Her body abruptly becomes still. VISIBLE REACTIONS: her gaze fixes, pupils react and her breath catches; she does not add a spoken name, tears or a new diagnosis.
+END FRAME / END BEAT: 林知夏 stands frozen at the same head-end position wearing the clean gloves, left hand still holding the lifted mask. 徐道允 remains on the trolley, right-brow scar visible; this same mask and glove state must carry into the next group.
+Dialogue: None.
+SOUND: Continuing room noise and nearby resuscitation sounds remain diegetic. Briefly foreground her caught breath without adding heartbeat music, inner narration or a memory voice.
+DURATION: 6s
+
+[Shot 3] At 00:11.000
+LOCATION: The same trolley, the patient's anatomical left hand and the worn silver metal lighter held in it; room light remains physically unchanged.
+CAMERA POSITION & SHOOTING DIRECTION: From 0.0-2.0 seconds use a close view along the patient's anatomical left forearm and clenched hand. From 2.0-4.0 seconds move the camera to a low oblique macro view of the exposed lighter base, leaving the hand in its original grip. The camera reveals the base; the unconscious patient does not deliberately turn it toward the lens.
+SHOT TYPE / FRAMING / CAMERA MOVEMENT: Prop clue / hand close-up to base macro / small motivated camera reposition across the internal cut / legible shallow-focus engraving without mirroring.
+TIME MARKER: Continuous.
+Action & Performance: The unresponsive man's left-hand tendons tighten in an involuntary spasm, maintaining the hard grip around the scratched silver lighter. Primary Event: the close view reveals the actual hand-cut inscription D & H recessed into the base. VISIBLE REACTIONS: only involuntary hand tension, not waking, purposeful signaling or release of the object. Keep the mark a physical engraving with worn edges, not newly generated subtitle lettering.
+END FRAME / END BEAT: The same lighter remains clenched in the same anatomical left hand. Its base inscription has been seen; it does not fall, change hands, transform or glow. 林知夏's held-mask state continues offscreen.
+Dialogue: None.
+SOUND: Quiet metal-on-fingernail tension and the continuing room sound, with no new voice, deciphering narration, musical sting or caption sound.
+DURATION: 4s
+
+overall_soundscape:
+One projected clinical report begins over the wheel insert and ends within the arrival Shot. Keep all numeric readings and the left/right distinction clear at the selected very urgent rate. Continue trolley, room and resuscitation sound across the silent recognition and lighter inserts, with only the scripted caught breath foregrounded. No voiceover, music or new intelligible dialogue.
+
+non_diegetic_music:
+N/A (No background music, no score, and no non-diegetic music.)
+_::~OUTPUT_END::~_

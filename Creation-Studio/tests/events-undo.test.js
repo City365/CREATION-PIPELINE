@@ -160,7 +160,8 @@ test('HTTP：删除任务返回进回收站，/api/events/trash 能列出并恢�
       createdAt: Date.now(), finishedAt: Date.now(),
     };
     const db = new DatabaseSync(path.join(dir, 'task-events.sqlite'));
-    db.prepare('INSERT OR REPLACE INTO task_events VALUES(?,?,?,?,?)').run(eventId, 'video', 'proj-undo-http', payload.createdAt, JSON.stringify(payload));
+    db.prepare('INSERT OR REPLACE INTO task_events(id,kind,project_id,tenant_id,created_at,payload) VALUES(?,?,?,?,?,?)')
+      .run(eventId, 'video', 'proj-undo-http', 'tnt_default', payload.createdAt, JSON.stringify(payload));
     db.close();
 
     const removed = await call('/api/events/' + encodeURIComponent(eventId), { method: 'DELETE' });

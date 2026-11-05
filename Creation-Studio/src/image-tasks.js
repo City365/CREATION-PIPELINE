@@ -5,9 +5,10 @@ const channels=require('./channels');
 const imagegen=require('./imagegen');
 const styles=require('./styles');
 const generationParams=require('../web/generation-params');
-const fs=require('node:fs');
-const path=require('node:path');
 const config=require('./config');
+const quotas=require('./quotas');
+const tenantContext=require('./tenant-context');
+const tenantScope=require('./tenant-scope');
 function createImageTasks(options={}) {
   const data=options.store||store();let initialized=false,stopping=false,pumping=false;
   const active=new Map(),listeners=new Set();
@@ -36,6 +37,9 @@ function createImageTasks(options={}) {
   function emit(id){for(const fn of listeners){try{fn(get(id));}catch{}}}
   function phase(id,message){db().prepare('UPDATE image_tasks SET phase=? WHERE id=?').run(message,id);log(id,'info',message);emit(id);}
   function enqueue(input,finalOverride){
+    const tenantId=input.tenantId||config.load().tenantId;
+    // 图像任务不占视频并发，但同样不能把存储写爆；已有文件不删除。
+    quotas.assertStorage(tenantId,0);
     initialize();
     if(input.requestId){const existing=db().prepare('SELECT id FROM image_tasks WHERE request_key=?').get(String(input.requestId));if(existing)return get(existing.id);}
     let channel=resolveChannel(input.channelId);if(channel)channel={...channel,model:input.model||channel.model};if(!channel)throw Error('没有启用的图像渠道，请先在设置里新增');
@@ -44,12 +48,19 @@ function createImageTasks(options={}) {
     const prompt=finalOverride||generationParams.compose(input,prefix);
     const snapshot={...input,prefixPrompt:prefix,channelId:channel.id,channelName:channel.name,model:input.model||channel.model,prompt,userPrompt:String(input.prompt),kind:'image',status:input.paused?'paused':'queued'};
     const id=data.begin(snapshot);
-    const request={...data.snapshot(input),prefixPrompt:prefix,prompt:String(input.prompt),channelId:channel.id,finalPrompt:prompt,projectId:input.projectId,itemId:input.itemId};
+    const request={...data.snapshot(input),prefixPrompt:prefix,prompt:String(input.prompt),channelId:channel.id,finalPrompt:prompt,projectId:input.projectId,itemId:input.itemId,tenantId:input.tenantId||config.load().tenantId};
     db().prepare('INSERT INTO image_tasks(id,request_json,phase,held,request_key) VALUES(?,?,?,?,?)').run(id,JSON.stringify(request),input.paused?'已暂停，尚未发送':'排队中',input.paused?1:0,input.requestId?String(input.requestId):null);
     log(id,'info','已保存图像任务、完整提示词和参考素材快照');emit(id);setImmediate(pump);return get(id);
   }
   async function execute(id){
-    const row=db().prepare('SELECT request_json FROM image_tasks WHERE id=?').get(id),input=JSON.parse(row.request_json);
+    const row=db().prepare('SELECT request_json FROM image_tasks WHERE id=?').get(id);
+    if(!row)throw Error('图像任务不存在');
+    const input=JSON.parse(row.request_json);
+    // 后台泵没有请求上下文，按任务所属项目补租户，才能拿到该租户的图像渠道。
+    const tenantId=input.tenantId||tenantScope.tenantOfProject(input.projectId);
+    return tenantContext.run(tenantId,()=>executeInContext(id,input));
+  }
+  async function executeInContext(id,input){
     let channel;
     try{
       require('./task-assets').verify(input);
@@ -61,7 +72,7 @@ function createImageTasks(options={}) {
       const buffers=await (options.generate||imagegen.generate)(channel,{...input,prompt:input.finalPrompt});
       if(!buffers?.length)throw Error('图像渠道未返回图片');
       phase(id,'收到图片，正在保存文件');
-      const saved=(options.saveImages||imagegen.saveImages)(buffers);
+      const saved=(options.saveImages||imagegen.saveImages)(buffers,undefined,input.projectId,{targetPath:input.targetPath});
       data.finish(id,'success',saved.items);
       db().prepare('UPDATE image_tasks SET result_json=?,phase=?,held=0 WHERE id=?').run(JSON.stringify({...saved,runId:id}),'完成',id);
       // Merge only generated outputs. Never replace a prompt edited while the task was running.
@@ -86,6 +97,6 @@ function createImageTasks(options={}) {
   function adoptLegacy(projectId){initialize();const target=String(projectId||'');if(!target)return 0;const info=db().prepare("UPDATE generation_runs SET project_id=? WHERE kind='image' AND (project_id IS NULL OR project_id='' OR project_id='unassigned')").run(target);return info.changes;}
   return {initialize,enqueue,get,list,page,pump,pause,resume,retry,setOrder,cancelPending,wait,close,adoptLegacy,activeCount:()=>active.size,on:fn=>{listeners.add(fn);return()=>listeners.delete(fn);}};
 }
-function remember(entry){try{const file=path.join(config.load().dataDir||config.DATA,'image-history.json');let rows=[];try{rows=JSON.parse(fs.readFileSync(file,'utf8'));}catch{}fs.writeFileSync(file,JSON.stringify([entry,...rows].slice(0,80),null,2));}catch{}}
+function remember(entry){try{require('./image-history').remember(entry);}catch{/* 历史记录不影响生成 */}}
 let singleton;function tasks(){return singleton||(singleton=createImageTasks());}
 module.exports={createImageTasks,tasks};

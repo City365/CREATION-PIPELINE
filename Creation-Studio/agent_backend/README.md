@@ -52,4 +52,4 @@ TXT/MD/CSV/JSON/XLSX/DOCX/PDF 支持文本解析；图片与扫描 PDF 标为待
 
 ## 鉴权
 
-`HARNESS_AUTH_MODE`：`development`（默认，直接放行）或 `controller`（向控制器 `/api/projects` 复核项目归属，内部 token 走 `data/internal-token.json`）。
+`HARNESS_AUTH_MODE`：`controller`（默认，向控制器 `/api/internal/projects/{id}` 复核项目归属，内部 token 走 `data/internal-token.json`）或 `development`（直接放行，仅本机开发/测试）。
