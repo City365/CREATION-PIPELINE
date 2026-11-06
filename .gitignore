@@ -21,3 +21,15 @@ Creation-Studio/background-music/
 # Generated evidence and local exports (screenshots, acceptance dirs, inventories)
 /output/
 /Creation-Studio/output/
+
+# 本地临时素材（截图、对比样本、导出草稿）：不进仓库
+/Creation-Studio/_tmp/
+/_tmp_direct_send/
+/_tmp_xilin_diff/
+/项目截图/
+/output.txt
+/Video-Generation-Manager/.scratch/
+/Video-Generation-Manager/_verify-draft.ps1
+
+# 内嵌了独立 .git 的技能目录：按子模块处理前先不纳入主仓库
+/Creation-Studio/agent_backend/skills/分镜剧本转视频提示词v8/

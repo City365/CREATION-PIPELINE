@@ -117,7 +117,10 @@ test('迁移：显式迁移旧素材，先备份再收进项目目录并写入�
     const record = await api('/api/workspace/migrate', { method: 'POST', body: {} });
     assert.equal(record.projectId, 'proj-legacy');
     assert.ok(record.backups.length >= 1, '迁移前应先备份');
-    const projectDir = path.join(dir, 'projects', record.folder);
+    const listed = (await api('/api/projects')).find((p) => p.id === 'proj-legacy');
+    // 迁移记录里的 dir 才是实际写入位置；列表里的 dir 必须和它一致
+    const projectDir = record.dir;
+    assert.equal(listed && listed.dir, projectDir, '列表里的目录要和迁移记录一致');
     assert.ok(fs.existsSync(path.join(projectDir, 'assets', 'legacy.png')), '旧素材应已迁入项目目录');
     assert.equal(fs.existsSync(path.join(dir, 'assets', 'legacy.png')), false, '旧目录不应再留文件');
     const marker = JSON.parse(fs.readFileSync(path.join(dir, 'workspace-migration.json'), 'utf8'));

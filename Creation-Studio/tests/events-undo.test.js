@@ -138,8 +138,11 @@ test('HTTP：删除任务返回进回收站，/api/events/trash 能列出并恢�
     stdio: 'ignore',
     windowsHide: true,
   });
-  const call = async (url, init) => {
-    const res = await fetch(base + url, init || {});
+  let cookie = '';
+  const call = async (url, init = {}) => {
+    const res = await fetch(base + url, { ...init, headers: { ...(init.headers || {}), ...(cookie ? { cookie } : {}) } });
+    const set = res.headers.get('set-cookie');
+    if (set) cookie = set.split(';')[0];
     const json = await res.json();
     if (!res.ok || !json.ok) throw new Error(JSON.stringify(json));
     return json.data;
@@ -150,12 +153,22 @@ test('HTTP：删除任务返回进回收站，/api/events/trash 能列出并恢�
       try { if ((await fetch(base + '/api/health')).ok) break; } catch { /* 等服务起来 */ }
       await delay(100);
     }
+    // 任务现在属于项目：先建账号 + 项目，再塞一条落在该项目里的事件
+    const reg = await fetch(base + '/api/auth/register', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'undo', password: 'secret1' }),
+    });
+    cookie = (reg.headers.get('set-cookie') || '').split(';')[0];
+    const project = await call('/api/projects', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: '回收站测试' }),
+    });
+    await call('/api/auth/project', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectId: project.id }) });
     await call('/api/events');
     const { DatabaseSync } = require('node:sqlite');
     const eventId = 'evt_undo_http_1';
     const payload = {
       schemaVersion: 2, version: 1, id: eventId, title: '撤销冒烟任务', kind: 'video', source: 'batch',
-      status: 'partial', spec: { projectId: 'proj-undo-http', items: [] }, audit: [],
+      status: 'partial', spec: { projectId: project.id, items: [] }, audit: [],
       items: [{ id: 'evt_undo_http_1_i', refType: 'job', refId: 'job-undo-1', title: '镜头 01', status: 'queued' }],
       createdAt: Date.now(), finishedAt: Date.now(),
     };

@@ -286,3 +286,19 @@ test('调度页排序：刚创建、还没排时间的任务必须出现在第�
   assert.ok(['unscheduled', 'draft'].includes(byPending.events[0].status));
   assert.equal(byPending.stats.total >= 13, true);
 });
+
+test('无主任务可以被收编到指定项目，别的项目不受影响', () => {
+  // 旧版本没有项目概念，事件 spec.projectId 为空；隔离之后需要能一次性收编
+  const orphan = events.create({
+    title: '无主任务', kind: 'video', source: 'batch', projectId: '',
+    items: [{ key: 'k1', title: '镜头 01', prompt: 'p' }],
+  });
+  const mine = events.create({
+    title: '别人的任务', kind: 'video', source: 'batch', projectId: 'proj-other',
+    items: [{ key: 'k2', title: '镜头 02', prompt: 'p' }],
+  });
+  const changed = events.adoptLegacy('proj-target');
+  assert.ok(changed >= 1, '应该至少收编一条无主任务');
+  assert.equal(events.get(orphan.id).spec.projectId, 'proj-target');
+  assert.equal(events.get(mine.id).spec.projectId, 'proj-other', '已有归属的任务不能被改走');
+});

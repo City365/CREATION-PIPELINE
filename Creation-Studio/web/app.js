@@ -473,16 +473,11 @@ function applyTheme() {
   document.documentElement.style.setProperty('--skin-workspace-alpha', String(1 - Math.max(0, Math.min(100, Number(ui.wallpaperWorkspaceTransparency ?? 85))) / 100));
   mountWallpaper({ ...theme, wallpaper });
   syncBackgroundAudio();
-  const btn = $('#theme-btn');
-  if (btn) {
-    const meta = theme;
-    btn.title = `主题：${meta.label}`;
-    btn.dataset.themeNow = active;
-  }
+  const anchorBtn = $('#settings-btn');
   let play = $('#wallpaper-play');
   if (!play) {
     play = document.createElement('button'); play.type = 'button'; play.id = 'wallpaper-play'; play.className = 'wmd-iconbtn';
-    if (btn) btn.before(play);
+    if (anchorBtn) anchorBtn.before(play);
     play.onclick = () => saveAppearance({ wallpaperPaused: !wallpaperIsPaused() }).catch((err) => toast(err.message, true));
   }
   play.hidden = !theme.animated;
@@ -528,15 +523,14 @@ async function persistAppearance(patch) {
   } catch (err) { state.config.ui = previous; applyTheme(); throw err; }
 }
 
-const themeBtn = $('#theme-btn');
-if (themeBtn) themeBtn.onclick = () => openSettings('appearance');
-
 /* ------------------------------------------------------------------ 设置按钮 */
 
 const settingsBtn = $('#settings-btn');
 if (settingsBtn) settingsBtn.onclick = () => openSettings();
 
 /* ------------------------------------------------------------------ 全局音量 */
+// 顶栏不再放音量条：音量在「设置 → 外观」里按来源（视频原声 / 背景音乐）调。
+// 这里只负责把已保存的音量/静音状态应用到页面上的媒体元素。
 
 function applyVolume() {
   const v = state.volume || { level: 60, muted: false };
@@ -547,35 +541,6 @@ function applyVolume() {
     el.volume = level / 100;
     el.muted = !!v.muted;
   });
-  const box = $('#volume-box');
-  if (box) box.classList.toggle('is-muted', !!v.muted || level === 0);
-  const range = $('#volume-range');
-  if (range) {
-    range.value = String(level);
-    range.style.setProperty('--wmd-vol', level + '%');
-  }
-  const mute = $('#mute-btn');
-  if (mute) mute.title = v.muted ? '取消静音' : '静音';
-}
-
-const volumeRange = $('#volume-range');
-if (volumeRange) {
-  volumeRange.oninput = () => {
-    state.volume = { level: Number(volumeRange.value), muted: false };
-    applyVolume();
-  };
-  volumeRange.onchange = async () => {
-    try { await saveAppearance({ volume: state.volume.level, muted: false }); } catch (err) { toast('音量保存失败：' + err.message, true); }
-  };
-}
-
-const muteBtn = $('#mute-btn');
-if (muteBtn) {
-  muteBtn.onclick = async () => {
-    state.volume = { level: (state.volume && state.volume.level) || 60, muted: !(state.volume && state.volume.muted) };
-    applyVolume();
-    try { await saveAppearance({ muted: !!state.volume.muted }); } catch (err) { toast('静音设置保存失败：' + err.message, true); }
-  };
 }
 
 /* ------------------------------------------------------------------ 顶栏小件 */
@@ -657,16 +622,9 @@ function updateStatus() {
   if (!cfg) return;
   const queued = state.jobs.filter((j) => j.status === 'queued').length + (state.imageTasks||[]).filter(t=>['queued','paused'].includes(t.status)).length;
   const running = state.jobs.filter((j) => j.status === 'running').length + (state.imageTasks||[]).filter(t=>t.status==='running').length;
-  const qc = $('#queue-count');
-  if (qc) qc.textContent = String(queued + running);
   const jc = $('#job-count');
   if (jc) jc.textContent = (queued + running) ? String(queued + running) : '';
-  const qb = $('#queue-btn');
-  if (qb) qb.classList.toggle('is-busy', running > 0);
 }
-
-const queueBtn = $('#queue-btn');
-if (queueBtn) queueBtn.onclick = () => { location.hash = '#jobs'; };
 
 // 顶栏页签：按钮不是链接，必须自己改 hash（之前只监听 hashchange，导致点不动）
 function goRoute(route) {
@@ -7489,7 +7447,7 @@ function askHistoryHtml() {
   const search = (a.search || '').toLowerCase();
   const matches = (c) => (c.id === a.activeId || (c.messages || []).length)
     && (c.title + ' ' + (c.messages || []).map((m) => m.text).join(' ')).toLowerCase().includes(search);
-  // 对话本来就按项目存在工作区里：直接按项目列，不再有本地「分组」这一层
+  // 对话只在项目内可见：这里永远只有当前项目一行
   const rows = (a.projectHistory && a.projectHistory.length)
     ? a.projectHistory
     : [{ id: askProjectId(), name: state.project?.name || '当前项目', items: a.conversations || [] }];
@@ -7514,7 +7472,7 @@ function askHistoryHtml() {
         <button type="button" class="ask-new-chat" data-act="ask-new">＋ 新建对话</button>
         <div class="ask-history-search"><span>⌕</span><input id="ask-search" placeholder="搜索对话历史" value="${esc(a.search)}" /></div>
         <div class="ask-history-list">
-          ${groups.map((g) => (g.items.length || g.id === askProjectId() ? `<div class="ask-folder-heading"><button type="button" class="ask-folder-toggle" data-act="ask-folder-toggle" data-id="${esc(g.id)}" aria-expanded="${!a.collapsedFolders?.[g.id]}" title="${esc(g.label)}">${a.collapsedFolders?.[g.id] ? '▸' : '▾'} <span>${esc(g.label)}</span><small>${g.items.length}</small>${g.id === askProjectId() ? '<em class="ask-folder-now">当前</em>' : ''}</button><button type="button" class="ask-folder-action" data-act="ask-project-new-chat" data-id="${esc(g.id)}" title="在这个项目里新建对话">＋</button></div>${g.error ? `<p class="ask-empty-history">${esc(g.error)}</p>` : ''}${(!a.collapsedFolders?.[g.id] || search ? g.items : []).map((c) => `<div class="ask-history-item ${c.id === a.activeId ? 'is-on' : ''} ${askRunOf(c.id) ? 'is-running' : ''}" data-id="${esc(c.id)}">
+          ${groups.map((g) => (g.items.length || g.id === askProjectId() ? `<div class="ask-folder-heading"><button type="button" class="ask-folder-toggle" data-act="ask-folder-toggle" data-id="${esc(g.id)}" aria-expanded="${!a.collapsedFolders?.[g.id]}" title="只显示当前项目的对话：${esc(g.label)}">${a.collapsedFolders?.[g.id] ? '▸' : '▾'} <span>${esc(g.label)}</span><small>${g.items.length}</small></button><button type="button" class="ask-folder-action" data-act="ask-project-new-chat" data-id="${esc(g.id)}" title="在${esc(g.label)}新建对话">＋</button></div>${g.error ? `<p class="ask-empty-history">${esc(g.error)}</p>` : ''}${(!a.collapsedFolders?.[g.id] || search ? g.items : []).map((c) => `<div class="ask-history-item ${c.id === a.activeId ? 'is-on' : ''} ${askRunOf(c.id) ? 'is-running' : ''}" data-id="${esc(c.id)}">
             <button type="button" class="ask-history-main" data-act="ask-open" data-id="${esc(c.id)}" data-project="${esc(g.id)}">
               ${(() => {
                 const running = !!askRunOf(c.id);
@@ -7529,38 +7487,28 @@ function askHistoryHtml() {
         </div>
         ${a.removed ? `<div class="ask-undo">已删除一个对话<button type="button" data-act="ask-undo">撤销</button></div>` : ''}
       </div>
-      <div class="ask-history-foot"><span>▤ 对话按项目保存：切换项目即切换历史</span><span class="ask-dot"></span></div>
+      <div class="ask-history-foot"><span>▤ 只显示当前项目的对话，切换项目即切换历史</span><span class="ask-dot"></span></div>
     </aside>`;
 }
 
-/* ------------------- 对话历史按项目分组（项目就是唯一的分组） ------------------- */
-// 把每个项目的会话都读出来，侧栏按项目列；点别的项目里的对话 = 切项目 + 打开它。
-async function askLoadProjectHistory(force = false) {
+/* ------------------- 对话只在项目内可见：侧栏只列当前项目 ------------------- */
+// 隔离层级是 租户 → 用户 → 项目：跨项目的对话一概不读、不列、不跳。
+// 这里的「历史」只是当前项目那一行，内容永远跟 a.conversations 同源，不再向别的项目发请求。
+async function askLoadProjectHistory() {
   const a = askState();
-  const projects = state.projects || [];
-  if (!projects.length) return;
-  const now = Date.now();
-  if (!force && a.projectHistoryAt && now - a.projectHistoryAt < 10000) return;
-  a.projectHistoryAt = now;
   const current = askProjectId();
-  a.projectHistory = projects.map((project) => {
-    const cached = (a.projectHistory || []).find((row) => row.id === project.id);
-    return { id: project.id, name: project.name,
-      items: project.id === current ? (a.conversations || []) : ((cached && cached.items) || []) };
-  });
-  if (state.route === 'script') askRenderAll();
-  for (const project of projects) {
-    if (project.id === current) continue;
-    try {
-      const list = await askApi('/sessions', { headers: { 'X-Project-Id': project.id } }).then((r) => r.json());
-      const row = (a.projectHistory || []).find((x) => x.id === project.id);
-      if (row) { row.items = Array.isArray(list) ? list : []; row.error = ''; }
-    } catch (err) {
-      const row = (a.projectHistory || []).find((x) => x.id === project.id);
-      if (row) row.error = '读取失败：' + err.message;
-    }
+  if (!current) {
+    a.projectHistory = [];
     if (state.route === 'script') askRenderAll();
+    return;
   }
+  const project = (state.projects || []).find((p) => p.id === current);
+  a.projectHistory = [{
+    id: current,
+    name: project ? project.name : (state.project ? state.project.name : '当前项目'),
+    items: a.conversations || [],
+  }];
+  if (state.route === 'script') askRenderAll();
 }
 
 // 侧栏按项目分组渲染，当前项目的列表同时被 a.conversations 和 projectHistory 那一行引用；
@@ -7604,31 +7552,24 @@ function askForgetConversation(id) {
 
 async function askOpenProjectConversation(projectId, convId) {
   const a = askState();
+  // 对话属于它所在的项目：不是当前项目的一律不打开，也不偷偷切项目。
   if (projectId && projectId !== askProjectId()) {
-    if (!(state.projects || []).some((p) => p.id === projectId)) return toast('项目不存在或已删除', true);
-    await setActiveProject(projectId);
-    await askRestore();
-    askLoadProjectHistory(true).catch(() => {});
+    return toast('这个对话属于另一个项目，先切到那个项目再看', true);
   }
   if (!(a.conversations || []).some((c) => c.id === convId)) {
     // 侧栏里还留着已删掉的条目：摘掉它并跟服务端对齐，用户不用刷新页面
     askForgetConversation(convId);
     askRenderAll();
-    askLoadProjectHistory(true).catch(() => {});
-    return toast('这个对话已不在该项目里，可能已被删除', true);
+    askLoadProjectHistory().catch(() => {});
+    return toast('这个对话已不在当前项目里，可能已被删除', true);
   }
   return askSelect(convId);
 }
 
 async function askNewChatInProject(projectId) {
-  if (projectId && projectId !== askProjectId()) {
-    if (!(state.projects || []).some((p) => p.id === projectId)) return toast('项目不存在或已删除', true);
-    await setActiveProject(projectId);
-    await askRestore();
-    askLoadProjectHistory(true).catch(() => {});
-  }
+  // 只在当前项目里新建；别处来的 id 直接无视，避免顺手把项目切走。
+  if (projectId && projectId !== askProjectId()) return toast('请先切换到该项目再新建对话', true);
   const a = askState();
-  a.collapsedFolders = { ...(a.collapsedFolders || {}), [askProjectId()]: false };
   return askNewConversation();
 }
 
@@ -9477,7 +9418,7 @@ function bindAsk(root) {
         }
         if (failure) toast('删除会话失败：' + (failure.message || '未知错误'), true);
         askRenderAll();
-        askLoadProjectHistory(true).catch(() => {});
+        askLoadProjectHistory().catch(() => {});
         return;
       }
       if (act === 'ask-undo') {
@@ -9493,7 +9434,7 @@ function bindAsk(root) {
         askSyncCurrentRowItems();
         askPersist();
         askRenderAll();
-        askLoadProjectHistory(true).catch(() => {});
+        askLoadProjectHistory().catch(() => {});
         return;
       }
       if (act === 'ask-workspace') {
@@ -11622,26 +11563,102 @@ async function refreshServices() {
 
 /* ------------------------------------------------------------------ 账号 / 项目 */
 
+const AUTH_ARROW = '<svg class="auth-arrow" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h11M10.5 5.4L15.6 10l-5.1 4.6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const AUTH_EYE = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2 10s3-5.2 8-5.2S18 10 18 10s-3 5.2-8 5.2S2 10 2 10z" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="10" cy="10" r="2.3" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>';
+
+/** 登录页输入框：标签 + 玻璃输入框，密码框带显隐按钮。 */
+function authField({ id, label, type = 'text', placeholder, autocomplete, eye = false }) {
+  return `<label class="auth-field">
+      <span>${label}</span>
+      <span class="auth-input">
+        <input class="input" id="${id}" type="${type}" placeholder="${placeholder}" autocomplete="${autocomplete}" />
+        ${eye ? `<button type="button" class="auth-eye" data-eye="${id}" aria-label="显示密码" title="显示 / 隐藏密码">${AUTH_EYE}</button>` : ''}
+      </span>
+    </label>`;
+}
+
+/** 登录页的空间概览：默认租户名 + 成员数 + 项目数（数字来自 /api/auth/me）。 */
+function authSpaceLine() {
+  const space = state.auth && state.auth.space;
+  if (!space) return '<p class="auth-space" id="auth-space" hidden></p>';
+  const label = space.tenants > 1 ? space.tenants + ' 个租户' : (space.tenantName || '默认租户');
+  return `<p class="auth-space" id="auth-space">
+      <span>空间 <b>${esc(label)}</b></span>
+      <span>成员 <b>${Number(space.members) || 0}</b></span>
+      <span>项目 <b>${Number(space.projects) || 0}</b></span>
+    </p>`;
+}
+
+/** 登录 / 邀请 / 重置共用的暗场外壳（片场静帧背景 + 居中玻璃卡）。 */
+function authShell({ title, hint, hintId, fields, submit, note, space = false }) {
+  return `<div class="auth-screen">
+    <div class="auth-bg" aria-hidden="true"></div>
+    <div class="auth-grain" aria-hidden="true"></div>
+    <header class="auth-top">
+      <div class="auth-logo"><span class="auth-mark">Y9</span><b>WENYUN.M-DESKTOP</b></div>
+      <span class="auth-top-meta">CREATIVE DESK · 本机创作台</span>
+    </header>
+    <main class="auth-main">
+      <p class="auth-eyebrow"><i></i>SCENE 01 · TAKE 01<i></i></p>
+      <h1 class="auth-title">把一句话，<em>做成一部片</em></h1>
+      <p class="auth-lead">剧本 · 分镜 · 图像 · 视频，一条流水线跑到底</p>
+      <form class="auth-card" id="auth-form" autocomplete="on">
+        <div class="auth-card-top">
+          <span class="auth-chip"><i></i>本机账号</span>
+          <span class="auth-code">SECURE</span>
+        </div>
+        <h2 class="auth-card-title">${title}</h2>
+        <p class="auth-card-hint"${hintId ? ` id="${hintId}"` : ''}>${hint}</p>
+        <div class="auth-fields">${fields}</div>
+        <div class="auth-error" id="auth-error" role="alert"></div>
+        <button class="auth-submit" type="submit" id="auth-submit"><span>${submit}</span>${AUTH_ARROW}</button>
+        <p class="auth-note">${note}</p>
+      </form>
+      ${space ? authSpaceLine() : ''}
+    </main>
+    <footer class="auth-foot">
+      <span>WENYUN PICTURES · 素材与成片留在本机</span>
+      <span>35MM · ANAMORPHIC · 24 FPS</span>
+    </footer>
+  </div>`;
+}
+
+/** 密码显隐。 */
+function bindAuthUi(root) {
+  if (!root) return;
+  root.querySelectorAll('[data-eye]').forEach((btn) => {
+    btn.onclick = () => {
+      const input = root.querySelector('#' + btn.dataset.eye);
+      if (!input) return;
+      const show = input.type === 'password';
+      input.type = show ? 'text' : 'password';
+      btn.classList.toggle('is-on', show);
+      btn.setAttribute('aria-label', show ? '隐藏密码' : '显示密码');
+      input.focus();
+    };
+  });
+}
+
 function renderLoginScreen() {
   const params = new URLSearchParams(location.search);
   const invite = params.get('invite');
   const reset = params.get('reset');
   if (invite || reset) return renderCodeScreen({ invite, reset });
   const enabled = state.auth && state.auth.enabled;
-  document.body.innerHTML = `
-    <div class="auth-screen">
-      <form class="auth-card" id="auth-form">
-        <div class="auth-brand"><span class="wmd-brand-mark">Y9</span><div><b>WENYUN.M-DESKTOP</b><small>AI 视频创作工作台</small></div></div>
-        <h1>${enabled ? '登录' : '创建账号'}</h1>
-        <p class="hint">${enabled ? '本机账号，登录后才能进入项目。' : '第一次使用，先创建本机账号（密码至少 6 位）。'}</p>
-        <input class="input" id="auth-user" placeholder="用户名" autocomplete="username" />
-        <input class="input" id="auth-pass" type="password" placeholder="密码" autocomplete="${enabled ? 'current-password' : 'new-password'}" />
-        ${enabled ? '' : '<input class="input" id="auth-pass2" type="password" placeholder="再输一次密码" autocomplete="new-password" />'}
-        <div class="auth-error" id="auth-error"></div>
-        <button class="wmd-btn wmd-btn-primary" type="submit" id="auth-submit">${enabled ? '登录' : '创建并登录'}</button>
-        <div class="auth-switch">${enabled ? '用管理员分配的账号登录；忘记密码请联系管理员重置' : '首次使用：创建的第一个账号是平台管理员'}</div>
-      </form>
-    </div>`;
+  const fields = [
+    authField({ id: 'auth-user', label: '账号', placeholder: '输入用户名', autocomplete: 'username' }),
+    authField({ id: 'auth-pass', label: '密码', type: 'password', placeholder: '输入密码', autocomplete: enabled ? 'current-password' : 'new-password', eye: true }),
+    enabled ? '' : authField({ id: 'auth-pass2', label: '确认密码', type: 'password', placeholder: '再输一次密码', autocomplete: 'new-password', eye: true }),
+  ].filter(Boolean).join('');
+  document.body.innerHTML = authShell({
+    title: enabled ? '登录' : '创建账号',
+    hint: enabled ? '用管理员分配的账号进入你的片场。' : '第一次使用，先创建本机账号（密码至少 6 位）。',
+    fields,
+    submit: enabled ? '进入创作台' : '创建并进入',
+    note: enabled ? '账号由本机管理员分配；忘记密码请联系管理员重置。' : '第一个创建的账号是平台管理员。',
+    space: true,
+  });
+  bindAuthUi($('#auth-form'));
   const form = $('#auth-form');
   form.onsubmit = async (event) => {
     event.preventDefault();
@@ -11668,7 +11685,7 @@ function renderLoginScreen() {
     } catch (err) {
       error.textContent = err.message;
       btn.disabled = false;
-      btn.textContent = enabled ? '登录' : '创建并登录';
+      btn.textContent = enabled ? '进入创作台' : '创建并进入';
     }
   };
   $('#auth-user').focus();
@@ -11678,20 +11695,20 @@ function renderLoginScreen() {
 function renderCodeScreen({ invite, reset }) {
   const isReset = Boolean(reset);
   const code = isReset ? reset : invite;
-  document.body.innerHTML = `
-    <div class="auth-screen">
-      <form class="auth-card" id="auth-form">
-        <div class="auth-brand"><span class="wmd-brand-mark">Y9</span><div><b>WENYUN.M-DESKTOP</b><small>AI 视频创作工作台</small></div></div>
-        <h1>${isReset ? '设置新密码' : '接受邀请'}</h1>
-        <p class="hint" id="code-hint">${isReset ? '设置后旧会话会全部失效，请用新密码重新登录。' : '读取邀请信息…'}</p>
-        ${isReset ? '' : '<input class="input" id="auth-user" placeholder="用户名（2–32 位）" autocomplete="username" />'}
-        <input class="input" id="auth-pass" type="password" placeholder="${isReset ? '新密码' : '密码'}" autocomplete="new-password" />
-        <input class="input" id="auth-pass2" type="password" placeholder="再输一次密码" autocomplete="new-password" />
-        <div class="auth-error" id="auth-error"></div>
-        <button class="wmd-btn wmd-btn-primary" type="submit" id="auth-submit">${isReset ? '保存新密码' : '接受邀请并登录'}</button>
-        <div class="auth-switch"><a href="/">返回登录</a></div>
-      </form>
-    </div>`;
+  const fields = [
+    isReset ? '' : authField({ id: 'auth-user', label: '账号', placeholder: '用户名（2–32 位）', autocomplete: 'username' }),
+    authField({ id: 'auth-pass', label: isReset ? '新密码' : '密码', type: 'password', placeholder: isReset ? '新密码' : '密码', autocomplete: 'new-password', eye: true }),
+    authField({ id: 'auth-pass2', label: '确认密码', type: 'password', placeholder: '再输一次密码', autocomplete: 'new-password', eye: true }),
+  ].filter(Boolean).join('');
+  document.body.innerHTML = authShell({
+    title: isReset ? '设置新密码' : '接受邀请',
+    hint: isReset ? '设置后旧会话会全部失效，请用新密码重新登录。' : '读取邀请信息…',
+    hintId: 'code-hint',
+    fields,
+    submit: isReset ? '保存新密码' : '接受邀请并进入',
+    note: isReset ? '链接由管理员生成，仅限本机使用。' : '接受邀请后会加入对方的租户空间。',
+  });
+  bindAuthUi($('#auth-form'));
   if (!isReset) {
     fetch('/api/invites/' + encodeURIComponent(invite)).then(async (res) => {
       const data = await res.json().catch(() => ({}));
@@ -11738,7 +11755,7 @@ function renderCodeScreen({ invite, reset }) {
     } catch (err) {
       error.textContent = err.message;
       btn.disabled = false;
-      btn.textContent = isReset ? '保存新密码' : '接受邀请并登录';
+      btn.textContent = isReset ? '保存新密码' : '接受邀请并进入';
     }
   };
   $('#auth-pass').focus();
@@ -11800,53 +11817,240 @@ function applyProjectChip() {
   const name = (state.project && state.project.name) || '未选择项目';
   const style = state.styleDetail ? state.styleDetail.name : '';
   const btn = $('#project-btn');
-  if (btn) btn.title = '项目：' + name + (style ? ' · ' + style : '') + '（点击切换）';
+  if (!btn) return;
+  btn.title = '当前项目：' + name + (style ? ' · ' + style : '') + '（点击切换）';
+  const label = $('#project-btn-name');
+  if (label) label.textContent = name;
+}
+
+/* ---------------------------- 顶栏项目下拉：快速切换（不额外请求） ---------------------------- */
+// 项目列表在启动时已经拿过（state.projects），这里只负责列出和切换；
+// 切换成本 = 重新读当前项目的素材/任务/媒体，跟点「项目」页再进是一样的。
+function projectMenuEl() {
+  let menu = document.getElementById('project-menu');
+  if (!menu) {
+    menu = document.createElement('div');
+    menu.id = 'project-menu';
+    menu.className = 'wmd-project-menu';
+    menu.hidden = true;
+    menu.addEventListener('click', (event) => event.stopPropagation());
+    document.body.appendChild(menu);
+  }
+  return menu;
+}
+
+function closeProjectMenu() {
+  const menu = document.getElementById('project-menu');
+  if (menu) menu.hidden = true;
+  const btn = $('#project-btn');
+  if (btn) btn.setAttribute('aria-expanded', 'false');
+}
+
+async function openProjectMenu() {
+  const menu = projectMenuEl();
+  const btn = $('#project-btn');
+  const list = state.projects || [];
+  const current = state.projectId;
+  menu.innerHTML = `
+    <div class="wmd-pm-head">切换项目<small>${list.length} 个</small></div>
+    <div class="wmd-pm-list" role="listbox" aria-label="项目列表">
+      ${list.length ? list.map((p) => `<button type="button" class="wmd-pm-item${p.id === current ? ' is-on' : ''}" data-project-id="${esc(p.id)}" role="option" aria-selected="${p.id === current}">
+          <span class="wmd-pm-name">${esc(p.name)}</span>
+          <span class="wmd-pm-style">${p.style ? esc(p.style.name) : '探索模式'}</span>
+          ${p.id === current ? '<em>当前</em>' : ''}
+        </button>`).join('') : '<p class="wmd-pm-empty">还没有项目</p>'}
+    </div>
+    <div class="wmd-pm-foot">
+      <button type="button" data-pm-act="new">＋ 新建项目</button>
+      <button type="button" data-pm-act="manage">管理项目</button>
+    </div>`;
+  const rect = btn.getBoundingClientRect();
+  menu.hidden = false;
+  menu.style.top = Math.round(rect.bottom + 6) + 'px';
+  menu.style.right = Math.max(8, Math.round(window.innerWidth - rect.right)) + 'px';
+  btn.setAttribute('aria-expanded', 'true');
+
+  menu.querySelectorAll('[data-project-id]').forEach((item) => {
+    item.onclick = async () => {
+      const id = item.dataset.projectId;
+      if (id === state.projectId) return closeProjectMenu();
+      if (item.dataset.busy) return;
+      item.dataset.busy = '1';
+      item.classList.add('is-busy');
+      try {
+        await setActiveProject(id);
+        closeProjectMenu();
+        toast('已切换到「' + ((state.project && state.project.name) || '') + '」');
+      } catch (err) {
+        item.classList.remove('is-busy');
+        delete item.dataset.busy;
+        toast('切换失败：' + err.message, true);
+      }
+    };
+  });
+  const newBtn = menu.querySelector('[data-pm-act="new"]');
+  if (newBtn) newBtn.onclick = () => { closeProjectMenu(); openProjectDialog(null); };
+  const manageBtn = menu.querySelector('[data-pm-act="manage"]');
+  if (manageBtn) manageBtn.onclick = () => { closeProjectMenu(); location.hash = '#projects'; };
+}
+
+function bindProjectMenu(btn) {
+  if (!btn) return;
+  btn.onclick = (event) => {
+    event.stopPropagation();
+    const menu = projectMenuEl();
+    if (menu.hidden) openProjectMenu();
+    else closeProjectMenu();
+  };
+  document.addEventListener('click', () => closeProjectMenu());
+  document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeProjectMenu(); });
+  window.addEventListener('resize', () => closeProjectMenu());
+}
+
+const PJ_ICON = {
+  check: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.4 8.4l3 3 6.2-6.6" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  folder: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.2 4.6A1.6 1.6 0 013.8 3h1.9l1.3 1.7h5.2a1.6 1.6 0 011.6 1.6v4.9a1.6 1.6 0 01-1.6 1.6H3.8a1.6 1.6 0 01-1.6-1.6z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>',
+  copy: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.2" y="5.2" width="7.6" height="7.6" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M10.4 5.2V4A1.4 1.4 0 009 2.6H4A1.4 1.4 0 002.6 4v5A1.4 1.4 0 004 10.4h1.2" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>',
+  edit: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10.6 2.9l2.5 2.5-7 7-3.3.8.8-3.3z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>',
+  trash: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4.6h10M6.3 4.6V3.3h3.4v1.3M4.4 4.6l.6 8.1h6l.6-8.1" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  search: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7.2" cy="7.2" r="3.9" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M10.2 10.2L13.4 13.4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
+  plus: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.4v9.2M3.4 8h9.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
+};
+
+/** 项目目录只显示最后一段，完整路径放在 title / 复制按钮里。 */
+function projectDirLabel(project) {
+  const full = String((project && project.dir) || '');
+  const base = full.split(/[\\/]/).filter(Boolean).pop();
+  return base || (project && project.folder) || '';
 }
 
 function renderProjects() {
   const user = state.auth && state.auth.user;
   const list = state.projects || [];
-  return `<div class="projects-page">
-    <div class="projects-head">
-      <div><h1>项目</h1><p>项目可以绑定一套风格（自动注入风格前置），也可以选「探索模式」自由生成。</p></div>
-      <span class="grow"></span>
-      ${user ? `<span class="hint">${esc(user.username)}</span>` : ''}
-      ${state.auth && state.auth.enabled ? '<button type="button" class="wmd-btn wmd-btn-sm wmd-btn-ghost" data-act="logout">退出登录</button>' : ''}
-      <button type="button" class="wmd-btn wmd-btn-sm wmd-btn-primary" data-act="new-project">＋ 新建项目</button>
-    </div>
-    ${list.length ? `<div class="projects-grid">${list.map((p) => `<div class="project-card ${p.id === state.projectId ? 'is-on' : ''}">
-      ${p.style && p.style.image ? `<img class="project-cover" src="${styleImageUrl({ id: p.styleId, image: p.style && p.style.image })}" alt="" />` : '<div class="project-cover project-cover-explore">🧭</div>'}
+  // 当前项目排最前面，其余保持接口顺序
+  const ordered = list.slice().sort((a, b) => (b.id === state.projectId ? 1 : 0) - (a.id === state.projectId ? 1 : 0));
+  const current = list.find((p) => p.id === state.projectId);
+  const cards = ordered.map((p) => {
+    const on = p.id === state.projectId;
+    const dirLabel = projectDirLabel(p);
+    const hay = [p.name, p.description, p.dir, p.style && p.style.name].filter(Boolean).join(' ').toLowerCase();
+    const cover = p.style && p.style.image
+      ? `<img class="project-cover" src="${styleImageUrl({ id: p.styleId, image: p.style.image })}" alt="" loading="lazy" />`
+      : '<div class="project-cover project-cover-explore">🧭</div>';
+    return `<article class="project-card${on ? ' is-on' : ''}" data-pid="${esc(p.id)}" data-search="${esc(hay)}" title="${esc(p.dir || p.name)}">
+      <div class="project-cover-wrap">${cover}${on ? `<span class="project-badge">${PJ_ICON.check}当前项目</span>` : ''}</div>
       <div class="project-body">
-        <b>${esc(p.name)}</b>
-        <small>${p.style ? '🎨 ' + esc(p.style.name) : '🧭 探索模式'}</small>
-        ${p.dir ? `<small class="mono project-dir" title="${esc(p.dir)}">📁 ${esc(p.dir)}</small>` : ''}
-        ${p.description ? `<small>${esc(p.description)}</small>` : ''}
-        <div class="row">
-          <button type="button" class="wmd-btn wmd-btn-sm ${p.id === state.projectId ? 'wmd-btn-ghost' : 'wmd-btn-primary'}" data-act="open-project" data-id="${esc(p.id)}">${p.id === state.projectId ? '当前项目' : '进入'}</button>
-          <button type="button" class="wmd-btn wmd-btn-sm wmd-btn-ghost" data-act="edit-project" data-id="${esc(p.id)}">编辑</button>
-          <button type="button" class="wmd-btn wmd-btn-sm wmd-btn-ghost" data-act="delete-project" data-id="${esc(p.id)}">删除</button>
+        <div class="project-title">
+          <b>${esc(p.name)}</b>
+          <span class="project-style">${p.style ? esc(p.style.name) : '探索模式'}</span>
+        </div>
+        ${p.description ? `<p class="project-desc">${esc(p.description)}</p>` : ''}
+        ${p.dir ? `<div class="project-dir">${PJ_ICON.folder}<span>${esc(dirLabel)}</span><button type="button" class="project-copy" data-act="copy-path" data-path="${esc(p.dir)}" title="复制项目路径">${PJ_ICON.copy}</button></div>` : ''}
+        <div class="project-actions">
+          <button type="button" class="pj-btn pj-btn-open${on ? ' pj-btn-primary' : ''}" data-act="open-project" data-id="${esc(p.id)}">进入创作台</button>
+          <button type="button" class="pj-icon" data-act="edit-project" data-id="${esc(p.id)}" title="编辑项目" aria-label="编辑项目">${PJ_ICON.edit}</button>
+          <button type="button" class="pj-icon pj-icon-danger" data-act="delete-project" data-id="${esc(p.id)}" title="删除项目" aria-label="删除项目">${PJ_ICON.trash}</button>
         </div>
       </div>
-    </div>`).join('')}</div>` : '<div class="ask-cap-empty">还没有项目，先新建一个并选风格。</div>'}
+    </article>`;
+  }).join('');
+  return `<div class="projects-page">
+    <header class="projects-hero">
+      <div class="projects-hero-top">
+        <div class="projects-hero-main">
+          <p class="projects-eyebrow">CREATIVE DESK · 项目</p>
+          <h1>项目</h1>
+          <p class="projects-sub">一个项目 = 独立目录 + 一套风格。绑定风格会自动注入风格前置，也可以选「探索模式」自由生成。</p>
+        </div>
+        <div class="projects-hero-actions">
+          ${user ? `<span class="projects-user"><i>${esc(String(user.username || '?').slice(0, 1).toUpperCase())}</i>${esc(user.username)}</span>` : ''}
+          ${state.auth && state.auth.enabled ? `<button type="button" class="pj-btn" data-act="logout">退出登录</button>` : ''}
+          <button type="button" class="pj-btn pj-btn-primary" data-act="new-project">${PJ_ICON.plus}新建项目</button>
+        </div>
+      </div>
+      <div class="projects-toolbar">
+        <span class="projects-count" id="projects-count">共 ${list.length} 个项目${current ? ` · 当前 ${esc(current.name)}` : ''}</span>
+        <label class="projects-search">${PJ_ICON.search}<input type="search" id="projects-search" placeholder="搜索项目名称、风格或路径" autocomplete="off" /></label>
+      </div>
+    </header>
+    <div class="projects-grid" id="projects-grid">
+      ${cards}
+      <button type="button" class="project-new" data-act="new-project">
+        <span class="project-new-icon">${PJ_ICON.plus}</span>
+        <span class="project-new-text"><b>新建项目</b><small>绑定风格，或从探索模式开始</small></span>
+      </button>
+    </div>
+    <p class="projects-empty" id="projects-empty" hidden>没有匹配的项目，换个关键词试试。</p>
+    <p class="projects-foot">图片、素材和成片都落在各自项目目录里；点卡片任意位置即可进入该项目。</p>
   </div>`;
 }
 
 function bindProjects(root) {
   if (!root) return;
+
+  async function openById(id) {
+    if (!id) return;
+    await setActiveProject(id);
+    if (location.hash === '#projects') location.hash = '#image';
+    else setRoute();
+  }
+
+  // 搜索：纯前端过滤卡片，不发请求；Esc 清空
+  const search = root.querySelector('#projects-search');
+  const counter = root.querySelector('#projects-count');
+  const emptyTip = root.querySelector('#projects-empty');
+  const newTile = root.querySelector('.project-new');
+  const cards = () => Array.from(root.querySelectorAll('.project-card'));
+  if (search) {
+    const baseCount = counter ? counter.textContent : '';
+    const filter = () => {
+      const q = search.value.trim().toLowerCase();
+      let shown = 0;
+      cards().forEach((card) => {
+        const hit = !q || (card.dataset.search || '').includes(q);
+        card.hidden = !hit;
+        if (hit) shown += 1;
+      });
+      if (newTile) newTile.hidden = Boolean(q);
+      if (emptyTip) emptyTip.hidden = shown > 0;
+      if (counter) counter.textContent = q ? `匹配 ${shown} / 共 ${cards().length} 个项目` : baseCount;
+    };
+    search.addEventListener('input', filter);
+    search.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape') return;
+      search.value = '';
+      filter();
+    });
+  }
+
   root.addEventListener('click', async (event) => {
     const btn = event.target.closest('[data-act]');
-    if (!btn) return;
+    if (!btn) {
+      // 点卡片空白处 = 进入该项目
+      const card = event.target.closest('.project-card');
+      if (!card || !card.dataset.pid) return;
+      try { await openById(card.dataset.pid); } catch (err) { toast(err.message, true); }
+      return;
+    }
     const act = btn.dataset.act;
     try {
       if (act === 'new-project') return openProjectDialog(null);
+      if (act === 'copy-path') {
+        const value = btn.dataset.path || '';
+        try {
+          await navigator.clipboard.writeText(value);
+          toast('项目路径已复制');
+        } catch (err) {
+          toast('复制失败：' + value, true);
+        }
+        return;
+      }
       if (act === 'edit-project') {
         const project = (state.projects || []).find((p) => p.id === btn.dataset.id);
         return openProjectDialog(project);
       }
       if (act === 'open-project') {
-        await setActiveProject(btn.dataset.id);
-        if (location.hash === '#projects') location.hash = '#image';
-        else setRoute();
+        await openById(btn.dataset.id);
         return;
       }
       if (act === 'delete-project') {
@@ -12130,7 +12334,13 @@ async function init() {
     try { storedProject = localStorage.getItem('wmd.projectId') || ''; } catch { storedProject = ''; }
     let noProject = false;
     try { noProject = localStorage.getItem('wmd.projectNone') === '1'; } catch { noProject = false; }
-    const activeProject = noProject ? null : ((state.projects || []).find((p) => p.id === storedProject) || (state.projects || [])[0] || null);
+    // 优先用本机记住的项目；其次用服务端记的「这个用户上次在哪」；最后才落到最新项目
+    const activeProject = noProject ? null : (
+      (state.projects || []).find((p) => p.id === storedProject)
+      || (state.projects || []).find((p) => p.id === data.projectId)
+      || (state.projects || [])[0]
+      || null
+    );
     if (activeProject) await setActiveProject(activeProject.id, { silent: true });
     else { state.projectId = ''; state.project = null; await studioLoadForProject('default'); await WB.load('default'); }
     applyTheme();
@@ -12157,8 +12367,7 @@ async function init() {
     IJ.init();
     refreshServices();
     setInterval(refreshServices, 20000);
-    const projectBtn = $('#project-btn');
-    if (projectBtn) projectBtn.onclick = () => { location.hash = '#projects'; };
+    bindProjectMenu($('#project-btn'));
     applyProjectChip();
     const agentItem = document.querySelector('.wmd-svc-item[data-svc="agent"]');
     if (agentItem) agentItem.onclick = () => toggleService('agent', agentItem);

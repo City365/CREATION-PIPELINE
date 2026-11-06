@@ -76,13 +76,15 @@ test('heal：项目整体换到新根目录后，按 rel 仍能找到文件', ()
   // 用户把项目根目录换到另一个盘/另一个目录，并把项目文件夹整体搬过去
   const nextRoot = path.join(DATA, 'moved-projects');
   fs.mkdirSync(nextRoot, { recursive: true });
-  const folder = path.basename(workspace.dirFor(project));
-  fs.renameSync(path.join(oldRoot, folder), path.join(nextRoot, folder));
+  // 项目目录现在是 租户/用户/项目 三层，搬家时按相对路径整体挪\r
+  const relDir = path.relative(workspace.root(), workspace.dirFor(project));
+  fs.mkdirSync(path.dirname(path.join(nextRoot, relDir)), { recursive: true });
+  fs.renameSync(path.join(oldRoot, relDir), path.join(nextRoot, relDir));
   config.save({ projectRoot: nextRoot });
 
   assert.ok(!fs.existsSync(record.path), '旧绝对路径已经失效');
   projectPaths.heal(project.id, record);
-  const expected = path.join(nextRoot, folder, 'media', 'images', '2026-01-02', 'y.png');
+  const expected = path.join(nextRoot, relDir, 'media', 'images', '2026-01-02', 'y.png');
   assert.equal(record.path, expected, '按 rel 现算出新位置');
   assert.ok(fs.existsSync(record.path));
   config.save({ projectRoot: oldRoot });

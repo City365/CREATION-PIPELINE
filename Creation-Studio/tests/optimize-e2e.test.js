@@ -7,7 +7,9 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { startMockCloud, PNG } = require('./mock-cloud');
 
-const PORT = 18925;
+// 注意：node --test 会并行跑测试文件，端口不能和别的用例撞车（曾经 PORT+1 正好撞上
+// image-e2e 的 18926，结果请求打到别人的服务上，登录态一开就全是 401）
+const PORT = 18935;
 const ROOT = path.resolve(__dirname, '..');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 

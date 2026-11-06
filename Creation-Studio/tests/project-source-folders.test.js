@@ -16,4 +16,4 @@ test('invalid folder input is rejected before project registration',()=>{
  for(const sourceFolders of [['relative'],[path.join(dir,'missing')],[''], 'bad',Array(21).fill(dir)])assert.throws(()=>projects.create({name:'invalid',sourceFolders}));
  assert.equal(projects.list().length,before);
 });
-test('legacy project retains its original generated directory',()=>{const p=projects.create({name:'旧项目'});assert.equal(workspace.dirFor(p),path.join(workspace.root(),p.folder));});
+test('new project lands in tenant/user/project and keeps the legacy path when it already exists',()=>{const p=projects.create({name:'旧项目'});const dir=workspace.dirFor(p);assert.equal(dir,path.join(workspace.scopeDirFor(p),p.folder),'新项目按 租户/用户/项目 三层放置');const legacy=path.join(workspace.root(),p.folder);fs.mkdirSync(path.join(legacy,'assets'),{recursive:true});assert.equal(workspace.dirFor(p),legacy,'老目录已经存在时继续用它');});

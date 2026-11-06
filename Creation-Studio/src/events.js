@@ -714,7 +714,10 @@ function removeEvent(id){
 }
 
 /** 回收站列表（不带完整 payload，避免列表太重）。 */
-function listTrash() {
+function listTrash(projectId) {
+  // 传了项目就只列这个项目的；传空串表示「未归档」这个空桶
+  const scoped = projectId !== undefined;
+  const scope = String(projectId == null ? '' : projectId);
   return repository.trashList(currentTenant()).map((row) => ({
     id: row.event.id,
     title: row.event.title || '',
@@ -723,7 +726,7 @@ function listTrash() {
     projectId: (row.event.spec && row.event.spec.projectId) || '',
     items: Number(row.items) || (row.event.items || []).length,
     removedAt: Number(row.removedAt) || 0,
-  }));
+  })).filter((row) => !scoped || String(row.projectId || '') === scope);
 }
 
 /** 从回收站恢复任务（按 id，或最近一条）。 */
@@ -840,10 +843,14 @@ function reportCsv(id, context = {}) {
   return { filename: data.eventId + '-report.csv', body: lines.join('\n') };
 }
 
-function reportRange(days = 7, kind) {
+function reportRange(days = 7, kind, projectId) {
   const span = Math.max(1, Math.min(90, Number(days) || 7));
   const since = Date.now() - span * 24 * 60 * 60 * 1000;
-  const events = repository.read().filter(event=>!kind||repository.kind(event)===kind);
+  const scope = String(projectId || '');
+  const events = repository.read()
+    .filter((event) => !kind || repository.kind(event) === kind)
+    // 任务统计同样只看当前项目：跨项目汇总会把别人的数据带出来
+    .filter((event) => !scope || String((event.spec && event.spec.projectId) || '') === scope);
   const picked = events.filter((event) => Number(event.createdAt) >= since).map((event) => hydrate(event));
   const buckets = new Map();
   let success = 0;

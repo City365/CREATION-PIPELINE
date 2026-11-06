@@ -109,8 +109,13 @@ function run({ force = false } = {}) {
   const marker = readMarker();
   if (marker && !force) return marker;
   // force 重跑时沿用第一次迁移选定的项目，避免因为用户切换了当前项目而把数据拆到两处。
-  const project = (marker && marker.projectId ? projects.get(marker.projectId) : null) || pickProject();
+  let project = (marker && marker.projectId ? projects.get(marker.projectId) : null) || pickProject();
   if (!project) return null;
+  // 迁移要按「租户/用户/项目」算目录：先把无主项目认领掉，否则会写进 user-000000 这种假目录。
+  try {
+    projects.claimOrphans(project.tenantId);
+    project = projects.get(project.id) || project;
+  } catch { /* 认领失败就按现有归属继续 */ }
   const paths = workspace.pathsFor(project);
   const backupRoot = path.join(config.DATA, 'backups', 'workspace-' + stamp().replace(/[: ]/g, '-'));
   const sources = {

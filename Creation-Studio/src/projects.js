@@ -78,17 +78,50 @@ function ensureWorkspace(project) {
  * 项目列表。传 tenantId 时只返回该租户的项目（业务入口必须传）；
  * 不传只给内部工具用（路径解析、迁移），不要拿它直接喂给接口。
  */
-function list(tenantId) {
+function list(tenantId, ownerUserId) {
   const conn = db.open();
-  const rows = tenantId
-    ? conn.prepare('SELECT * FROM projects WHERE tenant_id = ? ORDER BY updated_at DESC').all(String(tenantId))
-    : conn.prepare('SELECT * FROM projects ORDER BY updated_at DESC').all();
+  const owner = String(ownerUserId || '');
+  let rows;
+  if (tenantId && owner) {
+    // 隔离层级 租户 → 用户 → 项目：同一个租户里也只列自己的项目。
+    rows = conn.prepare('SELECT * FROM projects WHERE tenant_id = ? AND owner_user_id = ? ORDER BY updated_at DESC').all(String(tenantId), owner);
+  } else if (tenantId) {
+    rows = conn.prepare('SELECT * FROM projects WHERE tenant_id = ? ORDER BY updated_at DESC').all(String(tenantId));
+  } else {
+    rows = conn.prepare('SELECT * FROM projects ORDER BY updated_at DESC').all();
+  }
   return rows.map(toProject).map((project) => {
     try {
       if (ensureWorkspace(project)) persistWorkspace(project);
     } catch { /* 目录建不出来不应让整个项目列表失败 */ }
     return project;
   });
+}
+
+/**
+ * 把没有归属人的历史项目挂到该租户最早的用户名下（优先租户负责人）。
+ * 只在启动时跑一次，避免「无主项目」在严格隔离后谁都看不到。
+ */
+function claimOrphans(tenantId) {
+  const conn = db.open();
+  const rows = tenantId
+    ? conn.prepare("SELECT id, tenant_id FROM projects WHERE (owner_user_id = '' OR owner_user_id IS NULL) AND tenant_id = ?").all(String(tenantId))
+    : conn.prepare("SELECT id, tenant_id FROM projects WHERE owner_user_id = '' OR owner_user_id IS NULL").all();
+  if (!rows.length) return [];
+  const claimed = [];
+  const pickOwner = (tenantId) => {
+    const owner = conn.prepare("SELECT id FROM users WHERE tenant_id = ? AND role = 'owner' ORDER BY created_at LIMIT 1").get(tenantId);
+    if (owner) return owner.id;
+    const first = conn.prepare('SELECT id FROM users WHERE tenant_id = ? ORDER BY created_at LIMIT 1').get(tenantId);
+    return first ? first.id : '';
+  };
+  for (const row of rows) {
+    const owner = pickOwner(row.tenant_id);
+    if (!owner) continue; // 该租户还没有用户，等有用户再说
+    conn.prepare('UPDATE projects SET owner_user_id = ? WHERE id = ?').run(owner, row.id);
+    claimed.push({ id: row.id, ownerUserId: owner });
+  }
+  return claimed;
 }
 
 function get(id) {
@@ -143,4 +176,4 @@ function publicProject(project) {
   };
 }
 
-module.exports = { list, get, create, update, remove, publicProject };
+module.exports = { list, get, create, update, remove, publicProject, claimOrphans };

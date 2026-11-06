@@ -55,8 +55,28 @@ const taskManifest = require('./task-manifest');
 const mediaDrafts = require('./media-drafts');
 const refImages = require('./ref-images');
 const jianying = require('./jianying');
+const db = require('./db');
 const [ensureDir, readJson, writeJson, uid] = [require('./util').ensureDir, require('./util').readJson, require('./util').writeJson, require('./util').uid];
 const { sanitizeFilename, kindOf, mimeFor, publicError, formatBytes, estimateTokens, httpJson } = require('./util');
+
+/**
+ * 登录页要展示的「空间概览」：默认租户名 + 成员数 + 项目数。
+ * 未登录也能读，所以只给聚合数字，不给别人的用户名和项目名。
+ */
+function spaceSummary(tenantId) {
+  const id = String(tenantId || tenants.DEFAULT_TENANT);
+  const tenant = tenants.get(id);
+  let members = 0;
+  let projectCount = 0;
+  try {
+    const conn = db.open();
+    members = conn.prepare('SELECT COUNT(*) AS n FROM users WHERE tenant_id = ?').get(id).n;
+    projectCount = conn.prepare('SELECT COUNT(*) AS n FROM projects WHERE tenant_id = ?').get(id).n;
+  } catch { /* 库还没建好时按 0 处理，登录页不能因为统计挂掉 */ }
+  let tenantCount = 1;
+  try { tenantCount = Math.max(1, tenants.list().length); } catch { tenantCount = 1; }
+  return { tenantId: id, tenantName: (tenant && tenant.name) || '默认租户', tenants: tenantCount, members, projects: projectCount };
+}
 
 const WEB = path.join(__dirname, '..', 'web');
 const AGENT_URL = process.env.WMD_AGENT_URL || 'http://127.0.0.1:17820';
@@ -88,6 +108,7 @@ const STATIC = {
   '/skins/moon.svg': ['skins/moon.svg', 'image/svg+xml'],
   '/skins/coast.svg': ['skins/coast.svg', 'image/svg+xml'],
   '/skins/forest.svg': ['skins/forest.svg', 'image/svg+xml'],
+  '/skins/login-cinema.jpg': ['skins/login-cinema.jpg', 'image/jpeg'],
   '/wmd.css': ['wmd.css', 'text/css; charset=utf-8'],
   '/favicon.svg': ['favicon.svg', 'image/svg+xml'],
 };
@@ -537,11 +558,17 @@ async function handle(req, res) {
     return view;
   };
 
-  /** 项目必须属于当前租户；别的租户的项目一律当作不存在，不泄露存在性。 */
+  /**
+   * 项目必须属于当前租户，而且必须是当前用户自己的项目。
+   * 别人的项目一律当作不存在，连“存在性”都不泄露。
+   */
   const assertProject = (id) => {
     const key = String(id || '');
     const project = key ? projects.get(key) : null;
-    if (!project || (project.tenantId || tenants.DEFAULT_TENANT) !== tenantId) {
+    const sameTenant = project && (project.tenantId || tenants.DEFAULT_TENANT) === tenantId;
+    // 没有登录体系（本机没建账号）时只有租户这一层，行为和以前一致
+    const sameOwner = !currentUser || !project || !project.ownerUserId || project.ownerUserId === currentUser.id;
+    if (!project || !sameTenant || !sameOwner) {
       const error = new Error('项目不存在');
       error.status = 404;
       throw error;
@@ -564,7 +591,7 @@ async function handle(req, res) {
   const unassignedVisible = () => tenantId === tenants.DEFAULT_TENANT;
   let tenantProjectIdsCache = null;
   const tenantProjectIds = () => {
-    if (!tenantProjectIdsCache) tenantProjectIdsCache = new Set(projects.list(tenantId).map((item) => item.id));
+    if (!tenantProjectIdsCache) tenantProjectIdsCache = new Set(projects.list(tenantId, currentUser && currentUser.id).map((item) => item.id));
     return tenantProjectIdsCache;
   };
   /** 这条记录（任务/事件）属于当前租户吗。 */
@@ -690,7 +717,7 @@ async function handle(req, res) {
 
   if (method === 'GET' && pathname === '/api/auth/me') {
     const user = auth.userByToken(token);
-    return ok(res, { enabled: auth.enabled(), user: user ? auth.publicUser(user) : null });
+    return ok(res, { enabled: auth.enabled(), user: user ? auth.publicUser(user) : null, space: spaceSummary(user ? user.tenantId : tenants.DEFAULT_TENANT) });
   }
 
   if (method === 'POST' && pathname === '/api/auth/register') {
@@ -974,8 +1001,10 @@ async function handle(req, res) {
   }
 
   if (method === 'GET' && pathname === '/api/projects') {
-    // 只返回当前租户的项目
-    return ok(res, projects.list(tenantId).map((p) => projects.publicProject(p)));
+    // 只返回「当前租户 + 当前用户」自己的项目（隔离层级：租户 → 用户 → 项目）
+    // 历史遗留的无主项目在这里按需认领，避免账号建好后项目“失踪”
+    if (currentUser) { try { projects.claimOrphans(tenantId); } catch { /* 认领失败不影响列表 */ } }
+    return ok(res, projects.list(tenantId, currentUser && currentUser.id).map((p) => projects.publicProject(p)));
   }
 
   if (method === 'POST' && pathname === '/api/projects') {
@@ -1018,6 +1047,19 @@ async function handle(req, res) {
       dirs: paths ? { dir: paths.dir, assets: paths.assets, media: paths.media, uploads: paths.uploads, exports: paths.exports } : null,
       migration: preview,
     });
+  }
+
+  if (method === 'POST' && pathname === '/api/workspace/adopt') {
+    // 把「没有项目归属」的历史任务/队列/图像任务收编到当前项目（隔离之后这些数据不属于任何项目）
+    const body = await readBody(req).catch(() => ({}));
+    const target = scoped(body.projectId);
+    if (!target) return bad(res, '先进入一个项目，再收编旧任务');
+    const counts = { projectId: target, events: 0, jobs: 0, images: 0 };
+    try { counts.events = events.adoptLegacy(target); } catch { /* 单项失败不影响其它 */ }
+    try { counts.jobs = jobs.adoptLegacy(target); } catch { /* ignore */ }
+    try { counts.images = imageTasks.tasks().adoptLegacy(target); } catch { /* ignore */ }
+    audit.record({ action: 'workspace.adopt', tenantId, userId: currentUser && currentUser.id, target, detail: JSON.stringify(counts), ip: clientIp(req) });
+    return ok(res, counts);
   }
 
   if (method === 'POST' && pathname === '/api/workspace/migrate') {
@@ -1728,7 +1770,7 @@ function mediaPath(input) {
 
   if (method === 'GET' && pathname === '/api/jobs') {
     const { status, provider } = collectJobFilters(url);
-    // 选了项目只看该项目；没选就列本租户全部（未归档任务只给默认租户）
+    // 选了项目只看该项目；没选就列本租户（当前用户可见项目）的队列，内部轮询依赖这份列表
     let list = projectId ? jobs.list(projectId) : jobs.list().filter((job) => inTenant(job.projectId));
     const eventId = url.searchParams.get('eventId') || '';
     if (eventId) list = list.filter((j) => j.eventId === eventId);
@@ -1790,10 +1832,9 @@ function mediaPath(input) {
   }
 
   if (method === 'GET' && pathname === '/api/events') {
-    // 指定项目就校验归属；没指定就按本租户全部项目过滤，未归档只给默认租户
+    // 任务只在项目内可见：列表按「当前项目」过滤，不再跨项目汇总
     const askedProject = url.searchParams.get('projectId') ? scoped(url.searchParams.get('projectId')) : '';
-    const allowedProjectIds = askedProject ? [askedProject] : [...tenantProjectIds()];
-    if (!askedProject && unassignedVisible()) allowedProjectIds.push('');
+    const allowedProjectIds = askedProject ? [askedProject] : (projectId ? [projectId] : (unassignedVisible() ? [''] : []));
     return ok(res, events.list({ status: url.searchParams.get('status') || '', source: url.searchParams.get('source') || '', kind:url.searchParams.get('kind')||'',projectId:askedProject,projectIds:allowedProjectIds,page:url.searchParams.get('page'),query:url.searchParams.get('query')||'',month:url.searchParams.get('month')||'',sort:url.searchParams.get('sort')||'' }));
   }
 
@@ -1816,7 +1857,17 @@ function mediaPath(input) {
   }
 
   if (method === 'GET' && pathname === '/api/events/report') {
-    return ok(res, events.reportRange(url.searchParams.get('days'),url.searchParams.get('kind')));
+    return ok(res, events.reportRange(url.searchParams.get('days'),url.searchParams.get('kind'),projectId));
+  }
+
+  // 任务详情、子资源、删除、调度一律按项目校验：别的项目的任务当作不存在
+  const eventScoped = /^\/api\/events\/([^/]+)(?:\/|$)/.exec(pathname);
+  if (eventScoped && !['report', 'trash', 'import'].includes(eventScoped[1])) {
+    let target = null;
+    try { target = events.get(eventScoped[1]); } catch { target = null; }
+    const targetProject = target ? String((target.spec && target.spec.projectId) || '') : '';
+    // 当前项目（含「没有项目」这个空桶）之外的任务一律当作不存在
+    if (!target || targetProject !== String(projectId || '')) return bad(res, '事件不存在', 404);
   }
 
   const eventReport = /^\/api\/events\/([^/]+)\/report$/.exec(pathname);
@@ -1906,7 +1957,7 @@ function mediaPath(input) {
     return res.end();
   }
 
-  if (method === 'GET' && pathname === '/api/events/trash') return ok(res, { items: events.listTrash() });
+  if (method === 'GET' && pathname === '/api/events/trash') return ok(res, { items: events.listTrash(projectId) });
 
   /* 任务清单：任务 → 镜头 → 提示词 → 成片路径 的完整 JSON 映射 */
   if (method === 'GET' && pathname === '/api/tasks/manifest') {
@@ -1923,6 +1974,9 @@ function mediaPath(input) {
   }
   if (method === 'POST' && pathname === '/api/events/trash/restore') {
     const body = await readBody(req).catch(() => ({}));
+    // 回收站也按项目隔离：只能恢复当前项目里的任务
+    const mine = events.listTrash(projectId).some((row) => row.id === (body.id || ''));
+    if (body.id && !mine) return bad(res, '事件不存在', 404);
     return ok(res, events.restoreEvent(body.id || ''));
   }
   const itemRestoreRoute = /^\/api\/events\/([^/]+)\/items\/restore$/.exec(pathname);
@@ -2558,6 +2612,13 @@ function start() {
   const cfg = config.load();
   internalAuth.token();
   config.storage();
+  // 严格按 租户 → 用户 → 项目 隔离之前，历史项目可能没有归属人：启动时挂到租户负责人名下。
+  try {
+    const claimed = projects.claimOrphans();
+    if (claimed.length) console.log('历史项目已归属到租户负责人：' + claimed.map((row) => row.id).join(', '));
+  } catch (error) {
+    console.error('历史项目归属迁移失败：' + error.message);
+  }
   backup.start();
   jobs.loadState();
   events.start();
