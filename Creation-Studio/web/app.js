@@ -7070,10 +7070,6 @@ function askTurnStats(ex) {
   return ex.timing || null;
 }
 
-function askTurnOf(ex) {
-  return (ex && ex.turn) || null;
-}
-
 function askSessionStats(chat) {
   const list = (chat && chat.messages) || [];
   const s = { turns: 0, steps: 0, llm: 0, tool: 0, dec: 0, decTokens: 0, input: 0, output: 0, ttftSum: 0, ttftN: 0 };
@@ -7099,16 +7095,21 @@ function askSessionStats(chat) {
   return s;
 }
 
-// 输入框下方的统计条：一行「轮次/步骤/速度/耗时/首字」，一行 token 合计。
+// 输入框下方的统计条。只放用户能感知的东西：快不快（速率）、多久出字（首字）、
+// 时间花在模型还是工具上（两个墙钟）。
+// 「轮次」「步骤」不在这里：用户自己数得出会话里发了几条，模型内部调了几次也不关他事，
+// 这两个数字是拿内部模型填界面，信息量为零。要看的细节在每轮展开面板里。
 function askStatDockHtml() {
   const s = askSessionStats(askActive());
   if (!s.turns) return '';
-  const activity = ['轮次 ' + s.turns, '步骤 ' + s.steps, s.tps ? s.tps + ' tok/s' : '',
-    s.llm ? '模型 ' + askSecs(s.llm) : '', s.tool ? '工具 ' + askSecs(s.tool) : '',
-    s.ttftAvg ? '首字 ' + askSecs(s.ttftAvg) : ''].filter(Boolean);
-  const usage = ['输入 ' + askFmtTokens(s.input), '输出 ' + askFmtTokens(s.output), '合计 ' + askFmtTokens(s.input + s.output)];
+  const activity = [s.tps ? s.tps + ' tok/s' : '',
+    s.ttftAvg ? '首字 ' + askSecs(s.ttftAvg) : '',
+    s.llm ? '模型 ' + askSecs(s.llm) : '',
+    s.tool ? '工具 ' + askSecs(s.tool) : ''].filter(Boolean);
+  // 输入与输出分列即可，合计是两者相加，不必占位置。
+  const usage = ['输入 ' + askFmtTokens(s.input), '输出 ' + askFmtTokens(s.output)];
   return `<div class="ask-stat-dock">
-    <span class="ask-stat" data-composer-stat="activity" title="本会话 ${s.turns} 轮：模型墙钟与工具墙钟分开计">${esc(activity.join(' · '))}</span>
+    <span class="ask-stat" data-composer-stat="activity" title="本会话 ${s.turns} 轮合计：模型墙钟与工具墙钟分开计">${esc(activity.join(' · '))}</span>
     <span class="ask-stat" data-composer-stat="usage">${esc(usage.join(' · '))}</span>
   </div>`;
 }
@@ -7119,7 +7120,6 @@ function askTurnUsageHtml(m) {
   const t = askTurnStats(ex);
   const u = ex && ex.usage;
   if (!t || !u || u.output_tokens == null) return '';
-  const turn = askTurnOf(ex);
   const head = [];
   if (t.tps) head.push(t.tps + ' tok/s');
   if (t.ttft_ms) head.push('首字 ' + askSecs(t.ttft_ms));
@@ -7131,7 +7131,6 @@ function askTurnUsageHtml(m) {
     ['工具调用', (t.tool_calls || 0) + ' 次'],
     ['输入 tokens', u.input_tokens ?? '—'],
     ['输出 tokens', u.output_tokens ?? '—']];
-  if (turn && turn.index) rows.push(['本会话轮次', '第 ' + turn.index + ' 轮']);
   return `<details class="ask-turn-usage">
     <summary>${esc(head.join(' · '))}</summary>
     <div class="ask-turn-usage-body">${rows.map(([k, v]) => `<span><i>${esc(k)}</i><b>${esc(String(v))}</b></span>`).join('')}</div>
