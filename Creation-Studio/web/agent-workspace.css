@@ -159,11 +159,14 @@
 /* 输入框下方统计条：两行读数，不抢 composer 的位置 */
 /* 状态条：活动 · 用量 · 上下文环，三段用竖线分开。 */
 .ask-stat-dock {
-  display:flex; flex-wrap:wrap; align-items:center; gap:4px 10px;
-  margin:4px 4px 0; padding:5px 10px;
+  display:flex; flex-wrap:wrap; align-items:center; justify-content:center; gap:4px 10px;
+  /* 与输入框同宽居中：输入框是 max-width:860px + margin auto，
+     状态条按内容收窄后居中，色块不会拉成一条空荡荡的长条。 */
+  width:fit-content; max-width:860px;
+  margin:4px auto 0; padding:5px 12px;
   font-size:11px; line-height:1.5;
   color:var(--wmd-text-2,#5b646e);
-  background:color-mix(in srgb, var(--wmd-bg-2,#eef2f1) 72%, transparent);
+  background:color-mix(in srgb, var(--wmd-bg-2,#eef2f1) 90%, transparent);
   border-radius:8px;
   font-variant-numeric:tabular-nums;
 }
