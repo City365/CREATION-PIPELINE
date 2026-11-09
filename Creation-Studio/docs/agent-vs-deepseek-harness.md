@@ -530,13 +530,13 @@ If the user names a skill, or the task clearly matches a skill's description, ca
 | P2 | **跨轮目标** | `dsh-goal` | `goal.py` + 3 个工具 |
 | P2 | **能力目录（plugin market 的实际形态）** | `dsh-plugin-market` | `GET /agent/catalog` 三层视图 |
 | P1 | **工具调用语义单一来源** | （DSH 工具网关） | `tool_policy.py`：两引擎共用一套缓存/循环判定 |
+| P1 | **测试不依赖本机服务** | — | `conftest` 在 urllib 层阻断真实网络；三端口全关时 329 passed |
 | P1 | **占用口径改 projectedTokens** | `dsh-context-meter` | 优先 `context.report.used` + 压缩卡片 `shadowed_chars` 当场扣减 |
 
 ### 7.2 仍缺 —— 按该不该做排序
 
 | 优先级 | 能力 | DSH 包 | 缺口 | 为什么值得做 |
 |---|---|---|---|---|
-| **P1** | 自动化测试不依赖本机服务 | — | 多处测试真连 17821 拉渠道，服务起没起决定断言 | 假通过比没有测试更危险，这轮已经踩到两次 |
 | **P1** | 运行态展示 | `dsh-client-ui-chat` | 仍是固定文案 + 秒表 | 「现在跑到第几步、卡在哪个工具」用户完全看不到 |
 | **P1** | Trajectory 时间概览 + 调用检查器 | `dsh-client-ui-trajectory` | 只有简化列表 | 排查用，和 dock 的统计是两回事 |
 | **P1** | 摘要 8 段 schema | `dsh-compaction-basic` | 自由中文，合并无锚点 | 多次压缩后摘要会漂，结构化才能合并 |
@@ -611,17 +611,17 @@ If the user names a skill, or the task clearly matches a skill's description, ca
 | 10 | dock 撤掉「轮次/步骤」 | 内部模型不该漏到界面 | `d110262` |
 | 11 | 文档改成台账 | 差距表停在改前一天，同一份文档自相矛盾 | `fb2cc88` |
 | 12 | **harness 变默认引擎** | 结构性欠账里最大的一笔，且实测暴露两个被 legacy 藏住的真 bug | `5b94011` |
-| 13 | 占用口径改 projectedTokens | 压缩后环不变小 = 用户认为压缩没生效 | 本轮 |
-| 14 | 核实图片 offload | 结论是**不适用**，从 P0 撤下 | 本轮 |
+| 13 | 占用口径改 projectedTokens | 压缩后环不变小 = 用户认为压缩没生效 | `f0f61fa` |
+| 14 | 核实图片 offload | 结论是**不适用**，从 P0 撤下 | `f0f61fa` |
+| 15 | 测试不依赖本机服务 | 假通过；三端口全关跑 329 passed | `03c50ec` |
 
 ### 9.3 下一轮该做什么
 
 §9.3 上一版排的四件事：第 1、3 已做，第 2 核实后不适用，第 4 做了一半。剩下的按 §7.2 顺序：
 
-1. **测试去掉对本机服务的依赖**（P1）——已修 `test_models` / `test_system_models` / `test_runtime_defaults`，还有别的文件在打真实端口没清完。
-2. **运行态展示**（P1）——仍是固定文案 + 秒表，「现在跑到第几步、卡在哪个工具」看不到。这是 P1 里最影响体感的一条。
-3. **Trajectory 时间概览 + 调用检查器**（P1）——排查用，和 dock 的统计是两回事。
-4. **摘要 8 段 schema**（P1）——现在自由中文，多次压缩后摘要会漂，结构化才能合并。
+1. **运行态展示**（P1）——仍是固定文案 + 秒表，「现在跑到第几步、卡在哪个工具」看不到。这是 P1 里最影响体感的一条。
+2. **Trajectory 时间概览 + 调用检查器**（P1）——排查用，和 dock 的统计是两回事。
+3. **摘要 8 段 schema**（P1）——现在自由中文，多次压缩后摘要会漂，结构化才能合并。
 
 再往后是 P2：压缩事务、溢出兜底强制压缩重试、技能多选叠加、`/name` 键入技能、`Instructions` 卡片、缓存命中分桶。
 
