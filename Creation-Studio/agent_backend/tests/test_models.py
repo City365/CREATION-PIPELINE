@@ -24,19 +24,24 @@ def test_provider_config_preserves_protocol(monkeypatch):
 
 def test_request_selection_and_effort_mapping(monkeypatch):
  from app.models import patched_anthropic
- cfg={'protocol':'anthropic','model':'deepseek-v4-pro','base_url':'https://api.deepseek.com/anthropic','api_key':'test-key'}
+ cfg={'protocol':'anthropic','model':'deepseek-flash','base_url':'https://api.deepseek.com/anthropic','api_key':'test-key'}
  monkeypatch.setattr(factory,'load_settings',lambda:{'model':{'providers':{'deepseek':cfg}}})
  monkeypatch.setattr(factory,'get_active_model_name',lambda:'deepseek')
  monkeypatch.setattr(factory,'get_provider_config',lambda name:cfg)
  captured={}
  monkeypatch.setattr(patched_anthropic,'PatchedChatAnthropic',lambda **kw:captured.update(kw))
+ # 渠道来源要打桩：真跑会去 17821 拉 /api/state，服务没启动时这个测试就假失败。
+ monkeypatch.setattr(factory,'_wmd_channels',lambda:[{
+  'id':'channel:ch1:test-flash','provider':'channel:ch1','channel_id':'ch1','model':'test-flash',
+  'label':'测试渠道 · test-flash','channel_name':'测试渠道','base_url':'https://example.invalid/v1',
+  'api_key':'','max_tokens':24000,'temperature':0.7,'protocol':'chat','context_tokens':128000}])
  choices=factory.model_options()
  assert len(choices['models'])==2 and 'api_key' not in str(choices)
  factory.create_chat_model('deepseek:deepseek-flash','max')
  assert captured['model']=='deepseek-flash'
  assert captured['thinking']=={'type':'adaptive'}
  assert captured['model_kwargs']['output_config']['effort']=='max'
- factory.create_chat_model('deepseek:deepseek-v4-pro','none')
+ factory.create_chat_model('deepseek:deepseek-flash','none')
  assert captured['thinking']=={'type':'disabled'}
  import pytest
  with pytest.raises(ValueError):factory.resolve_model('unknown:unconfigured','low')

@@ -560,3 +560,110 @@ If the user names a skill, or the task clearly matches a skill's description, ca
 - `agent_backend`：234 passed / 4 failed。4 个失败里 1 个按新行为更新了断言（`test_chat_policy`），3 个（`test_models` / `test_system_models` ×2）是渠道环境隔离问题，与本次改动无关（`model_options()` 读到了真实 `agent_settings.json` 的 5 个渠道）。
 - 前端 `node --test`：108 passed。
 
+---
+
+## 12. 分层改造：框架层只出契约，应用层出配置（P0-A 已落地）
+
+### 12.1 之前错在哪
+
+先说清楚判断错在哪：原来把「创作台不需要这些」当成不学 harness 的理由——这是**用应用层的短期需求去否决框架层的契约**。harness 的意义是反的：框架层只提供通用契约，应用层（创作台、管理器、任何新应用）用 skill + 配置去实现，换应用只换配置和技能。
+
+而且实测出来的耦合度比预想的更深：
+
+| 指标 | 改前 |
+|---|---|
+| `chat_policy.system_prompt()` 单串长度 | **3405 字**，一个 f-string 拼到底 |
+| 其中应用层领域词 | GenUI 2 · AsyncImage 4 · target_path 3 · ask_choice 3 · 小说 4 · 分镜 5 · 剧本 5 · 素材 9 · 短剧 1 · 资产 7 = **43 处** |
+| 代码里的「应用」概念 | `preset` / `profile` / `application` / `app_id` / `domain` 全 **0** 命中 |
+| 加第 27 个能力要改几处 | receipt 字段 + 前端解析 + 测试，三处起步 |
+
+结论：框架层和应用层糊在同一个字符串里，所以「换应用」等于改代码，「加能力」等于改 schema。
+
+### 12.2 契约
+
+```
+框架层（不随应用变）              应用层（换应用只换这层）
+─────────────────────────────   ─────────────────────────────
+session / run / turn / step        product        产品名
+event / projection                 forbidden_pipelines  不该被当流水线的领域词
+tool / skill / command registry    policies[]     可整体开关的政策段
+模型路由 · 预算 · 权限 · 沙箱        skill_topics   技能名 → 指导正文 topic
+执行中追加 · 恢复标记 · 附件元数据    skill_sources  技能从哪加载
+```
+
+`Pack` 只是个 dataclass（`agent_backend/app/app_packs/base.py`），框架代码只认这七个字段，不认识任何领域词。
+
+### 12.3 落地物
+
+| 文件 | 作用 |
+|---|---|
+| `app/app_packs/base.py` | `Pack` / `Policy` 契约 + `envelope()` 诊断视图 |
+| `app/app_packs/framework.py` | 框架层文案：身份基线（`{product}` / `{forbidden}` 两个占位符）+ 执行中追加 |
+| `app/app_packs/creation_studio.py` | 创作台包：3 段政策原文（GenUI 1081 字 / 出图路径 423 字 / ask_choice 1075 字）+ skill_topics |
+| `app/app_packs/generic.py` | 通用助手包：0 段政策、0 个技能 topic |
+| `app/app_packs/__init__.py` | 注册表 + `WMD_APP_PACK` 选择器 |
+| `app/chat_policy.py` | 从 126 行降到只做**顺序与条件分支**，领域词 43 → 0 |
+| `GET /agent/app-pack` | 当前包 id / 政策段字数 / 可用包 / 提示词总字数 / 切换说明 |
+
+创作台的 3 段政策**不是手抄的**：由 `_tmp/split_policy.py` 从原 `identity` 串按段首标记切出来再用 `repr()` 落盘，脚本自带 `assert rebuilt == identity`，切分有损就中止。
+
+### 12.4 实测
+
+```
+包 id             名称       提示词字数  政策段  残留领域词
+creation-studio   创作台          3401      3   GenUI、AsyncImage、target_path、ask_choice、素材、
+                                                分镜、剧本、小说、出图、集数、三视图、短剧
+generic           通用助手         818      0   （无）
+```
+
+- 换应用：`WMD_APP_PACK=generic` → 同一个后端的提示词从 3401 字降到 818 字，剩的 818 字全是框架层（身份基线 + 执行中追加 + 技能分支 + 附件元数据），一处领域词都不带。
+- 关能力：把 `image.paths` 的 `enabled` 置 false → 提示词 3401 → 2978 字，差 **423 字**，正好等于该政策原文长度，其余一字不动。
+- 环境变量留空 / 未设置 → `creation-studio`，产品行为不变。
+
+### 12.5 验收口径
+
+**逐字节相同**，不是「跑起来看着对」。`_tmp/verify_prompt.py` 从 `git show 07b3758:.../chat_policy.py` 取出拆层前的实现，与拆层后并排跑五种参数组合：
+
+```
+OK   bare                    3401 chars
+OK   topic                   3557 chars
+OK   catalog+attachment      3982 chars
+OK   checkpoint+full-perm    4672 chars
+OK   workspace-perm          3925 chars
+result: PASS
+```
+
+组合覆盖：空参数、选技能、技能目录 + 附件、恢复标记 + 完全访问权限、工作区权限（多根目录）。目录用例里还塞了空 description、无 topic、无名条目、超 200 字简介四种边界。
+
+### 12.6 回滚
+
+`agent_backend/app/app_packs/` 是纯新增目录，`chat_policy.system_prompt()` 签名一字未改（末尾多一个可选 `pack=None`）。要退回旧行为直接把 `WMD_APP_PACK` 设成 `creation-studio` 或留空；要退回旧代码就 checkout 上一个提交。
+
+### 12.7 新增测试
+
+`tests/test_app_packs.py`（8 条）把分层的硬约束钉住：
+
+- `framework.py` 与 `chat_policy.py` 里不允许出现 `GenUI / AsyncImage / target_path / ask_choice / 出图 / 分镜 / 集数 / 剧本 / 小说`（这两个文件是框架层，出现就是分层失败）
+- 创作台包必须含全部领域词，通用包必须一个都不含
+- 关掉一段政策，提示词缩减量精确等于该段字数，且 `full.replace(text, '') == cut`
+- 未知包名抛 `KeyError`，空值回落到 `creation-studio`
+- `build(pack)` 是纯函数：环境变量在调用之间变化不影响结果
+
+顺带修掉两条**本来就坏**的测试（不是这次改坏的）：
+
+- `test_skills.py` 引用被搬走的 `skills.SKILL_TOPICS`，改为 `skills.skill_topics()`。
+- `test_models.py::test_request_selection_and_effort_mapping` 依赖真实运行中的创作台服务（`_wmd_channels()` 打 HTTP 到 17821），服务没起就假失败；同时它还在用一个「provider 会凭空多列 deepseek-flash」的旧契约。改成打桩渠道 + 用配置里的真实模型名。
+
+### 12.8 后续阶段
+
+| 阶段 | 内容 | 验收 |
+|---|---|---|
+| **P0-B** | 事件流收口：receipt 的 26 个平铺字段全部改成从事件 fold 出来，receipt 退化成投影结果 | 同一轮 run，fold 出的 receipt 与现在逐字段相等 |
+| **P0-C** | turn / step 命名：`cycle_trace.cycle` 正名为 step，一次用户提交正名为 turn | 前端统计条显示不变，数据来源换名 |
+| **P1-A** | MCP client：`mcp_servers` 进 `Pack`，工具动态注册 | 接一个本地 MCP server，工具结果落进事件流 |
+| **P1-B** | 输出 spill：大工具输出落盘 + 回读 | >100KB 输出不再被截断丢弃 |
+| **P1-C** | subagent：子 run 作为独立事件子流 | 一个 3 集任务拆成 3 个子 run 并行 |
+| **P2** | workflow / goal / plugin market | 等 P0/P1 长稳 |
+
+为什么 P0-A 先做、P0-B 后做：P0-A 不碰运行时（纯提示词装配），能用「逐字节相同」验收；P0-B 要动 receipt 和前端，风险高一档，而且它需要应用包先声明「这个应用关心哪些投影字段」——那个声明现在才刚有地方放。
+

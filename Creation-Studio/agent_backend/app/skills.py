@@ -2,10 +2,10 @@
 
 前端「右侧组件里的技能」和「插件管理」都读 /agent/skills，避免两边各维护一套。
 """
-from app.chat_policy import SKILL_TOPICS
+from app.chat_policy import skill_topics
 from app.skill_library import LIMIT as SKILL_CONTENT_LIMIT
 
-# 内置技能：名称必须与 SKILL_TOPICS 的键一致，决定后端注入哪份指导文档
+# 内置技能的 name 必须能在当前应用包的 skill_topics 里找到，决定后端注入哪份指导文档
 BUILTIN_SKILLS = [
     {
         'id': 'novel',
@@ -48,7 +48,7 @@ def builtin_skills():
         out.append({
             **item,
             'source': 'builtin',
-            'topic': SKILL_TOPICS.get(item['name'], item['id']),
+            'topic': skill_topics().get(item['name'], item['id']),
             'enabled': True,
             'runtime_status': 'available',
             'readonly': True,

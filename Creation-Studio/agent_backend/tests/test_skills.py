@@ -20,7 +20,7 @@ def test_builtin_skills_cover_all_topics():
     assert ids == ['novel', 'script', 'storyboard', 'prompt', 'review']
     for item in skills.builtin_skills():
         assert item['source'] == 'builtin' and item['readonly'] is True
-        assert item['name'] in skills.SKILL_TOPICS, '内置技能名称必须能映射到指导文档 topic'
+        assert item['name'] in skills.skill_topics(), '内置技能名称必须能映射到指导文档 topic'
 
 
 def test_skills_endpoint_merges_builtin_and_custom(client):

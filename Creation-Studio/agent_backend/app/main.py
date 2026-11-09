@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from langchain.agents import create_agent
 from app.models.factory import create_chat_model, model_options, resolve_model, supports_tools, probe_tools_background
 from app.chat_policy import selected_topic, system_prompt
+from app.app_packs import current as current_app_pack
 from app.configs.settings import get_active_model_name, get_provider_config
 from app import store
 from app.harness import runtime, run_store, recovery, registry, identity
@@ -694,6 +695,20 @@ COMMANDS=[
 @app.get('/agent/commands')
 def commands_catalog(project=Depends(project_id)):
     return {'items':[dict(item) for item in COMMANDS]}
+
+@app.get('/agent/app-pack')
+def app_pack_info(project=Depends(project_id)):
+    """当前应用包：框架层与应用层的分界在哪、政策段有哪些、怎么切。
+
+    换应用的唯一开关是 WMD_APP_PACK；这个接口让人不用读代码就知道现在跑的是哪个。
+    """
+    from app.app_packs import names
+    pack=current_app_pack()
+    data=pack.envelope()
+    data['available']=names()
+    data['switch_note']='设置环境变量 WMD_APP_PACK 选择应用包后重启 agent 服务；留空即 creation-studio。'
+    data['prompt_chars']=len(system_prompt(pack=pack))
+    return data
 
 @app.post('/agent/sessions/{sid}/compact')
 async def compact_session(sid: str, body: CompactRequest, project=Depends(project_id)):
