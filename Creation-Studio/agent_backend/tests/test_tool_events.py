@@ -22,6 +22,14 @@ def headers(project='p1'):
     return {'X-Project-Id': project}
 
 
+
+def terminal(events):
+    """终止事件：legacy 发 done，harness 发 run_finished。两者等价。"""
+    for event in reversed(events):
+        if event.get('type') in ('done', 'run_finished'):
+            return event
+    raise AssertionError('没有终止事件：' + str([e.get('type') for e in events]))
+
 def test_tool_detail_prefers_the_meaningful_argument():
     assert main.tool_detail({'command': 'npm test'}) == 'npm test'
     assert main.tool_detail({'path': 'D:/work/分集.md'}) == 'D:/work/分集.md'
@@ -71,8 +79,8 @@ def test_stream_reports_tool_activity_while_running(client, monkeypatch):
         ('run_command', True, '全部通过'), ('write_file', False, '磁盘只读')]
     assert all(isinstance(event['time'], int) and event['time'] > 0 for event in calls + results)
     # 事件排在最终回复之前，前端据此实时改标题
-    assert [e['type'] for e in events].index('tool_call') < [e['type'] for e in events].index('done')
-    assert events[-1]['type'] == 'done'
+    assert [e['type'] for e in events].index('tool_call') < len(events) - 1
+    assert events[-1]['type'] in ('done', 'run_finished')
 
 
 def test_tool_events_do_not_leak_into_answer_text(client, monkeypatch):

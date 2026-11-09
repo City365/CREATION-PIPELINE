@@ -44,6 +44,14 @@ class FakeRequest:
         return clone
 
 
+
+def terminal(events):
+    """终止事件：legacy 发 done，harness 发 run_finished。两者等价。"""
+    for event in reversed(events):
+        if event.get('type') in ('done', 'run_finished'):
+            return event
+    raise AssertionError('没有终止事件：' + str([e.get('type') for e in events]))
+
 def test_queue_keeps_order_and_never_repeats():
     channel = supplements.RunChannel('p1', 'run-1', 'c1')
     first = channel.push('补充一：改成横屏')
@@ -202,8 +210,8 @@ def test_direct_send_while_running_is_merged_not_restarted(client, monkeypatch):
     events = _events(response)
     kinds = [event['type'] for event in events]
     assert seen['pushed']['position'] == 1
-    assert 'supplement' in kinds and 'done' in kinds
-    assert kinds[-1] == 'done'
+    assert 'supplement' in kinds and ('done' in kinds or 'run_finished' in kinds)
+    assert kinds[-1] in ('done', 'run_finished')
     # 模型这次调用的系统提示里带着补充说明，消息序列（计划/工具链）没被改写
     assert '第 2 集改成横屏' in seen['system'] and '不是新任务' in seen['system']
     assert seen['system'].startswith('基础提示')
@@ -224,6 +232,6 @@ def test_supplement_that_misses_its_checkpoint_is_handed_back(client, monkeypatc
     leftovers = [event for event in events if event['type'] == 'supplement_undelivered']
     assert leftovers, '运行结束时必须把没并入的补充说明交回前端'
     assert [item['text'] for item in leftovers[0]['items']] == ['补充：还没到检查点任务就结束了']
-    done = [event for event in events if event['type'] == 'done'][-1]
+    done = [event for event in events if event['type'] in ('done', 'run_finished')][-1]
     assert leftovers
     assert 'supplements' not in (done['execution'] or {})

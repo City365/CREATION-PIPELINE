@@ -5841,7 +5841,7 @@ async function askAttachRun(chatId) {
     if (page) {
       for (const ev of page.items || []) {
         if (typeof ev.sequence === 'number') cursor = Math.max(cursor, ev.sequence);
-        if (ev.type === 'done') sawDone = true;
+        if (ev.type === 'done' || ev.type === 'run_finished') sawDone = true;
         askApplyEvent(run.msg, ev, chatId);
       }
       if (a.activeId === chatId) askRevealKick();

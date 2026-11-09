@@ -7,6 +7,14 @@ from app import main, store
 from fastapi.testclient import TestClient
 
 
+
+def terminal(events):
+    """终止事件：legacy 发 done，harness 发 run_finished。两者等价。"""
+    for event in reversed(events):
+        if event.get('type') in ('done', 'run_finished'):
+            return event
+    raise AssertionError('没有终止事件：' + str([e.get('type') for e in events]))
+
 def test_no_skill_has_no_workflow_and_completes_without_plan():
     assert selected_topic() == ''
     prompt = system_prompt()
@@ -46,8 +54,8 @@ def test_greeting_stream_uses_general_identity_and_excludes_workflow_tools(tmp_p
     assert response.status_code == 200
     events = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith('data: ')]
     assert any(event['type'] == 'delta' and event['text'] == '你好！' for event in events)
-    assert events[-1]['type'] == 'done'
-    receipt = events[-1]['execution']
+    assert events[-1]['type'] in ('done', 'run_finished')
+    receipt = terminal(events)['execution']
     assert receipt['skill'] == '' and receipt['plan_required'] is False and receipt['plan'] is None
     names = {tool.name for tool in captured['tools']}
     # 未选技能时不建计划、不记录步骤；但 read_analysis_guidance 保留——模型可以按技能目录自己去读正文。

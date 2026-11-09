@@ -10,15 +10,27 @@ class RunStopped(RuntimeError):
     def __init__(self,reason):super().__init__(reason);self.reason=reason
 
 def enabled(project):
-    """Harness 引擎是显式开启的：默认不启用，只有 allowlist 里点名的项目才走它。
+    """harness 现在是产品的默认引擎，legacy 退成兼容路径。
 
-    之前的默认值 `wenyun-m-desktop` 是别的产品的项目名，本产品的项目 id 永远匹配不上，
-    等于这段更好的实现从未被执行（见 docs/agent-backend-review.md）。
+    之前是「只有 allowlist 里点名的项目才走 harness」，而 allowlist 默认空 ——
+    结果这段更强的实现从未被执行过。根子在于 allowlist 这个机制本身不对：
+    产品里的项目 id 是用户新建项目时才生成的，不可能预先写进启动脚本。
+
+    现在的规则：
+    - `HARNESS_RUNTIME_ENABLED=0` → 整体退回 legacy（应急开关）
+    - `HARNESS_PROJECT_DENYLIST=a,b` → 点名排除个别项目
+    - `HARNESS_PROJECT_ALLOWLIST=a,b` → 显式列了就只走列表（保留旧行为，测试用）
+    - 都不设 → **所有项目走 harness**
     """
     if os.getenv('HARNESS_RUNTIME_ENABLED', 'true').lower() not in ('1', 'true'):
         return False
+    denied = [item.strip() for item in os.getenv('HARNESS_PROJECT_DENYLIST', '').split(',') if item.strip()]
+    if project in denied:
+        return False
     allowed = [item.strip() for item in os.getenv('HARNESS_PROJECT_ALLOWLIST', '').split(',') if item.strip()]
-    return project in allowed
+    if allowed:
+        return project in allowed
+    return True
 
 def encode(event):return 'data: '+json.dumps(event,ensure_ascii=False)+'\n\n'
 

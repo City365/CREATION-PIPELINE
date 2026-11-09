@@ -40,9 +40,17 @@ def _turn(client, text='你好'):
     response = client.post('/agent/chat', headers=HEADERS, json={'session_id': 'c1', 'text': text})
     assert response.status_code == 200
     events = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith('data: ')]
-    assert events[-1]['type'] == 'done'
-    return events[-1]['execution']
+    assert events[-1]['type'] in ('done', 'run_finished')
+    return terminal(events)['execution']
 
+
+
+def terminal(events):
+    """终止事件：legacy 发 done，harness 发 run_finished。两者等价。"""
+    for event in reversed(events):
+        if event.get('type') in ('done', 'run_finished'):
+            return event
+    raise AssertionError('没有终止事件：' + str([e.get('type') for e in events]))
 
 def test_turn_index_counts_user_submissions(client, monkeypatch):
     _stub(monkeypatch)

@@ -264,7 +264,9 @@ def _args_model(props, required, name):
         else:
             fields[key] = (annotation if optional else str, None)
     if not fields:
-        return None
+        # 不能返回 None：harness 的 ToolGateway 要读 t.args_schema.model_json_schema()，
+        # 无参工具按 MCP 规范就是 properties 为空。给一个空模型，而不是留 None。
+        return create_model(name + 'Args', __config__=ConfigDict(extra='allow'))
     return create_model(name + 'Args', __config__=ConfigDict(extra='allow'), **fields)
 
 

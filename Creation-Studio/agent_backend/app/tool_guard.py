@@ -21,13 +21,11 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import ToolMessage
 
 from app import spill
+from app.tool_policy import CACHEABLE, LOOP_LIMIT, POLL, WRITE_RISKS, is_loop, loop_reason
 
 MAX_OUTPUT = 24000
-# 同一工具 + 同一参数连续多少次算死循环
-MAX_REPEAT = 5
-
-POLL = {'check_video_job', 'wait_video_job'}
-CACHEABLE = {'generate_image', 'submit_video_job', 'extract_frames', 'describe_image'}
+# 分类与循环判定统一放在 tool_policy：harness 的 ToolGateway 用同一份，避免两条路行为不一致
+MAX_REPEAT = LOOP_LIMIT
 WRITE_LIKE = CACHEABLE | {'write_file', 'make_dir', 'move_file', 'copy_file', 'delete_file', 'run_command'}
 
 
@@ -62,13 +60,9 @@ class ToolGuard(AgentMiddleware):
 
     def _loop_reason(self, name, key):
         """只有「这个工具用这套参数」连续重复到上限，才算循环。"""
-        if len(self.recent) < self.max_repeat:
+        if not is_loop(self.recent, name, key, self.max_repeat):
             return ''
-        tail = self.recent[-self.max_repeat:]
-        if all(item == (name, key) for item in tail):
-            return ('同一工具「' + name + '」用完全相同的参数连续调用了 '
-                    + str(self.max_repeat) + ' 次，已判定为循环并停止执行')
-        return ''
+        return loop_reason(name, self.max_repeat)
 
     async def awrap_tool_call(self, request, handler):
         call = request.tool_call or {}

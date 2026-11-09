@@ -14,6 +14,14 @@ def client(tmp_path,monkeypatch):
 def headers(project='p1'):return {'X-Project-Id':project}
 def create(client):
  return client.put('/agent/sessions/c1',headers=headers(),json={'id':'c1','title':'测试','updated':1,'messages':[]})
+
+def terminal(events):
+    """终止事件：legacy 发 done，harness 发 run_finished。两者等价。"""
+    for event in reversed(events):
+        if event.get('type') in ('done', 'run_finished'):
+            return event
+    raise AssertionError('没有终止事件：' + str([e.get('type') for e in events]))
+
 def test_project_isolation(client):
  assert create(client).status_code==200
  assert len(client.get('/agent/sessions',headers=headers()).json())==1
@@ -34,9 +42,10 @@ def test_stream_and_history(client,monkeypatch):
   r=client.post('/agent/chat',headers=headers(),json={'session_id':'c1','text':text})
   assert r.status_code==200
   events=[json.loads(line[6:]) for line in r.text.splitlines() if line.startswith('data: ')]
-  assert [e['type'] for e in events if e['type'] not in ('trace','trajectory_item','trajectory_delta')]==['start','delta','delta','done']
-  assert events[-1]['execution']['status']=='completed'
-  receipt=client.get('/agent/executions/'+events[-1]['execution']['id'],headers=headers()).json()
+  kinds=[e['type'] for e in events if e['type'] not in ('trace','trajectory_item','trajectory_delta')]
+  assert kinds[:3]==['start','delta','delta'] and kinds[-1] in ('done','run_finished')
+  assert terminal(events)['execution']['status']=='completed'
+  receipt=client.get('/agent/executions/'+terminal(events)['execution']['id'],headers=headers()).json()
   assert receipt['tool_count']==0
   assert receipt['history_count']==len(inputs[-1]['messages'])-1
   assert client.get('/agent/executions/'+receipt['id'],headers=headers('p2')).status_code==404

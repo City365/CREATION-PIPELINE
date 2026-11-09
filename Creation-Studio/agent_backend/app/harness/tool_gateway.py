@@ -4,11 +4,14 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import ToolMessage
 from . import run_store, recovery, registry, identity
 from .runtime import RunStopped
+from app.tool_policy import KEEP_HISTORY, is_cacheable, is_loop, loop_reason
 
 ALLOWED=set(registry.CAPABILITIES)
 class ToolGateway(AgentMiddleware):
     def __init__(self,ctx,tools):
         self.ctx=ctx;self.registry={t.name:t for t in tools};self.serial=asyncio.Lock();self.write_cache={};self.read_timeout=20;self.write_timeout=45
+        # 循环检测：只有 write 类参与，和 legacy 的 ToolGuard 同一套语义
+        self.recent=[];self.loop_blocks=[]
         if not all(registry.is_capable(name) for name in self.registry):raise ValueError('Unregistered runtime capability')
         manifest=[{'name':t.name,'schema':t.args_schema.model_json_schema()} for t in tools]
         self.manifest_hash=hashlib.sha256(json.dumps(manifest,ensure_ascii=False,sort_keys=True).encode()).hexdigest()
@@ -34,9 +37,22 @@ class ToolGateway(AgentMiddleware):
             risk=registry.risk_of(name)
             write=risk in ('workspace_write','media_write','fs_write','shell')
             fingerprint=hashlib.sha256(json.dumps([name,args],sort_keys=True).encode()).hexdigest()
-            if write and fingerprint in self.write_cache:
+            # 只有 cacheable 类才复用旧结果。run_command / write_file 这类每次都真执行——
+            # 改完脚本重跑同一条命令必须真的跑，不能拿上一次的输出冒充。
+            cacheable=is_cacheable(name)
+            if cacheable and fingerprint in self.write_cache:
                 run_store.append_event(ctx.project,ctx.run_id,{'type':'tool_reused','tool_call_id':cid,'tool_name':name})
                 return self.write_cache[fingerprint].model_copy(update={'tool_call_id':cid})
+            if write and not cacheable:
+                self.recent.append((name,fingerprint))
+                if len(self.recent)>KEEP_HISTORY*5:
+                    self.recent=self.recent[-KEEP_HISTORY*5:]
+                if is_loop(self.recent,name,fingerprint):
+                    reason=loop_reason(name)
+                    self.loop_blocks.append({'tool':name,'reason':reason})
+                    ctx.receipt['loop_guard']={'blocks':len(self.loop_blocks),'blocked':self.loop_blocks[:5]}
+                    run_store.append_event(ctx.project,ctx.run_id,{'type':'tool_blocked','tool_call_id':cid,'tool_name':name,'reason':'loop'})
+                    return ToolMessage(content=json.dumps({'ok':False,'error':reason},ensure_ascii=False),tool_call_id=cid,name=name,status='error')
             if write and getattr(ctx,'resume_checkpoint',None):
                 ctx.reason='resume_write_blocked';raise RunStopped(ctx.reason)
             call_key=cid+':'+str(ctx.budget.tools)
@@ -59,7 +75,7 @@ class ToolGateway(AgentMiddleware):
                     ctx.budget.tool_failures+=1
                     ctx.receipt.setdefault('tool_errors',{})[name]='tool_failed'
                 else:ctx.receipt.setdefault('tool_errors',{}).pop(name,None)
-                if not failed and write:self.write_cache[fingerprint]=result
+                if not failed and cacheable:self.write_cache[fingerprint]=result
                 recovery.tool_state(ctx,call_key,name,write,'unknown' if write and failed else 'failed' if failed else 'succeeded')
                 if not failed:recovery.save(ctx)
                 run_store.append_event(ctx.project,ctx.run_id,{'type':'tool_finished','tool_call_id':cid,'tool_name':name,'ok':not failed})
