@@ -9994,7 +9994,15 @@ function bindAsk(root) {
         if (!target) return;
         const key = btn.dataset.section === 'plan' ? 'planSectionOpen' : 'traceSectionOpen';
         target[key] = !target[key];
-        return askRenderMessages();
+        askRenderMessages();
+        // 展开轨迹后停在最新一条：列表限高 380px，从第 1 条开始看还要自己滚到底。
+        if (target[key]) {
+          const runEl = Array.from(document.querySelectorAll('[data-trace-run]'))
+            .find((el) => el.dataset.traceRun === run);
+          const rows = runEl && runEl.querySelector('.ask-trace-rows');
+          if (rows) rows.scrollTop = rows.scrollHeight;
+        }
+        return;
       }
       if (act === 'ask-trace-toggle') {
         const run = btn.dataset.run || '';

@@ -501,7 +501,7 @@ If the user names a skill, or the task clearly matches a skill's description, ca
   - `ask_rounds()` 现在不再采信请求里的 `max_rounds`，只用 `WMD_RECURSION_LIMIT`（默认 120）做异常兜底；`ChatRequest.max_rounds` 字段保留只为兼容旧客户端。
 - ✅ **`@` 和 `/` 两个按钮也删了**。它们是键盘字符，用户打字就能触发；做成按钮等于用鼠标模拟打字，还挤占了权限/联网/模型这些真控件的横向空间。删后实测键盘输入 `@` 仍正常弹出「引用技能或文件 19 项」。
 - ❌ **运行态展示没动**：仍是固定文案 + 秒表，没有「第几步 / 现在跑哪个工具」，shimmer、完成时收起、间距规范全未做。
-- ◐ **Trajectory 时间概览、TTFT 与解码条、调用检查器、虚拟化**：仍未做；但**轨迹面板已限高**（`max-height: 420px` 内滚，`overscroll-behavior: contain`），一次几十条不再把消息流拉长到要滑很久。DSH 的虚拟化是为了长会话性能，我们先把「能用」补上。
+- ◐ **Trajectory 时间概览、TTFT 与解码条、调用检查器、虚拟化**：仍未做；但**轨迹列表已限高**——`.ask-trace-fold[open] .ask-trace-rows` 锁在 380px 内滚，展开时自动滚到最新一条。DSH 的虚拟化是为了长会话性能，我们先把「不把页面撑长」补上。
 
 ---
 
@@ -758,6 +758,8 @@ stdio + 换行分隔 JSON-RPC 2.0（initialize / initialized / tools/list / tool
 | `readline()` 阻塞 | MCP 超时设 0.5 秒，实际跑了 32 秒 | 独立线程 + `queue.Queue` |
 | 裸 `INSERT` | 子 run 撞 `UNIQUE constraint failed` | 改 `ON CONFLICT DO UPDATE` |
 | 前端 2 条顽固失败 | `asset-folders` 仍在渲染、缺 `id="studio-generate-hint"` | **未修**，属之前没收尾的 UI 重构 |
+| **改错了容器** | 给 `.ask-traj` 加限高，而它根本没有调用点；真正渲染的是 `askTraceHtml` 里的 `.ask-trace-rows` | 先确认「哪段 DOM 真的渲染出来」再改样式。`askTrajHtml` 是死代码，`grep` 调用点一次就能看出来 |
+| 清理临时目录撞 EPERM | 三个测试 `kill` 后立刻 `rmSync`，进程未退文件仍被持有 | 等 `exit` 事件 + 重试，删不掉就放弃 |
 
 ### 11.12 测试盘子与真机验证
 
