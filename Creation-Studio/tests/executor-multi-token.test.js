@@ -6,6 +6,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
+const { stopAndClean } = require('./server-cleanup');
 const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
@@ -64,7 +65,7 @@ test('同一用户可生成多条令牌，单独撤销，越权撤销失败', as
       APPDATA: path.join(dir, 'appdata'),
     },
   });
-  t.after(() => { try { child.kill('SIGTERM'); } catch { /* ignore */ } fs.rmSync(dir, { recursive: true, force: true }); });
+  t.after(() => stopAndClean(child, dir));
   const base = `http://127.0.0.1:${port}`;
   assert.ok(await until(async () => (await fetch(base + '/api/health')).ok), '服务没有启动');
 
