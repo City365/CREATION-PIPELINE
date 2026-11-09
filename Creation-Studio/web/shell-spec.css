@@ -1458,19 +1458,7 @@ html[data-wallpaper="true"] .wmd-shell :is(.wmd-topbar, .wmd-rail, .wmd-subnav, 
   .task-header .page-actions { width: 100%; justify-content: flex-start; }
 }
 
-/* ---------- 14. 对话输入框：@ / / 入口按钮 + 分组弹层 ---------- */
-.ask-composer-bar .ask-at-btn,
-.ask-composer-bar .ask-slash-btn {
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1;
-  font-family: inherit;
-}
-.ask-composer-bar .ask-at-btn:hover,
-.ask-composer-bar .ask-slash-btn:hover {
-  border-color: var(--wmd-accent);
-  color: var(--wmd-accent);
-}
+/* ---------- 14. 对话输入框：分组弹层 ---------- */
 .ask-popup-group + .ask-popup-group {
   margin-top: 4px;
   padding-top: 4px;
@@ -1486,40 +1474,3 @@ html[data-wallpaper="true"] .wmd-shell :is(.wmd-topbar, .wmd-rail, .wmd-subnav, 
 .ask-mention-popup { max-height: 360px; }
 .ask-mention-popup button { min-height: 34px; }
 
-/* 轮次输入：联网按钮后面那一格 */
-.ask-composer-bar .ask-rounds {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 26px;
-  padding: 0 6px 0 9px;
-  border: 1px solid var(--wmd-border);
-  border-radius: 6px;
-  font-size: 12px;
-  line-height: 1;
-  color: var(--wmd-text-2);
-  background: transparent;
-  cursor: text;
-}
-.ask-composer-bar .ask-rounds:hover { border-color: var(--wmd-border-strong, var(--wmd-border)); }
-.ask-composer-bar .ask-rounds:focus-within { border-color: var(--wmd-accent); color: var(--wmd-text); }
-.ask-composer-bar .ask-rounds > span { opacity: .85; user-select: none; white-space: nowrap; flex: 0 0 auto; }
-.ask-composer-bar .ask-rounds input {
-  width: 34px;
-  height: 22px;
-  border: 0;
-  padding: 0 2px;
-  background: transparent !important;
-  color: inherit;
-  font: inherit;
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-  outline: none;
-  -moz-appearance: textfield;
-  appearance: textfield;
-}
-.ask-composer-bar .ask-rounds input::-webkit-outer-spin-button,
-.ask-composer-bar .ask-rounds input::-webkit-inner-spin-button {
-  -webkit-appearance: none;
-  margin: 0;
-}

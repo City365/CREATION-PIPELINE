@@ -467,7 +467,7 @@ If the user names a skill, or the task clearly matches a skill's description, ca
 
 ### 我们
 
-`max_rounds` 输入框（默认 120，10–400）→ `ChatRequest.max_rounds` → `graph.astream(..., config={'recursion_limit': ...})`。这是 **LangGraph 图递归步数**，不是「对话轮次」，但界面写着「轮次」。
+`max_rounds` 输入框（默认 120，10–400）→ `ChatRequest.max_rounds` → `graph.astream(..., config={'recursion_limit': ...})`。这是 **LangGraph 图递归步数**，不是「对话轮次」，但界面写着「轮次」。**2026-11-10 已从界面移除**，理由见下方现状。
 
 运行中气泡只有固定文案 + `0s` 秒表 + 停止按钮（`app.js:8232`），没有「第几步 / 第几次模型调用 / 现在跑哪个工具」。轨迹里有「第 N 轮输入」「第 N 轮结束」和工具行，但**要先展开轨迹**才看得到。
 
@@ -475,6 +475,8 @@ If the user names a skill, or the task clearly matches a skill's description, ca
 
 - **`turn`（轮）**= 用户一次提交；**`step`（步）**= 一次模型调用 + 一次工具批次。`step/end` 在 `finally` 里恰好追加一条，完成 / 失败 / 取消 / max-tokens 的步都落地。
 - 已知限制里**明确写着「没有内置轮次预算」**——失控轮次要从 `agent/turn-stopping` 扩展点执行取消。DSH 不把 recursion limit 摆到用户面前。
+- 换句话说 **`turn-stopping` 是一个给插件挂的扩展点，不是一个数字**。DSH 里根本没有「轮次上限」这个配置项，循环就是「调用模型 → 跑工具 → 重复」，直到模型不再要工具。
+- DSH 真正的资源控制是另外三样，全是真实资源而不是步数：`agents[].maxTokens`（逐请求输出 token 上限）、`maxParallelToolCalls`（默认 10，1 表示串行）、适配器超时。
 - 运行态：`running` 分组标题、思考预览、工具与命令行、当前重试行、底部运行状态用共享 `TextShimmer`（每行文字共用一道从左到右的高光）；完成时**一次性收起**整轮工作行，且「读者跟随底部时，收起前第一个可见行保持屏幕位置」。
 - 间距定死：流程行 4px、展开组标题与内容 8px、Assistant 回复与相邻过程行 12px、完成／耗时控件与输入 16px。
 - 进行中的记录**只画开始标记**，不虚构耗时。
@@ -488,10 +490,13 @@ If the user names a skill, or the task clearly matches a skill's description, ca
 **现状（2026-11-10）**：
 
 - ✅ **turn/step 领域模型落了**，但只在数据层：`receipt.turn = {index, run_id, started_at, ended_at, step_count, steps, stats}`，`step` 对应原来含糊的 `cycle`。事件流按 turn 聚合，子 run 靠 `parent_run_id` 挂回 turn。
-- ✅ **界面上的「轮次」撤了**。加过一版「轮次 2 · 步骤 1」，后来判定是自我证明式数字——用户自己数得出发了几条消息，模型内部调了几次也不关他事。现在 dock 只留速率、首字、模型/工具墙钟。这条是教训：**内部模型该支撑数据，不该漏到界面上**。
+- ✅ **两处「轮次」都撤了**，但它们是两个不同的东西：
+  - **dock 里的「轮次 2 · 步骤 1」**：自我证明式数字——用户自己数得出发了几条消息，模型内部调了几次也不关他事。dock 只留速率、首字、模型/工具墙钟。
+  - **输入框里的「轮次 120」**：那是 `recursion_limit`，LangGraph 的图递归步数上限。更糟的是**它从来没生效过**——真正的成本闸是 harness 的 `BudgetLedger`（chat 政策 `model_calls=8` / `tool_calls=16`），一次模型调用约 2–3 个图节点，预算闸在约 24 步就先炸。用户把 120 调到 400 只是假的掌控感。
+  - `ask_rounds()` 现在不再采信请求里的 `max_rounds`，只用 `WMD_RECURSION_LIMIT`（默认 120）做异常兜底；`ChatRequest.max_rounds` 字段保留只为兼容旧客户端。
+- ✅ **`@` 和 `/` 两个按钮也删了**。它们是键盘字符，用户打字就能触发；做成按钮等于用鼠标模拟打字，还挤占了权限/联网/模型这些真控件的横向空间。删后实测键盘输入 `@` 仍正常弹出「引用技能或文件 19 项」。
 - ❌ **运行态展示没动**：仍是固定文案 + 秒表，没有「第几步 / 现在跑哪个工具」，shimmer、完成时收起、间距规范全未做。
 - ❌ **Trajectory 时间概览、TTFT 与解码条、调用检查器、虚拟化**：全未做。
-- ❌ **`max_rounds` 还摆在用户面前**（输入框默认 120），DSH 明确不把 recursion limit 暴露给用户。
 
 ---
 
@@ -566,7 +571,7 @@ If the user names a skill, or the task clearly matches a skill's description, ca
 | 能力 | 说明 |
 |---|---|
 | 创作任务域 | 图像 / 视频任务、素材库、分镜、剪辑；DSH 是通用 agent |
-| 单输入框多参数 | 模型 + 思考强度 + 轮次 + 运行权限挤在 composer 一行 |
+| 单输入框多参数 | 模型 + 思考强度 + 运行权限挤在 composer 一行（「轮次」已移除，见 §6） |
 | `contextReport` 6 分项 | Messages / System tools / Skills / System prompt / Autocompact buffer / Free space；DSH 的 `contextBreakdown` 只有 3 项 |
 | 预算硬闸 | `budget.py` 的 `output_tokens_exceeded` / `tool_calls` 上限 + 422 不静默截断 |
 | 压缩覆盖 hash 校验 | `message_hashes` 逐条比对；DSH 用位置锚点 |
@@ -614,6 +619,8 @@ If the user names a skill, or the task clearly matches a skill's description, ca
 | 13 | 占用口径改 projectedTokens | 压缩后环不变小 = 用户认为压缩没生效 | `f0f61fa` |
 | 14 | 核实图片 offload | 结论是**不适用**，从 P0 撤下 | `f0f61fa` |
 | 15 | 测试不依赖本机服务 | 假通过；三端口全关跑 329 passed | `03c50ec` |
+| 16 | 删掉输入框的「轮次」 | 那是 recursion_limit，且被预算闸抢先，用户调它没有效果 | 本轮 |
+| 17 | 删掉 `@` `/` 入口按钮 | 键盘字符做成按钮 = 鼠标模拟打字，挤占真控件位置 | 本轮 |
 
 ### 9.3 下一轮该做什么
 

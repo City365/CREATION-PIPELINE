@@ -42,14 +42,17 @@ RECURSION_LIMIT=max(25,min(400,int(os.getenv('WMD_RECURSION_LIMIT','120'))))
 ROUNDS_MIN, ROUNDS_MAX = 10, 400
 
 
-def ask_rounds(req) -> int:
-    """本次请求的执行步数上限：请求里带的优先，否则用默认值。"""
-    raw = getattr(req, 'max_rounds', None)
-    try:
-        value = int(raw) if raw is not None and str(raw).strip() != '' else RECURSION_LIMIT
-    except (TypeError, ValueError):
-        value = RECURSION_LIMIT
-    return max(ROUNDS_MIN, min(ROUNDS_MAX, value))
+def ask_rounds(req=None) -> int:
+    """本次请求的图递归步数上限（LangGraph `recursion_limit`）。
+
+    这是**引擎安全参数，不是用户可调项**，所以界面不再暴露它，旧请求体里带的
+    max_rounds 也不采信——那个数字从来没生效过：真正的成本闸是 harness 的
+    BudgetLedger（chat 政策 model_calls=8 / tool_calls=16），一次模型调用约
+    2-3 个图节点，预算闸在 ~24 步就先炸，用户把 120 调到 400 只是假的掌控感。
+
+    这个值只用于兜住异常情况下的无限递归，由 WMD_RECURSION_LIMIT 或默认值决定。
+    """
+    return RECURSION_LIMIT
 
 # 后台运行登记：前端断开（刷新/关页）不再中止任务，事件先攒在内存里供重连读取
 LIVE_RUNS={}      # (project, session_id) -> {'run_id','started_at','task','finished'}
@@ -169,6 +172,7 @@ class ChatRequest(BaseModel):
     permission:str=Field(default='',max_length=20)
     web_search:bool=False
     # 本次请求的执行步数上限（输入框里那档「轮次」，默认 120）
+    # 已不进界面：引擎安全参数，保留字段只为兼容旧客户端，值不再被采信
     max_rounds:int|None=Field(default=None,ge=ROUNDS_MIN,le=ROUNDS_MAX)
 @app.get('/agent/health')
 def health(x_project_id: str = Header(default='wmd-local')):

@@ -5574,14 +5574,6 @@ function askState() {
       // 参考出图开关：关掉就不调用图像渠道（省钱），设置跟着浏览器记住
       refImages: (() => { try { return localStorage.getItem('wmd.askRefImages') !== '0'; } catch { return true; } })(),
       webSearch: (() => { try { return localStorage.getItem('wmd.askWebSearch') === '1'; } catch { return false; } })(),
-      // 本次请求的执行步数上限（工具调用轮次）：默认 120，输入框里可改，跟着浏览器记住
-      maxRounds: (() => {
-        try {
-          const saved = Number(localStorage.getItem('wmd.askMaxRounds'));
-          if (Number.isFinite(saved) && saved >= 10 && saved <= 400) return saved;
-        } catch { /* 忽略 */ }
-        return 120;
-      })(),
       // 本地权限档位：仅查看 / 工作区权限 / 完全权限
       permission: (() => { try { return askPermission(localStorage.getItem('wmd.askPermission') || '').id; } catch { return ASK_PERM_DEFAULT; } })(),
       permMenu: false,
@@ -7605,12 +7597,9 @@ function askComposerHtml() {
       <textarea id="ask-input" class="ask-input" rows="2" maxlength="3000" placeholder="${a.generating ? '当前回复生成中：Enter 加入队列，队首 ↑ 可补充给当前任务' : '聊聊你的想法，或输入 @ 选择技能'}">${esc(a.draft)}</textarea>
       <div class="ask-composer-bar">
         <button type="button" class="ask-icon-btn" data-act="ask-attach" title="添加附件（最多 5 个，单文件 10MB）">📎</button>
-        <button type="button" class="ask-icon-btn ask-at-btn" data-act="ask-at" title="引用技能或项目文件（快捷键 @）">@</button>
-        <button type="button" class="ask-icon-btn ask-slash-btn" data-act="ask-slash" title="快捷命令：/model /think /compact（快捷键 /）">/</button>
         <button type="button" class="ask-perm is-${esc(askPermission(a.permission).id)}" data-act="ask-permission" title="本地权限：${esc(askPermission(a.permission).label)}（点击切换）">${askPermission(a.permission).icon} ${esc(askPermission(a.permission).label)}</button>
         <button type="button" class="ask-ref-toggle ${a.refImages ? 'is-on' : ''}" data-act="ask-toggle-refs" aria-pressed="${a.refImages}" title="参考出图开关">出图</button>
         <button type="button" class="ask-ref-toggle ${a.webSearch ? 'is-on' : ''}" data-act="ask-toggle-web" role="switch" aria-checked="${!!a.webSearch}" title="${a.webSearch ? '联网已开启，下次发送可搜索和读取网页' : '联网已关闭，下次发送不提供联网工具'}">🌐 联网</button>
-        <label class="ask-rounds" title="本次任务最多执行多少步（一次工具调用约 2 步），默认 120"><span>轮次</span><input type="number" id="ask-max-rounds" min="10" max="400" step="10" value="${Number(a.maxRounds) || 120}" /></label>
         <select class="ask-select" id="ask-model" title="模型">
           ${models.map((m) => `<option value="${esc(m.id)}" ${m.id === a.modelId ? 'selected' : ''} title="上下文 ${m.context_tokens ? Math.round(m.context_tokens / 1000) + 'k' : '默认 500k'}">${esc(m.label)}${m.context_tokens ? ' · ' + Math.round(m.context_tokens / 1000) + 'k' : ''}</option>`).join('') || '<option value="">默认模型</option>'}
         </select>
@@ -9389,7 +9378,7 @@ async function askQueueReply(chat, question, insertAt, fileIds = [], resumeId = 
         model_id: a.modelId || undefined,
         reasoning_effort: a.effort || undefined,
         web_search: !!webSearch,
-        max_rounds: a.maxRounds || undefined,
+
         permission: a.permission || ASK_PERM_DEFAULT,
       }),
     });
@@ -9730,24 +9719,6 @@ function askChooseFile(path) {
 }
 
 /** 点工具栏的 @ / / 按钮：在光标处补一个触发符，直接打开对应弹层 */
-function askInsertTrigger(ch) {
-  const a = askState();
-  const input = $('#ask-input');
-  if (!input) return;
-  const start = typeof input.selectionStart === 'number' ? input.selectionStart : input.value.length;
-  const end = typeof input.selectionEnd === 'number' ? input.selectionEnd : start;
-  const before = input.value.slice(0, start);
-  const lead = ch === '@' && before && !/\s$/.test(before) ? ' ' : '';
-  input.value = before + lead + ch + input.value.slice(end);
-  const caret = start + lead.length + ch.length;
-  input.focus();
-  input.setSelectionRange(caret, caret);
-  a.draft = input.value;
-  askUpdateMention();
-  askRenderPopups();
-  const c = $('.ask-draft-count'); if (c) c.textContent = a.draft.length + '/3000';
-  const send = $('[data-act="ask-send"]'); if (send) send.disabled = !a.draft.trim();
-}
 
 function askAttachStatusText(file) {
   const status = (file && file.status) || '';
@@ -9926,26 +9897,6 @@ function bindAsk(root) {
       if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); askSend(); }
     };
     if (!a.draft) input.focus();
-  }
-
-  // 轮次输入：夹到 10~400，改完记住，下一次发送就带上
-  const rounds = $('#ask-max-rounds');
-  if (rounds) {
-    const commit = () => {
-      const raw = Number(rounds.value);
-      const value = Number.isFinite(raw) ? Math.max(10, Math.min(400, Math.round(raw))) : 120;
-      rounds.value = String(value);
-      a.maxRounds = value;
-      try { localStorage.setItem('wmd.askMaxRounds', String(value)); } catch { /* 忽略 */ }
-    };
-    rounds.onchange = commit;
-    rounds.onblur = commit;
-    rounds.onkeydown = (event) => {
-      if (event.key !== 'Enter') return;
-      event.preventDefault();
-      commit();
-      rounds.blur();
-    };
   }
 
   // 问句条里的「自行撰写」：边输边存，不整块重绘，避免丢焦点
@@ -10319,8 +10270,6 @@ function bindAsk(root) {
       if (act === 'ask-fill') { a.draft = btn.dataset.text; askRenderAll(); const el = $('#ask-input'); if (el) el.focus(); return; }
       if (act === 'ask-cmd') return askChooseCommand(btn.dataset.id);
       if (act === 'ask-mention') return btn.dataset.kind === 'file' ? askChooseFile(btn.dataset.id) : askChooseMention(btn.dataset.id || btn.dataset.skill);
-      if (act === 'ask-at') return askInsertTrigger('@');
-      if (act === 'ask-slash') return askInsertTrigger('/');
       if (act === 'ask-permission') { a.permMenu = !a.permMenu; askRenderPopups(); return; }
       if (act === 'ask-perm') {
         askPermissionSet(btn.dataset.id);
