@@ -19,6 +19,11 @@ async def test_compact_preserves_history_and_failure(tmp_path,monkeypatch):
     assert saved['messages'][:-1]==conversation['messages']
     assert saved['messages'][-1]['role']=='compacted'
     assert saved['messages'][-1]['compaction']['shadowed']==1
+    # shadowed_chars：前端靠它在压缩发生后立刻把上下文环扣小，
+    # 否则环要等下一轮 usage 刷新，用户会以为压缩没生效。
+    card=saved['messages'][-1]['compaction']
+    assert card['shadowed_chars']==len('只读查询')
+    assert card['summary_chars']==len('用户要求只读查询。')
     before=store.get_compaction('p','s')
     with pytest.raises(HTTPException) as exc:
         await main.compact_session('s',main.CompactRequest(),project='other')

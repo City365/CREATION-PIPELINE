@@ -7638,24 +7638,52 @@ function askEfforts() {
 const ASK_CTX_R = 6.6;
 const ASK_CTX_C = 2 * Math.PI * ASK_CTX_R;
 
+// 上下文占用：优先「下一轮预计」，其次「上一轮实际」。
+// 压缩让历史变短，但上一轮的 input_tokens 反映的正是被压缩前的历史——拿它算环，
+// 压缩完环纹丝不动，用户会以为压缩没生效。context.report.used 是压缩后重新估算的
+// 发送量；压缩卡片还带 shadowed_chars，遇到就在时间线上立刻扣掉，不用等下一轮。
 function askContextStats() {
   const a = askState();
   const chat = askActive();
   const model = (a.models || []).find((m) => m.id === a.modelId) || {};
   const total = Number(model.context_tokens) || 128000;
   const messages = (chat && chat.messages) || [];
+  const estimate = (m) => Math.ceil(String((m && m.text) || '').length * 0.7);
   let used = 0;
   let exact = false;
+  let found = false;
   for (let i = messages.length - 1; i >= 0; i -= 1) {
-    const usage = messages[i].execution && messages[i].execution.usage;
-    if (usage && usage.input_tokens) {
-      used = Number(usage.input_tokens) + Number(usage.output_tokens || 0);
+    const ex = messages[i].execution || null;
+    if (!ex) continue;
+    const report = ex.context && ex.context.report;
+    if (report && report.used) {
+      used = Number(report.used) || 0;
+      exact = false;
+      found = true;
+    } else if (ex.usage && ex.usage.input_tokens) {
+      used = Number(ex.usage.input_tokens) + Number(ex.usage.output_tokens || 0);
       exact = true;
-      for (let j = i + 1; j < messages.length; j += 1) used += Math.ceil(String(messages[j].text || '').length * 0.7);
-      break;
+      found = true;
+    } else {
+      continue;
     }
+    // 这一轮之后发生的事：追加的对话，以及压缩遮掉的历史
+    for (let j = i + 1; j < messages.length; j += 1) {
+      const m = messages[j];
+      if (m.role === 'compacted') {
+        const shadowed = Number((m.compaction && m.compaction.shadowed_chars) || 0);
+        used -= Math.ceil(shadowed * 0.7);
+        used += estimate(m); // 摘要本身会作为一条历史材料进入上下文
+        continue;
+      }
+      used += estimate(m);
+    }
+    break;
   }
-  if (!used) {
+  used = Math.max(0, used);
+  if (!found) {
+    // 一条回执都没有才走全文估算。注意判据是 found 而不是 !used：
+    // 压缩把占用扣到 0 是合法结果，不该被兜底逻辑覆盖成别的数。
     const chars = messages.reduce((n, m) => n + String(m.text || '').length, 0);
     used = Math.ceil(chars * 0.7);
   }

@@ -22,22 +22,34 @@
 
 这一节必须先摆出来，否则后面所有对比都会跑偏。
 
-**我们有两套引擎，产品实际跑的是弱的那套。**
+**两套引擎，共用同一个内核。**
 
-| | legacy（实际在跑） | harness（有设计没启用） |
+`runtime.execute()` 不是另一套实现，而是把 `_chat()` 包了一层：run_store 记账、预算硬闸、租约与 deadline、事件持久化、恢复检查点、技能冻结、权限归属校验。所以 harness = legacy 内核 + 一层运行生命周期。
+
+| | legacy | harness |
 |---|---|---|
-| 启用条件 | 默认 | `harness/runtime.py:12-21` 要求项目 id 在 `HARNESS_PROJECT_ALLOWLIST` |
-| 当前状态 | **`start-agent.cmd` 里没有这个变量 → 走 legacy** | 代码齐全，未生效 |
-| 入口 | `main.py:272-278` | `main.py` 同分支的 else |
-| 上下文 | `assemble()` + `trim_to_budget()` | `harness/context.py` 带自动压缩 |
-| token 累计 | `receipt['usage']`，**只保留最后一次，不累加** | `BudgetLedger.publish()` **累加** + `budget` 明细 |
-| 每模型调用计时 | 无 | `model_started` / `model_finished{duration_ms,usage}` 事件 |
+| 启用条件 | `HARNESS_RUNTIME_ENABLED=0` 时回退 | **默认**；`HARNESS_PROJECT_DENYLIST` 排除个别项目 |
+| 入口 | `main.py` 的 `_chat()` | `main.py` → `runtime.execute(req, project, lambda: _chat(...))` |
+| 上下文 | `assemble()` + `trim_to_budget()` | 同左，外加自动压缩 |
+| token 累计 | `receipt['usage']` 只保留最后一次 | `BudgetLedger.publish()` **累加** + `budget` 明细 |
+| 每模型调用计时 | 无 | `model_started` / `model_finished{duration_ms,usage}` |
+| 事件持久化 | 内存缓冲 + 落 `run_events` | 同左，另落 `harness_events` 可重放 |
+| 回执终止事件 | `done` | `run_finished` |
 
-**SSE 信封**：所有帧只有 `data: {json}`，**没有 `event:` 行**，事件名在 `json.type` 里（`main.py:374,569`）。前端消费在 `web/app.js:9031-9159` 的 `askApplyEvent()`。全清单共 24 种（见 §10）。
+**2026-11-10 之前产品跑的是 legacy。** 原因不是配置忘写，而是 allowlist 这个机制本身不适合产品级：项目 id 是用户新建项目时才生成的，永远不可能预先列进启动脚本。改成默认全开之后，真模型跑一轮实测：
 
-含义很直接：我们在 harness 里已经写好的那些「累加用量 / 每调用计时 / 自动压缩 / 技能冻结」，产品里**一条都没跑**。所以「操作和展示呆瓜」的一半原因不是前端不会画，是数据源没接上。
+```
+terminal=run_finished   events=142   engine=harness/2.0
+outcome=succeeded       reason=validated_complete
+turn.stats   3 次模型调用 · 2 次工具调用 · 587 tokens · 1013.8 tok/s
+budget       usage_complete=true · input 26750 · output 587
+event_stream ok=true / 108 事件      projection identical=true / 109 事件
+```
 
----
+legacy 报不出这里面任何一项用量数字，因为它从来不累加。
+
+**SSE 信封**：所有帧只有 `data: {json}`，**没有 `event:` 行**，事件名在 `json.type` 里。前端消费在 `web/app.js` 的 `askApplyEvent()`。全清单见 §10。
+
 
 ## 1. `@` 提及
 
@@ -371,8 +383,8 @@ compaction/end{...}                                     ← 恰好一次
 | 手动 | `/compact` + `confirm` | `/compact`（无参数，busy 拒绝） | ✅ | 有 |
 | **通知前端** | **无** | **有（日志事件 + 投影）** | ✅ | `role='compacted'` 消息 + `compaction` 字段 |
 | **UI 呈现** | 只有一个 toast | 压缩卡片 + `ContextMeter` 环 + Trajectory `Between turns` | ✅ | 卡片做了；`ContextMeter` 等价物是 `ask-ctx` 环；轨迹里的「轮间压缩」未做 |
-| 占用口径 | `input+output` 累加 + 后续按字数估 | `used = projectedTokens ?? pressureTokens`（**压缩一落地就变小**） | ❌ | 仍用上一轮实际值 |
-| 图片 / 工具结果 / 大输出 | 无独立策略 | 三条独立策略（prune 8192/4096/1024、spill 首尾各半） | ◐ | **大输出 spill 做了**（P1-B）；图片 prune 未做 |
+| 占用口径 | `input+output` 累加 + 后续按字数估 | `used = projectedTokens ?? pressureTokens`（**压缩一落地就变小**） | ✅ | 优先 `context.report.used`（压缩后重新估算），压缩卡片带 `shadowed_chars`，前端在时间线上当场扣掉 |
+| 图片 / 工具结果 / 大输出 | 无独立策略 | 三条独立策略（prune 8192/4096/1024、spill 首尾各半） | ◐ | **大输出 spill 做了**（P1-B）；**图片不需要 prune**——核实过：`generate_image` 只回路径不回图，附件进提示词只带 `{id,name,status,suffix}` + 600 字文本摘要，上下文里从来没有内联图片块 |
 
 ---
 
@@ -507,6 +519,7 @@ If the user names a skill, or the task clearly matches a skill's description, ca
 | P0 | 输入触发仲裁 + 重开抑制 | `dsh-client-ui-input-trigger` | keydown 空格仲裁 + `mentionClosed` |
 | P1 | composer dock 统计 | `dsh-client-ui-chat` | `ask-stat-dock`（速率 / 首字 / 双墙钟） |
 | P1 | 每轮 token 页脚（不完整则整块隐藏） | `dsh-client-ui-chat` | `ask-turn-usage` |
+| **P0** | **启用 harness 路径** | — | 默认引擎；legacy 退成 `HARNESS_RUNTIME_ENABLED=0` 的应急回退 |
 | P1 | **框架层/应用层分离** | （DSH 隐含在插件体系里） | `app_packs/` + `WMD_APP_PACK` |
 | P1 | **事件流 + 投影回放** | `dsh-session*` | `run_events` 表 + `/events` + `/projection` |
 | P1 | **turn/step 领域模型** | `dsh-agent-loop` | `receipt.turn`（数据层，界面不展示） |
@@ -516,14 +529,13 @@ If the user names a skill, or the task clearly matches a skill's description, ca
 | P2 | **并行 fan-out（workflow 最小形态）** | `dsh-workflow` | `run_parallel_subagents`（≤6） |
 | P2 | **跨轮目标** | `dsh-goal` | `goal.py` + 3 个工具 |
 | P2 | **能力目录（plugin market 的实际形态）** | `dsh-plugin-market` | `GET /agent/catalog` 三层视图 |
+| P1 | **工具调用语义单一来源** | （DSH 工具网关） | `tool_policy.py`：两引擎共用一套缓存/循环判定 |
+| P1 | **占用口径改 projectedTokens** | `dsh-context-meter` | 优先 `context.report.used` + 压缩卡片 `shadowed_chars` 当场扣减 |
 
 ### 7.2 仍缺 —— 按该不该做排序
 
 | 优先级 | 能力 | DSH 包 | 缺口 | 为什么值得做 |
 |---|---|---|---|---|
-| **P0** | 启用 harness 路径 | — | 设计好了，产品始终跑 legacy（`engine_version: legacy`） | 两套代码跑弱的一套：legacy 的 `usage` 不累加、没有自动压缩、技能冻结不生效 |
-| **P0** | 图片 offload | `dsh-compaction-image` | 图片一直内联，上下文被大图吃掉 | 大输出已落盘，图片是同一类问题的最后一块 |
-| **P0** | 占用口径改 `projectedTokens` | `dsh-context-meter` | 用上一轮实际值，压缩落地后环不变小 | 用户看到「压了还这么满」，等于压缩白做 |
 | **P1** | 自动化测试不依赖本机服务 | — | 多处测试真连 17821 拉渠道，服务起没起决定断言 | 假通过比没有测试更危险，这轮已经踩到两次 |
 | **P1** | 运行态展示 | `dsh-client-ui-chat` | 仍是固定文案 + 秒表 | 「现在跑到第几步、卡在哪个工具」用户完全看不到 |
 | **P1** | Trajectory 时间概览 + 调用检查器 | `dsh-client-ui-trajectory` | 只有简化列表 | 排查用，和 dock 的统计是两回事 |
@@ -544,9 +556,10 @@ If the user names a skill, or the task clearly matches a skill's description, ca
 | 能力 | 理由 |
 |---|---|
 | `dsh-plan-mode`（只读探索、只出方案不动手） | 我们的权限档位里已有 `readonly`，只差一个「不许写盘但允许一轮多步」的组合。要等真有人用「先看看，别动」这个说法再补，现在补是猜需求 |
+| `dsh-compaction-image`（图片 offload） | **核实后判定不适用**，不是不做。我们的上下文里没有内联图片块：`generate_image` 返回 `{path,rel,name,url}` 只给路径，附件进系统提示只带 `{id,name,status,suffix}` + 600 字文本摘要，图片内容靠 `describe_image` 翻成文字。没有图可 offload |
 | 虚拟列表 + 长会话性能 | 单机会话量到不了那个量级，先有真实卡顿再优化 |
 
-> 上一版把 plan-mode 和 image offload 都放在这里，image offload 已改判为 P0——理由一样，那是框架能力，不是应用需求。
+> 上一版把 plan-mode 和 image offload 都放在这里。image offload 后来被我改判成 P0——**这个改判是错的**：我照着 DSH 的清单往上加，没先核我们到底有没有这个问题。核实结果是根本没有（见上）。教训：差距要落在我们自己的代码上验证过才算差距，照抄对方的清单会凭空造出工作量。
 
 ## 8. 我们有、DSH 没有
 
@@ -596,15 +609,21 @@ If the user names a skill, or the task clearly matches a skill's description, ca
 | 8 | 跨轮目标 / 并行子任务 / 能力目录（P2） | 复用子智能体 | `dca0ed8` |
 | 9 | 提示词分段留存 | 分层之后原文不能丢 | `421279f` |
 | 10 | dock 撤掉「轮次/步骤」 | 内部模型不该漏到界面 | `d110262` |
+| 11 | 文档改成台账 | 差距表停在改前一天，同一份文档自相矛盾 | `fb2cc88` |
+| 12 | **harness 变默认引擎** | 结构性欠账里最大的一笔，且实测暴露两个被 legacy 藏住的真 bug | `5b94011` |
+| 13 | 占用口径改 projectedTokens | 压缩后环不变小 = 用户认为压缩没生效 | 本轮 |
+| 14 | 核实图片 offload | 结论是**不适用**，从 P0 撤下 | 本轮 |
 
 ### 9.3 下一轮该做什么
 
-按 §7.2 的 P0/P1 排，前四件事：
+§9.3 上一版排的四件事：第 1、3 已做，第 2 核实后不适用，第 4 做了一半。剩下的按 §7.2 顺序：
 
-1. **启用 harness 或把 harness 那几项搬进 legacy**（P0）——这是唯一还挡在路上的结构性欠账。不解决它，legacy 的 `usage` 不累加、没有自动压缩、技能冻结不生效这三条会一直挂着。
-2. **图片 offload**（P0）——大输出已经落盘，图片是同一类问题的最后一块，不补上下文照样被吃穿。
-3. **占用口径改 `projectedTokens`**（P0）——现在压缩落地后环不变小，用户会认为压缩没生效。
-4. **测试去掉对本机服务的依赖**（P1）——这轮已经踩到两次假通过（`test_models` / `test_system_models` 连 17821 拉渠道，服务起没起决定断言）。
+1. **测试去掉对本机服务的依赖**（P1）——已修 `test_models` / `test_system_models` / `test_runtime_defaults`，还有别的文件在打真实端口没清完。
+2. **运行态展示**（P1）——仍是固定文案 + 秒表，「现在跑到第几步、卡在哪个工具」看不到。这是 P1 里最影响体感的一条。
+3. **Trajectory 时间概览 + 调用检查器**（P1）——排查用，和 dock 的统计是两回事。
+4. **摘要 8 段 schema**（P1）——现在自由中文，多次压缩后摘要会漂，结构化才能合并。
+
+再往后是 P2：压缩事务、溢出兜底强制压缩重试、技能多选叠加、`/name` 键入技能、`Instructions` 卡片、缓存命中分桶。
 
 > DSH 的结论均来自 `_tmp/dsh-src/<包名>/README.zh.md`（各包自带中文设计文档）。我们的行号对应本次提交时的 `web/app.js`、`agent_backend/app/*.py`、`src/server.js`，已随提交推移，看代码时以符号名为准。
 

@@ -87,9 +87,14 @@ def valid(summary, items):
 
 def summary_payload(summary, items, model_id=None, effort=None, usage=None):
     """统一的压缩摘要结构：harness 与 legacy 都写这一种，互相都能认。"""
+    # shadowed_chars：被遮掉的历史正文字符总量。前端据此在压缩发生后立刻把
+    # 上下文环扣小，而不是等下一轮 usage 刷新——上一轮的 input_tokens 反映的是
+    # 压缩前的历史，拿它算环会让环在压缩后纹丝不动。
+    shadowed_chars = sum(len(str(m.get('text') or '')) for m in items)
     return {'schema_version': SCHEMA_VERSION, 'prompt_version': PROMPT_VERSION, 'summary': summary,
             'message_ids': [m['id'] for m in items],
             'message_hashes': {m['id']: digest(m) for m in items},
+            'shadowed_chars': shadowed_chars, 'summary_chars': len(summary or ''),
             'created_at': tick(), 'model_id': model_id, 'reasoning_effort': effort, 'usage': usage}
 
 

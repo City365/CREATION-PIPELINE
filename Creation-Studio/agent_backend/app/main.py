@@ -893,6 +893,7 @@ def compaction_card(payload):
     summary=payload.get('summary') or ''
     return {'id':str(uuid.uuid4()),'role':'compacted','text':summary,'time':now,
             'compaction':{'shadowed':len(payload.get('message_ids') or []),
+                          'shadowed_chars':int(payload.get('shadowed_chars') or 0),
                           'summary_chars':len(summary),
                           'model':payload.get('model_id') or '',
                           'prompt_version':payload.get('prompt_version'),
