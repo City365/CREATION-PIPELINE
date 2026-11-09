@@ -1474,6 +1474,14 @@ html[data-theme="studio-mint"] .toast { box-shadow: 0 10px 26px rgba(32, 26, 70,
 .ask-cap-foot span:nth-child(2) { margin-left:2px; }
 .ask-cap-foot span:last-child { margin-left:auto; }
 .ask-cap-empty { padding:16px 8px; font-size:11px; color:var(--ask-muted); text-align:center; }
+/* 轨迹面板限高：一次渲染几十条会把整条消息流拉得很长，展开后要滑很久。
+   超出在面板内部滚动，「加载更早」按钮留在底部。 */
+.ask-traj {
+  max-height: 420px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 4px;
+}
 .ask-traj-item { display:flex; gap:8px; padding:6px 0; border-bottom:1px solid var(--ask-line); font-size:11px; }
 .ask-traj-role { flex:none; width:34px; color:var(--wmd-accent-text); font-size:10px; }
 .ask-traj-head { font-size:10px; color:var(--ask-muted); }

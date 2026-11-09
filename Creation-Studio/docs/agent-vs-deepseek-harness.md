@@ -173,6 +173,11 @@ ctx.commands.register({
 
 **现状（✅ 已消除）**：`COMMANDS` 注册表 + `GET /agent/commands`，前端只读这份表，加命令改一处。四类派发（`popup` / `action`）已落地，别名与装饰器未做（我们的命令只有 4 条，暂时用不上）。
 
+两处对齐 DSH 的细节（2026-11-10）：
+
+- **`/compact` 不再弹浏览器原生 confirm**。压缩是可恢复的（历史原文仍在，只多一张摘要卡片），结果还立刻可见，用不着拿「确定/取消」再问一遍。原生 confirm 只留给删任务/删项目这类不可恢复操作。DSH 的 `/compact` 也没有确认，只有 busy 时拒绝。
+- **命令面板不预选第一项**。只打一个 `/` 时四项全列但不高亮——用户可能只是想看看有哪些命令，此时按回车不该执行 `/model`。输入到 `/c` 这种有意图的过滤词才高亮匹配项。实测：`/` → 4 项 0 高亮；`/c` → 只剩 compact 并高亮；`/t` → think+compact 并高亮 think。
+
 ---
 
 ## 3. 计速（token / 速率 / 耗时）
@@ -496,7 +501,7 @@ If the user names a skill, or the task clearly matches a skill's description, ca
   - `ask_rounds()` 现在不再采信请求里的 `max_rounds`，只用 `WMD_RECURSION_LIMIT`（默认 120）做异常兜底；`ChatRequest.max_rounds` 字段保留只为兼容旧客户端。
 - ✅ **`@` 和 `/` 两个按钮也删了**。它们是键盘字符，用户打字就能触发；做成按钮等于用鼠标模拟打字，还挤占了权限/联网/模型这些真控件的横向空间。删后实测键盘输入 `@` 仍正常弹出「引用技能或文件 19 项」。
 - ❌ **运行态展示没动**：仍是固定文案 + 秒表，没有「第几步 / 现在跑哪个工具」，shimmer、完成时收起、间距规范全未做。
-- ❌ **Trajectory 时间概览、TTFT 与解码条、调用检查器、虚拟化**：全未做。
+- ◐ **Trajectory 时间概览、TTFT 与解码条、调用检查器、虚拟化**：仍未做；但**轨迹面板已限高**（`max-height: 420px` 内滚，`overscroll-behavior: contain`），一次几十条不再把消息流拉长到要滑很久。DSH 的虚拟化是为了长会话性能，我们先把「能用」补上。
 
 ---
 

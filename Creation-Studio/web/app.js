@@ -9609,8 +9609,8 @@ async function askChooseCommand(id) {
   if (arg === 'help') { a.draft = '/'; a.command = { mode: null, query: '', index: 0 }; askRenderAll(); return; }
   if (arg !== 'compact') { toast('命令 /' + id + ' 还没有实现', true); return; }
   if (!a.activeId) return;
-  const ok = confirm('将已有对话概括成摘要供后续消息使用，历史消息仍保留，会消耗 Token。继续？');
-  if (!ok) return;
+  // 不弹确认：压缩是可恢复的（历史原文仍在，只多一张摘要卡片），而且结果立刻可见。
+  // 浏览器原生 confirm 只留给删任务/删项目这类不可恢复操作。
   try {
     a.generating = true;
     const res = await askApi('/sessions/' + encodeURIComponent(a.activeId) + '/compact', {
@@ -9648,7 +9648,10 @@ function askUpdateMention() {
   a.draft = input.value;
   const end = input.selectionStart;
   const cmd = input.value.match(/^\/([a-z]*)$/);
-  a.command = { mode: null, query: cmd ? cmd[1] : null, index: 0 };
+  // 空过滤不预选第一项：用户可能只是想看看有哪些命令，此时按回车不该执行 /model。
+  // 输到 /c 这种有意图的过滤词才高亮匹配项。
+  a.command = { mode: null, query: cmd ? cmd[1] : null,
+                index: cmd && cmd[1] ? 0 : -1 };
   const prefix = input.value.slice(0, end);
   // @"带 空格的路径" 优先匹配；普通 @token 到空白就停。
   const quoted = prefix.match(/(?:^|\s)@"([^"]*)$/);
@@ -9873,7 +9876,7 @@ function bindAsk(root) {
       const mentionOpen = !!a.mention;
       if (cmdOpen) {
         if (event.key === 'Escape') { event.preventDefault(); askClosePopups(); askRenderPopups(); return; }
-        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); const items = askCommandItems(); if (items.length) { a.command.index = (a.command.index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length; askRenderPopups(); } return; }
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); const items = askCommandItems(); if (items.length) { const step = event.key === 'ArrowDown' ? 1 : -1; a.command.index = a.command.index < 0 ? (step > 0 ? 0 : items.length - 1) : (a.command.index + step + items.length) % items.length; askRenderPopups(); } return; }
         if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey)) {
           event.preventDefault();
           const item = askCommandItems()[a.command.index];
