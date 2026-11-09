@@ -128,9 +128,30 @@ def test_failed_results_are_not_cached():
     assert calls == ['generate_image', 'generate_image']
 
 
-def test_long_output_is_truncated():
-    guard = ToolGuard(max_output=2000)
+def test_long_output_is_spilled_not_dropped(tmp_path, monkeypatch):
+    """超长输出落盘回读，不再一截了之：后半截模型必须拿得回来。"""
+    from app import spill
+    monkeypatch.setattr(spill, 'ROOT', tmp_path / 'spills')
+    guard = ToolGuard(max_output=2000, project='p', run_id='r')
     out = run(guard, 'read_file', {'path': 'big.txt'}, payload='x' * 9000)
     payload = json.loads(out.content)
     assert payload['truncated'] is True
-    assert len(payload['content']) == 2000
+    assert payload['characters'] == 9000
+    assert len(payload['preview']) == spill.PREVIEW_CHARS
+    assert payload['spill_id'].startswith('s')
+    assert guard.summary()['spill_count'] == 1
+    # 全文一个字符不丢：默认页 + 后续页拼回来等于原文
+    first = spill.read(payload['spill_id'])
+    assert first['characters'] == 9000
+    rest = spill.read(payload['spill_id'], start=first['next_start'])
+    assert first['content'] + rest['content'] == 'x' * 9000
+    assert rest['done'] is True
+
+
+def test_short_output_is_left_untouched(tmp_path, monkeypatch):
+    from app import spill
+    monkeypatch.setattr(spill, 'ROOT', tmp_path / 'spills')
+    guard = ToolGuard(max_output=2000, project='p', run_id='r')
+    out = run(guard, 'read_file', {'path': 'small.txt'}, payload='{"ok": true}')
+    assert json.loads(out.content) == {'ok': True}
+    assert guard.summary()['spill_count'] == 0

@@ -20,6 +20,8 @@ import hashlib, json
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import ToolMessage
 
+from app import spill
+
 MAX_OUTPUT = 24000
 # 同一工具 + 同一参数连续多少次算死循环
 MAX_REPEAT = 5
@@ -46,14 +48,17 @@ def _content_text(result):
 class ToolGuard(AgentMiddleware):
     """legacy 引擎用：生成类去重、轮询类放过、写类防死循环、超长输出裁剪。"""
 
-    def __init__(self, max_repeat=MAX_REPEAT, max_output=MAX_OUTPUT):
+    def __init__(self, max_repeat=MAX_REPEAT, max_output=MAX_OUTPUT, project='', run_id=''):
         super().__init__()
         self.max_repeat = max(2, int(max_repeat))
         self.max_output = max(2000, int(max_output))
+        self.project = project
+        self.run_id = run_id
         self.recent = []          # 写/生成类的 (工具名, 参数指纹)
         self.cache = {}
         self.blocked = []
         self.cache_hits = 0
+        self.spilled = []         # 超长输出：落盘而不是切掉
 
     def _loop_reason(self, name, key):
         """只有「这个工具用这套参数」连续重复到上限，才算循环。"""
@@ -94,10 +99,12 @@ class ToolGuard(AgentMiddleware):
         result = await handler(request)
         text = _content_text(result)
         if len(text) > self.max_output:
-            payload = {'truncated': True, 'content': text[:self.max_output],
-                       'note': '输出过长已裁剪（原 ' + str(len(text)) + ' 字符），需要更多请缩小范围或分页读取'}
-            result = result.model_copy(update={'content': json.dumps(payload, ensure_ascii=False)})
-            text = _content_text(result)
+            # 落盘而不是切掉：模型拿 spill_id 用 read_tool_output 读完全文，
+            # 不必为了看后半截重复调用同一个工具。
+            content = spill.write(text, project=self.project, run_id=self.run_id, tool=name)
+            self.spilled.append({'tool': name, 'characters': len(text)})
+            result = result.model_copy(update={'content': content})
+            text = content
         failed = getattr(result, 'status', 'success') == 'error'
         if not failed:
             try:
@@ -110,4 +117,5 @@ class ToolGuard(AgentMiddleware):
 
     def summary(self):
         return {'repeat_blocks': len(self.blocked), 'cache_hits': self.cache_hits,
-                'blocked': self.blocked[:5], 'max_repeat': self.max_repeat}
+                'blocked': self.blocked[:5], 'max_repeat': self.max_repeat,
+                'spilled': self.spilled[:5], 'spill_count': len(self.spilled)}

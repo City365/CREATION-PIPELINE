@@ -9,7 +9,7 @@ ALLOWED=set(registry.CAPABILITIES)
 class ToolGateway(AgentMiddleware):
     def __init__(self,ctx,tools):
         self.ctx=ctx;self.registry={t.name:t for t in tools};self.serial=asyncio.Lock();self.write_cache={};self.read_timeout=20;self.write_timeout=45
-        if not self.registry.keys()<=ALLOWED:raise ValueError('Unregistered runtime capability')
+        if not all(registry.is_capable(name) for name in self.registry):raise ValueError('Unregistered runtime capability')
         manifest=[{'name':t.name,'schema':t.args_schema.model_json_schema()} for t in tools]
         self.manifest_hash=hashlib.sha256(json.dumps(manifest,ensure_ascii=False,sort_keys=True).encode()).hexdigest()
         ctx.receipt['tool_manifest_hash']=self.manifest_hash
@@ -31,7 +31,7 @@ class ToolGateway(AgentMiddleware):
             if name=='create_task_plan' and getattr(ctx,'resume_checkpoint',None) and ctx.receipt.get('plan'):
                 run_store.append_event(ctx.project,ctx.run_id,{'type':'tool_reused','tool_call_id':cid,'tool_name':name})
                 return ToolMessage(content=json.dumps({'ok':True,'reused':True,'plan':ctx.receipt['plan'],'note':'恢复已有计划，请沿用原步骤编号，不重建计划'},ensure_ascii=False),tool_call_id=cid,name=name)
-            risk=registry.CAPABILITIES[name]
+            risk=registry.risk_of(name)
             write=risk in ('workspace_write','media_write','fs_write','shell')
             fingerprint=hashlib.sha256(json.dumps([name,args],sort_keys=True).encode()).hexdigest()
             if write and fingerprint in self.write_cache:
@@ -52,7 +52,9 @@ class ToolGateway(AgentMiddleware):
                     try:failed=failed or json.loads(content).get('ok') is False
                     except (ValueError,AttributeError):pass
                     if len(content)>32000:
-                        result=result.model_copy(update={'content':json.dumps({'truncated':True,'content':content[:30000],'note':'输出已裁剪，请缩小范围或分页读取'},ensure_ascii=False)})
+                        # 和 legacy 一致：超长输出落盘回读，不再一截了之
+                        from app import spill
+                        result=result.model_copy(update={'content':spill.write(content,project=ctx.project,run_id=ctx.run_id,tool=name)})
                 if failed:
                     ctx.budget.tool_failures+=1
                     ctx.receipt.setdefault('tool_errors',{})[name]='tool_failed'

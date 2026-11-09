@@ -30,14 +30,34 @@ CAPABILITIES.update({
     'publish_artifact': 'workspace_write',
     # 智能推荐：向用户出决策选择卡，只读不写盘
     'ask_choice': 'interaction',
+    # 落盘回读：读 spill 目录里被裁剪的工具输出，只读
+    'read_tool_output': 'read_or_plan',
 })
+
+# 外部 MCP 工具的名字在运行时才知道（mcp__<server>__<tool>），不可能预先列清单。
+# 按前缀放行，权限等级 external：既不当只读，也不给本地写盘授权，
+# 实际能做什么由那个 MCP 服务器自己负责。加一个新 server 不用改这张表。
+CAPABILITY_PREFIXES = {'mcp__': 'external'}
+
+
+def is_capable(name):
+    return name in CAPABILITIES or any(str(name).startswith(prefix) for prefix in CAPABILITY_PREFIXES)
+
+
+def risk_of(name):
+    if name in CAPABILITIES:
+        return CAPABILITIES[name]
+    for prefix, risk in CAPABILITY_PREFIXES.items():
+        if str(name).startswith(prefix):
+            return risk
+    raise KeyError(name)
 
 # Match the underlying HTTP operations, including video polling's caller budget.
 TOOL_TIMEOUTS = {'web_search': 40, 'web_fetch': 40, 'generate_image': 310, 'submit_video_job': 70, 'probe_video': 70,
                  'extract_frames': 250, 'describe_image': 190,
                  'read_permission': 20, 'list_dir': 60, 'read_file': 60, 'write_file': 120,
                  'make_dir': 30, 'move_file': 300, 'copy_file': 300, 'delete_file': 120,
-                 'publish_artifact': 120, 'ask_choice': 20}
+                 'publish_artifact': 120, 'ask_choice': 20, 'read_tool_output': 20}
 
 def tool_timeout(name, args, default):
     if name == 'wait_video_job':

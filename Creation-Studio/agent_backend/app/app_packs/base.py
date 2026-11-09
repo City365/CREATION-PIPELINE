@@ -35,6 +35,9 @@ class Pack:
     skill_sources: list = field(default_factory=list)
     # 该应用挂哪些工具组
     tool_groups: list = field(default_factory=list)
+    # 外部工具服务器（MCP）：{'name','command','args','env','cwd','timeout'}。
+    # 框架只认这个结构，不关心具体是哪个 server。
+    mcp_servers: list = field(default_factory=list)
 
     def policy_texts(self):
         return [p.text for p in self.policies if p.enabled]
@@ -56,4 +59,5 @@ class Pack:
             'skill_topics': dict(self.skill_topics),
             'skill_sources': list(self.skill_sources),
             'tool_groups': list(self.tool_groups),
+            'mcp_servers': [str(item.get('name') or '') for item in self.mcp_servers],
         }

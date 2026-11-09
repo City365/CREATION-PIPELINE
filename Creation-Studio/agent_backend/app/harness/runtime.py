@@ -154,4 +154,9 @@ from contextlib import asynccontextmanager
 @asynccontextmanager
 async def lifespan(app):
     run_store.sweep()
+    try:
+        from app import spill
+        spill.purge()
+    except Exception:  # 清理失败不能挡住启动
+        pass
     yield

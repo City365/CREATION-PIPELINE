@@ -763,4 +763,102 @@ function askTurnStats(ex) {          // 优先 turn.stats，回退 timing
 
 `tests/test_turn_model.py` 钉住三件事：`turn.index` 连续递增、`turn.stats === receipt.timing`（不许漂移）、`turn` 能通过事件重放（`projection.identical` 仍为 true）。
 
+---
+
+## 15. 工具输出落盘（P1-B 已落地）
+
+### 15.1 之前丢的是什么
+
+两处截断都直接丢内容：
+
+| 位置 | 行为 |
+|---|---|
+| `tool_guard.py:96` | `text > 24000` → `text[:24000]`，后半截**永久消失** |
+| `harness/tool_gateway.py:54` | `content > 32000` → `content[:30000]`，同样丢 |
+
+后果不是「看得少一点」：模型为了看后半截只能再调一次同一个工具，把上下文和额度一起烧，还可能被 `ToolGuard` 判成死循环。
+
+### 15.2 现在的做法
+
+`app/spill.py`：完整输出落盘到 `data/spills/<project>/<run_id>/<spill_id>-<tool>.txt`，回给模型的是
+
+```json
+{"truncated": true, "spill_id": "s3f2a1b9c0", "characters": 152340,
+ "preview": "前 4000 字…", "next_start": 4000,
+ "note": "完整输出共 152340 字符，已落盘。用 read_tool_output(spill_id=…, start=next_start) 继续读，不要为了看全内容重复调用原工具。"}
+```
+
+模型用新增的 `read_tool_output(spill_id, start, limit)` 分段读完。两处截断都改成走它。
+
+**为什么不复用 `read_file`**：spill 目录在 `agent_backend/data` 下，通常不在用户的权限根里，`read_file` 会按权限档位拒绝。专用回读工具只认 spill 目录、`spill_id` 走 `^s[0-9a-f]{6,32}$` 白名单、命中后还要 `relative_to(ROOT)` 校验，既不放宽权限也不给路径穿越留缝。
+
+其它约束：
+
+| 项 | 值 |
+|---|---|
+| 预览长度 | 4000 字 |
+| 单页上限 | 40000 字，默认 6000 |
+| 保留期 | 7 天，`lifespan` 启动时 `spill.purge()` |
+| 落盘失败 | 回退成「预览 + 错误说明」，不空手而归，也不打断工具调用 |
+| 目录布局 | 按 project/run 分组，`purge` 整目录删 |
+| 指标 | `receipt.tool_guard.spill_count`；`GET /agent/spill/stats` |
+
+### 15.3 顺带修掉的一个哑巴 503
+
+`main.py` 的工具初始化 `except Exception:` 直接把真实异常吞成「智能体工具初始化失败」。排查时只能猜。现在记 `logging.exception`，这次就是靠它一眼看到 `Unregistered runtime capability`。
+
+---
+
+## 16. 外部工具服务器（P1-A 已落地）
+
+### 16.1 缺口
+
+之前工具全部写死在 `build_*_tools()` 里，加一个外部能力就要改后端代码、改 `harness/registry.py` 的能力表、再改测试。DSH 的 `dsh-mcp-client` 正是为了反过来的：harness 只认协议，能力来自外部。
+
+### 16.2 实现
+
+`app/mcp.py` —— stdio 传输、换行分隔 JSON-RPC 2.0：
+
+```
+initialize → notifications/initialized → tools/list → tools/call
+```
+
+- 工具包装成普通 LangChain 工具，名字 `mcp__<server>__<tool>`，`args_schema` 由 MCP 的 `inputSchema` 现场生成 pydantic 模型，模型看到的是真实参数
+- 进程按 server 名复用常驻，`atexit` 统一关，`tools/list` 缓存 300 秒
+- **stdout 用独立线程 + `queue.Queue` 读**：`readline()` 是阻塞的，不这么做超时就是摆设（改前测出来的超时是 32 秒，改后 1.5 秒）
+- 单个 server 起不来只丢它自己的工具，失败清单进 `mcp.LAST_FAILURES`，不影响 agent 启动
+
+配置进应用包契约（`Pack.mcp_servers`），加一个 server 只改应用包：
+
+```python
+Pack(..., mcp_servers=[{'name': 'echo-test', 'command': sys.executable,
+                        'args': ['mcp_server.py'], 'timeout': 20}])
+```
+
+### 16.3 能力表不再需要预先列全
+
+`harness/registry.py` 原来要求 `工具名 ⊆ CAPABILITIES`，MCP 工具名运行时才知道，不可能预先列。改成：
+
+```python
+CAPABILITY_PREFIXES = {'mcp__': 'external'}
+def is_capable(name): ...
+def risk_of(name): ...
+```
+
+`external` 等级既不当只读，也不给本地写盘授权——能做什么由那个 MCP server 自己负责。
+
+### 16.4 接口
+
+| 接口 | 作用 |
+|---|---|
+| `GET /agent/mcp/servers` | 应用包声明了哪些 server、各自能不能连上、有几个工具 |
+| `GET /agent/health` | `mcp_runtime` 不再是写死的 `false`，跟着应用包变 |
+
+### 16.5 测试
+
+`tests/test_mcp.py`（9 条）配 `tests/fixtures/mcp_echo_server.py`（真 stdio 子进程，不是 mock）：握手与发现、探活、调用回环、`isError` 传播而非抛出、事件发布、超长结果落盘、未知工具报错、**静默服务器超时不挂死**。
+
+`tests/test_mcp_runtime.py`（5 条）走完整请求链路：应用包声明的 server 真的进了 `create_agent` 的工具表、`/agent/mcp/servers` 反映实时状态、坏 server 不影响好 server、health 标志跟着变。
+
+
 

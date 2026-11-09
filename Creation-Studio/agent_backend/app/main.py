@@ -22,6 +22,7 @@ from app.chat_policy import selected_topic, system_prompt
 from app.app_packs import current as current_app_pack
 # 名字不能叫 run_events：本文件有个同名路由函数会遮蔽它
 from app import run_events as run_event_log
+from app import spill, mcp
 from app.configs.settings import get_active_model_name, get_provider_config
 from app import store
 from app.harness import runtime, run_store, recovery, registry, identity
@@ -176,7 +177,7 @@ def health(x_project_id: str = Header(default='wmd-local')):
     project = (x_project_id or 'wmd-local').strip()[:100] or 'wmd-local'
     name=get_active_model_name()
     cfg=get_provider_config(name)
-    return {'status':'ok','model':cfg.get('model'),'provider':name,'workspace_search':True,'web_search':bool(build_web_tools()),'web_fetch':bool(build_web_tools()),'planning':True,'mcp_runtime':False,'local_tools':True,'permissions':list(perms.MODE_ORDER),'default_permission':perms.DEFAULT_MODE,'harness_runtime':runtime.enabled(project),'engine_version':'harness/2.0' if runtime.enabled(project) else 'legacy'}
+    return {'status':'ok','model':cfg.get('model'),'provider':name,'workspace_search':True,'web_search':bool(build_web_tools()),'web_fetch':bool(build_web_tools()),'planning':True,'mcp_runtime':bool(current_app_pack().mcp_servers),'local_tools':True,'permissions':list(perms.MODE_ORDER),'default_permission':perms.DEFAULT_MODE,'harness_runtime':runtime.enabled(project),'engine_version':'harness/2.0' if runtime.enabled(project) else 'legacy'}
 @app.get('/agent/models')
 def models(project=Depends(project_id)):
     data=model_options()
@@ -357,6 +358,11 @@ async def _chat(req,project,authorization):
     tools += build_interaction_tools(publish_event, receipt)
     tools += build_local_tools(project=project, session_id=req.session_id, mode=mode, roots=perm_roots,
                                publish=pending.append, receipt=receipt)
+    # 落盘回读：只读 spill 目录，不放宽任何权限档位，只在有输出被裁剪时才有用。
+    tools += spill.build_spill_tools()
+    # 外部 MCP 工具：配置在应用包的 mcp_servers 里，加一个 server 不用改后端代码。
+    # 工具调用本身已经由 tool_call/tool_result 事件覆盖，这里不再另发事件。
+    tools += mcp.build_mcp_tools(current_app_pack().mcp_servers, project=project, run_id=run_id)
     if mode=='readonly':
         # 仅查看档不落盘：生成图片/视频、抽帧、交付文件都会写盘，一律不挂给模型。
         tools=[tool for tool in tools if tool.name not in ('create_workspace_artifact','publish_artifact','generate_image','submit_video_job','extract_frames')]
@@ -379,13 +385,16 @@ async def _chat(req,project,authorization):
         middlewares=[]
         if ctx:middlewares += [ModelGateway(ctx),supplement_middleware,ToolGateway(ctx,tools)]
         else:
-            guard=ToolGuard()
+            guard=ToolGuard(project=project,run_id=run_id)
             middlewares.append(guard)
             middlewares.append(supplement_middleware)
         cycle_trace=CycleTrace()
         middlewares.append(cycle_trace)
         graph=create_agent(model=model,tools=tools,middleware=middlewares,system_prompt=base_prompt)
-    except Exception:
+    except Exception as exc:
+        # 这个 503 原来把真实异常吞掉了，排查只能靠猜；至少留一条能看的日志。
+        import logging
+        logging.getLogger(__name__).exception('智能体工具初始化失败：%s', exc)
         supplements.close_run(project,run_id)
         locks.discard(key)
         raise HTTPException(503,'智能体工具初始化失败')
@@ -761,6 +770,30 @@ def app_pack_info(project=Depends(project_id)):
     data['switch_note']='设置环境变量 WMD_APP_PACK 选择应用包后重启 agent 服务；留空即 creation-studio。'
     data['prompt_chars']=len(system_prompt(pack=pack))
     return data
+
+@app.get('/agent/mcp/servers')
+def mcp_servers(project=Depends(project_id)):
+    """应用包声明了哪些外部工具服务器，各自现在能不能连上。
+
+    加一个 MCP server 只改应用包的 mcp_servers，这个接口自动跟着变。
+    """
+    configs=list(current_app_pack().mcp_servers)
+    items=[]
+    for config in configs:
+        if not isinstance(config,dict):
+            continue
+        probe=mcp.probe(config)
+        items.append({'name':probe.get('name'),'command':config.get('command'),
+                      'ok':probe.get('ok'),'tools':probe.get('tools',0),
+                      'items':probe.get('items') or [],'error':probe.get('error')})
+    return {'items':items,'count':len(items),
+            'available':sum(1 for item in items if item['ok'])}
+
+@app.get('/agent/spill/stats')
+def spill_stats(project=Depends(project_id)):
+    """落盘的工具输出占用情况（保留 7 天，启动时自动清理过期目录）。"""
+    return {**spill.stats(),'retention_days':spill.RETENTION_DAYS,
+            'preview_chars':spill.PREVIEW_CHARS}
 
 @app.post('/agent/sessions/{sid}/compact')
 async def compact_session(sid: str, body: CompactRequest, project=Depends(project_id)):
