@@ -11,7 +11,7 @@ module.exports=async function(req,res,url,{ok,readBody,mediaPath,scope}) {
   if(method==='GET'&&pathname==='/api/workbench/migration-report'){generation.importHistory();ok(res,db.report());return true;}
   if(method==='GET'&&pathname==='/api/media/details'){const detail=generation.details(mediaPath(url.searchParams.get('path')||''));const fs=require('node:fs');detail.missingReferences=[...(detail.snapshot.images||detail.snapshot.refs||[]),...(detail.snapshot.audios||[])].filter(r=>r.path&&!fs.existsSync(r.path)).map(r=>r.name||r.path);ok(res,detail);return true;}
   if(pathname==='/api/workbench/items') {
-    if(method==='GET'){db.legacyDraft(p);ok(res,db.list(p,k,url.searchParams.get('deleted')==='1'));return true;}
+    if(method==='GET'){db.legacyDraft(p);ok(res,db.list(p,k,url.searchParams.get('deleted')==='1',url.searchParams.get('vendor')||null));return true;}
     if(method==='POST'){const b=await readBody(req);ok(res,db.create(project(b.projectId),b.kind,b));return true;}
   }
   if(method==='POST'&&pathname==='/api/workbench/items/reorder'){const b=await readBody(req);ok(res,db.reorder(project(b.projectId),b.kind,b.ids,b.version));return true;}

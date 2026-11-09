@@ -11,7 +11,7 @@ def selected_topic(skill='', skill_id=''):
     return SKILL_TOPICS.get(skill, '')
 
 
-def system_prompt(topic='', skill='', project_hint='', resource_hint='', attachments=None, checkpoint=False, permission=None):
+def system_prompt(topic='', skill='', project_hint='', resource_hint='', attachments=None, checkpoint=False, permission=None, skill_catalog=None):
     import json
     identity = (
         '你是 WENYUN.M-DESKTOP 的智能助手，可协助用户讨论想法、回答问题与完成明确提出的任务。'
@@ -86,7 +86,23 @@ def system_prompt(topic='', skill='', project_hint='', resource_hint='', attachm
         identity += '交付文件按所选技能规定逐份生成，每次 create_workspace_artifact 只写一份文件，成功保存后再生成下一份；不要在回复里重复整份交付正文。技能允许短篇合并时可合并，但必须保留所有规定分节。进度摘要不能替代实际交付文件。'
         identity += project_hint
     else:
-        identity += '本轮未选择技能：不要读取或套用任何创作指南，不建立流程计划，不主动引导用户进入创作阶段。需要技能规范时可说明并让用户自行选择。'
+        identity += ('本轮未选择技能：默认不要套用任何创作指南，也不主动把闲聊拉进创作流程。'
+                     '如果用户这一轮的需求明显就是下面目录里的某个技能（他点名了技能，或任务本身与该技能的简介对得上），'
+                     '先调用 read_analysis_guidance 读取那份正文，读完再按它执行；只讨论、只出主意时不要读。')
+    if skill_catalog:
+        rows = []
+        for item in skill_catalog[:40]:
+            name = str(item.get('name') or '').strip()
+            if not name:
+                continue
+            desc = ' '.join(str(item.get('description') or '').split())[:200]
+            topic_id = str(item.get('topic') or '').strip()
+            rows.append('- ' + name + ('（topic: ' + topic_id + '）' if topic_id else '') + ('：' + desc if desc else ''))
+        if rows:
+            identity += ('\n【可用技能目录】本会话可用的技能只有这些（名字 + 简介）。'
+                         '简介只是索引，不是执行依据：要按某个技能干活，必须先调用 read_analysis_guidance 读它的正文，'
+                         '没读正文之前不要臆测它的规则、步骤和产出格式。读了哪个技能就在回复里说明按哪个技能做。\n'
+                         + '\n'.join(rows))
     if checkpoint:
         identity += '本轮为用户明确恢复的任务，沿用已有计划，只继续未完成步骤；不得重建计划或重复已有交付。'
     if permission:

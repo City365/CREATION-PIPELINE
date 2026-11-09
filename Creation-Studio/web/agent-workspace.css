@@ -140,5 +140,38 @@
 .ask-changes-ico svg { width:15px; height:15px; }
 .ask-changes-text { flex:1; min-width:0; font-size:12px; color:var(--wmd-text-3,#8993a0); }
 
+/* 压缩卡片：时间线上的一条历史事件，不是一条对话 */
+.ask-message.is-compacted { align-items:stretch; }
+.ask-cps { margin:2px 0 10px; border:1px solid var(--wmd-border,#dde2e8); border-radius:10px; background:var(--wmd-bg-2,#f7f9fb); }
+.ask-cps > summary { display:flex; align-items:center; gap:8px; padding:8px 10px; cursor:pointer; list-style:none; font-size:12px; color:var(--wmd-text-2,#3d4650); }
+.ask-cps > summary::-webkit-details-marker { display:none; }
+.ask-cps > summary::marker { content:''; }
+.ask-cps > summary::before { content:'›'; flex:none; color:var(--wmd-text-3,#8993a0); transition:transform .15s ease; }
+.ask-cps[open] > summary::before { transform:rotate(90deg); }
+.ask-cps-ico { flex:none; width:18px; height:18px; display:inline-flex; align-items:center; justify-content:center; border-radius:5px; background:color-mix(in srgb, var(--wmd-accent,#3b74f0) 14%, transparent); color:var(--wmd-accent,#3b74f0); font-size:10.5px; line-height:1; }
+.ask-cps > summary b { font-weight:600; color:var(--wmd-text-2,#3d4650); }
+.ask-cps > summary small { color:var(--wmd-text-3,#8993a0); font-variant-numeric:tabular-nums; }
+.ask-cps-time { margin-left:auto; color:var(--wmd-text-3,#8993a0); font-variant-numeric:tabular-nums; }
+.ask-cps-body { border-top:1px dashed var(--wmd-border,#dde2e8); padding:8px 10px 10px; }
+.ask-cps-label { font-size:11px; color:var(--wmd-text-3,#8993a0); margin-bottom:4px; }
+.ask-cps-body pre { margin:0; max-height:320px; overflow:auto; white-space:pre-wrap; word-break:break-word; font-size:12px; line-height:1.6; color:var(--wmd-text-2,#3d4650); }
+
+/* 输入框下方统计条：两行读数，不抢 composer 的位置 */
+.ask-stat-dock { display:flex; flex-wrap:wrap; gap:4px 14px; padding:6px 6px 0; font-size:11px; color:var(--wmd-text-3,#8993a0); font-variant-numeric:tabular-nums; }
+.ask-stat { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%; }
+
+/* 每轮用量：默认收成一行，点开看分解 */
+.ask-turn-usage { margin:6px 0 2px; font-size:11.5px; color:var(--wmd-text-3,#8993a0); }
+.ask-turn-usage > summary { display:inline-flex; align-items:center; gap:5px; cursor:pointer; list-style:none; padding:2px 6px; border-radius:6px; font-variant-numeric:tabular-nums; }
+.ask-turn-usage > summary::-webkit-details-marker { display:none; }
+.ask-turn-usage > summary::marker { content:''; }
+.ask-turn-usage > summary::before { content:'▸'; color:var(--wmd-text-3,#8993a0); }
+.ask-turn-usage[open] > summary::before { content:'▾'; }
+.ask-turn-usage > summary:hover { background:var(--wmd-bg-2,#f7f9fb); color:var(--wmd-text-2,#3d4650); }
+.ask-turn-usage-body { display:flex; flex-wrap:wrap; gap:4px 16px; margin:6px 0 0; padding:8px 10px; border:1px solid var(--wmd-border,#dde2e8); border-radius:8px; background:var(--wmd-bg-2,#f7f9fb); }
+.ask-turn-usage-body span { display:inline-flex; align-items:baseline; gap:5px; white-space:nowrap; }
+.ask-turn-usage-body i { font-style:normal; color:var(--wmd-text-3,#8993a0); }
+.ask-turn-usage-body b { font-weight:600; color:var(--wmd-text-2,#3d4650); font-variant-numeric:tabular-nums; }
+
 /* File types remain recognizable independently of the selected row color. */
 .aw-file-type { display:inline-flex; align-items:center; justify-content:center; width:18px; height:20px; flex:none; font:700 11px/1 ui-monospace, Consolas, monospace; letter-spacing:-1px; }

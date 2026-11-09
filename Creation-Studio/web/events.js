@@ -623,9 +623,9 @@ const Events = (() => {
     const unassignedTotal = (stats.unscheduled || 0) + (stats.draft || 0);
     const assignedTotal = (stats.scheduled || 0) + (stats.queued || 0) + (stats.running || 0) + (stats.paused || 0);
     return `${taskErrorBanner()}<div class="schedule-page">
-      <section class="schedule-block"><div class="task-panel-head"><div><h2>未分配 <span class="count">${unassignedTotal}</span></h2><p>刚保存的任务，还没有运行时间。</p></div></div>${scheduleRows(unassigned, false)}</section>
+      <section class="schedule-block"><div class="task-panel-head"><div><h2>待分配 <span class="count">${unassignedTotal}</span></h2><p>刚保存的任务，还没有运行时间。</p></div></div>${scheduleRows(unassigned, false)}</section>
       <section class="schedule-block"><div class="task-panel-head"><div><h2>已分配 <span class="count">${assignedTotal}</span></h2><p>已经排好运行时间的任务；这里不显示执行过程。</p></div></div>${scheduleRows(assigned, true)}</section>
-    </div>${page.footer}`;
+    </div>`;
   }
 
   /* ---------------- 监控页：配置操作 + 每个条目的执行记录 ---------------- */
@@ -650,36 +650,47 @@ const Events = (() => {
     const events = page.rows;
     if (!events.length) return `${taskErrorBanner()}<div class="card"><div class="empty"><strong>还没有可监控的任务</strong><p>任务开始执行后，这里会记录每一步的配置和结果。</p></div></div>`;
     const rows = events.map((event) => {
-      const when = event.schedule?.startAt ? new Date(event.schedule.startAt).toLocaleString('zh-CN', { hour12: false }) : '立即';
-      const error = event.lastError || '';
+      // 调度配置只有两种：立即执行 / 定时执行
+      const scheduled = Boolean(event.schedule?.startAt);
+      const when = scheduled ? new Date(event.schedule.startAt).toLocaleString('zh-CN', { hour12: false }) : '';
+      const scheduleText = scheduled ? '定时执行 · ' + when : '立即执行';
+      const errorRaw = String(event.lastError || '').replace(/\s+/g, ' ').trim();
+      const errorText = errorRaw ? (event.errorCount ? event.errorCount + ' 个 · ' : '') + errorRaw : '';
       return `<tr>
-        <td data-label="状态">${badge(event.status)}</td>
-        <td data-label="任务"><div class="evt-title">${esc(event.title)}</div><div class="hint">${esc(event.id)}</div></td>
-        <td data-label="调度配置"><div class="hint">并发 ${Number(event.policy?.concurrency) || 1} · ${event.policy?.onItemFail === 'stop' ? '失败即停' : '失败继续'}</div><div class="hint">${esc(when)}</div></td>
+        <td data-label="任务 ID"><div class="mono evt-id">${esc(event.id)}</div></td>
+        <td data-label="任务名称"><div class="evt-title">${esc(event.title)}</div></td>
+        <td data-label="调度配置"><span class="monitor-schedule">${esc(scheduleText)}</span></td>
         <td data-label="开始时间">${event.startedAt ? new Date(event.startedAt).toLocaleString('zh-CN', { hour12: false }) : '—'}</td>
         <td class="tnum" data-label="耗时">${durationText(event)}</td>
+        <td data-label="状态">${badge(event.status)}</td>
         <td data-label="条目">${event.stats?.done || 0}/${event.stats?.total || 0}${event.stats?.failed ? ` · <span class="is-danger">失败 ${event.stats.failed}</span>` : ''}</td>
-        <td class="hint" data-label="错误 / 警告">${error ? esc((event.errorCount ? event.errorCount + ' 个 · ' : '') + error) : '—'}</td>
+        <td class="hint" data-label="备注">${errorText ? `<div class="monitor-cell-error" title="${esc(errorText)}">${esc(errorText)}</div>` : '—'}</td>
         <td data-label="操作"><button class="btn sm" data-event-attempts="${esc(event.id)}">执行记录</button></td>
       </tr>`;
     }).join('');
-    return `${taskErrorBanner()}<div class="table-wrap"><table class="jobs monitor-table"><thead><tr><th>状态</th><th>任务</th><th>调度配置</th><th>开始时间</th><th>耗时</th><th>条目</th><th>错误 / 警告</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>${page.footer}`;
+    return `${taskErrorBanner()}<div class="table-wrap"><table class="jobs monitor-table"><thead><tr><th>任务 ID</th><th>任务名称</th><th>调度配置</th><th>开始时间</th><th>耗时</th><th>状态</th><th>条目</th><th>备注</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>${page.footer}`;
   }
 
   async function openAttempts(id) {
     const event = await api('/api/events/' + encodeURIComponent(id));
     const auditRows = (event.audit || []).map((entry) => `<li><span class="hint">${new Date(entry.at).toLocaleString('zh-CN', { hour12: false })}</span> ${esc(AUDIT_LABEL[entry.action] || entry.action)}${entry.detail ? ' · ' + esc(entry.detail) : ''}</li>`).join('') || '<li class="hint">还没有配置操作。</li>';
-    const panel = openModal(`<div class="modal-head"><div><h2>执行记录</h2><div class="hint">${esc(event.title)} · ${esc(event.id)}</div></div><button class="btn ghost sm" data-close="1">关闭</button></div>
+    const panel = openModal(`<div class="modal-head"><div><h2>任务配置信息</h2><div class="hint">${esc(event.title)} · ${esc(event.id)}</div></div><button class="btn ghost sm" data-close="1">关闭</button></div>
       <div class="modal-body monitor-modal">
         <div class="monitor-config">
-          <div><span>运行时间</span><b>${event.schedule?.startAt ? new Date(event.schedule.startAt).toLocaleString('zh-CN', { hour12: false }) : '立即'}</b></div>
+          <div><span>运行时间</span><b>${event.schedule?.startAt ? new Date(event.schedule.startAt).toLocaleString('zh-CN', { hour12: false }) : '立即执行'}</b></div>
           <div><span>并发</span><b>${Number(event.policy?.concurrency) || 1}</b></div>
           <div><span>失败处理</span><b>${event.policy?.onItemFail === 'stop' ? '失败即停' : '继续执行'}</b></div>
           <div><span>任务状态</span><b>${esc(STATUS[event.status] || event.status)}</b></div>
         </div>
         <div class="monitor-two-col">
-          <section class="monitor-block"><div class="evt-section-head"><h3>配置操作</h3><span class="hint">${(event.audit || []).length} 条</span></div><ul class="monitor-audit">${auditRows}</ul></section>
-          <section class="monitor-block"><div class="evt-section-head"><h3>执行记录</h3><span class="hint">按运行时间倒序</span></div><div id="attempt-wrap"><div class="hint">加载中…</div></div></section>
+          <section class="monitor-block monitor-side">
+            <div class="evt-section-head"><h3>任务表单</h3><span class="hint">${(event.audit || []).length} 条</span></div>
+            <ul class="monitor-audit">${auditRows}</ul>
+          </section>
+          <section class="monitor-block monitor-main">
+            <div class="evt-section-head"><h3>原因</h3><span class="hint">按运行时间倒序</span></div>
+            <div id="attempt-wrap"><div class="hint">加载中…</div></div>
+          </section>
         </div>
       </div>
       <div class="modal-foot"><span class="grow"></span><button class="btn" data-close="1">关闭</button></div>`);

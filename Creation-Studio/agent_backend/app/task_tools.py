@@ -20,9 +20,11 @@ def build_task_tools(receipt, question, publish, available_sources, project=None
             receipt['plan']={'goal':goal[:500],'steps':[{'id':s['id'][:80],'title':s['title'][:150],'purpose':s['purpose'][:600],'status':'pending','output':'','evidence':[]} for s in steps]}
             publish({'type':'process','plan':deepcopy(receipt['plan'])})
             return {'ok':True,'plan':receipt['plan']}
-    @tool
+    guidance_desc = '读取创作指导说明。可用 topic：%s。返回文档内容及可引用的 source_id。' % (
+        '、'.join(sorted({str(t) for t in (allowed_topics or ()) if t})) or '（本会话没有可用技能）')
+    @tool(description=guidance_desc)
     def read_analysis_guidance(topic: str) -> dict:
-        """读取创作指导说明。topic 可选 scope、novel、script、storyboard、prompt、review；返回文档内容及可引用的 source_id。"""
+        """读取创作指导说明，返回文档内容及可引用的 source_id。"""
         if allowed_topics is not None and topic not in allowed_topics:
             return {'ok': False, 'error': '用户未选择该技能，不能读取其执行指导'}
         doc=GUIDANCE.get(topic)

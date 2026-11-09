@@ -27,6 +27,17 @@ class CycleTrace(AgentMiddleware):
         self.record=lambda *a,**kw:None
         self.cycle=0;self.call_id='';self.reasoning='';self.partial_id=''
         self.publish=lambda e:None;self.last_push=0
+        # 计速：模型墙钟 / 工具墙钟分开记，回复里「时间花在哪」才有依据。
+        self.llm_ms=0.0;self.tool_ms=0.0;self.tool_calls=0
+
+    async def awrap_tool_call(self,request,handler):
+        started=time.monotonic()
+        self.tool_calls+=1
+        try:
+            return await handler(request)
+        finally:
+            self.tool_ms+=(time.monotonic()-started)*1000
+
     async def awrap_model_call(self,request,handler):
         self.cycle+=1;self.call_id=str(uuid.uuid4());self.reasoning='';self.partial_id=str(uuid.uuid4())
         started=time.monotonic()
@@ -47,8 +58,10 @@ class CycleTrace(AgentMiddleware):
             self.record('system',type(exc).__name__,kind='model_failed',cycle=self.cycle,model_call_id=self.call_id)
             raise
         finally:
+            duration_ms=(time.monotonic()-started)*1000
+            self.llm_ms+=duration_ms
             if self.reasoning:self.record('assistant',self.reasoning,kind='reasoning',id=self.partial_id,cycle=self.cycle,model_call_id=self.call_id)
-            self.record('system',json.dumps({'duration_ms':round((time.monotonic()-started)*1000),'reasoning_available':bool(self.reasoning)}),kind='model_end',cycle=self.cycle,model_call_id=self.call_id)
+            self.record('system',json.dumps({'duration_ms':round(duration_ms),'reasoning_available':bool(self.reasoning)}),kind='model_end',cycle=self.cycle,model_call_id=self.call_id)
     def chunk(self,message):
         text=reasoning_text(message)
         if not text:return

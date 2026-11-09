@@ -50,5 +50,8 @@ def test_greeting_stream_uses_general_identity_and_excludes_workflow_tools(tmp_p
     receipt = events[-1]['execution']
     assert receipt['skill'] == '' and receipt['plan_required'] is False and receipt['plan'] is None
     names = {tool.name for tool in captured['tools']}
-    assert not names.intersection({'create_task_plan', 'read_analysis_guidance', 'record_step_result'})
+    # 未选技能时不建计划、不记录步骤；但 read_analysis_guidance 保留——模型可以按技能目录自己去读正文。
+    assert not names.intersection({'create_task_plan', 'record_step_result'})
+    assert 'read_analysis_guidance' in names
+    assert '可用技能目录' in captured['system_prompt']
     assert 'topic=script' not in captured['system_prompt']

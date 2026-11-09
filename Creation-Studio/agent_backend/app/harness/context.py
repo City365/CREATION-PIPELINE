@@ -124,12 +124,28 @@ def trim(history, text, model=None):
     return trim_to_budget(history, text, model)[0]
 
 
+def compaction_range(items, covered):
+    """可压缩的范围：不把一轮切在中间。
+
+    末尾如果是「用户刚问、还没答」的一条，就剔出去——留着它，下一轮模型才看得到这个问题；
+    压进去只会被摘要标成已覆盖，然后悄悄消失。
+    只有末尾之前确实出现过 assistant 时才这么判，纯 user 的历史（导入数据 / 测试）照常整体压缩。
+    """
+    fresh = items[covered:]
+    if len(fresh) > 1 and fresh[-1].get('role') != 'assistant' and any(
+            m.get('role') == 'assistant' for m in fresh[:-1]):
+        fresh = fresh[:-1]
+    return fresh
+
+
 async def compact(project, sid, items, model, ctx=None, model_id=None, effort=None):
     old = store.get_compaction(project, sid)
     covered = len(old['message_ids']) if valid(old, items) else 0
-    fresh = items[covered:]
+    fresh = compaction_range(items, covered)
     if not fresh:
         raise HTTPException(422, '没有需要压缩的新消息')
+    covered_items = items[:covered + len(fresh)]
+    shadowed_units = sum(len(message_content(m).encode()) for m in fresh)
     summary = old['summary'] if covered else ''
     # Batches are measured in conservative UTF-8 units, not a claimed model tokenizer.
     batches = []
@@ -155,7 +171,10 @@ async def compact(project, sid, items, model, ctx=None, model_id=None, effort=No
             summary = content_text(response).strip()
             if not summary or len(summary) > 12000:
                 raise ValueError('invalid summary')
-        payload = summary_payload(summary, items, model_id=model_id, effort=effort,
+        # 收缩校验：摘要必须真的比被遮蔽的正文更短。短历史不校验——那种会话本来就没多少可省的。
+        if summary and shadowed_units > 4000 and len(summary.encode()) >= shadowed_units * 0.9:
+            raise HTTPException(422, '摘要没有比原文更短，已放弃本次压缩；原文保持不变')
+        payload = summary_payload(summary, covered_items, model_id=model_id, effort=effort,
                                   usage=ctx.budget.publish() if ctx else None)
         if ctx:
             ctx.check()

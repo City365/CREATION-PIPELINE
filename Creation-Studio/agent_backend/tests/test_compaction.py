@@ -14,7 +14,11 @@ async def test_compact_preserves_history_and_failure(tmp_path,monkeypatch):
     monkeypatch.setattr(main,'create_chat_model',lambda *args:Model())
     result=await main.compact_session('s',main.CompactRequest(),project='p')
     assert result['messages']==1
-    assert store.get_session('p','s')==conversation
+    # 压缩会在时间线落一张卡片：原有消息原样保留，只多一条 role=compacted（模型看不到它）。
+    saved=store.get_session('p','s')
+    assert saved['messages'][:-1]==conversation['messages']
+    assert saved['messages'][-1]['role']=='compacted'
+    assert saved['messages'][-1]['compaction']['shadowed']==1
     before=store.get_compaction('p','s')
     with pytest.raises(HTTPException) as exc:
         await main.compact_session('s',main.CompactRequest(),project='other')

@@ -35,30 +35,58 @@ function createStore(file) {
     );
     const columns=db.prepare('PRAGMA table_info(generation_runs)').all();
     if(!columns.some(c=>c.name==='execution_json'))db.exec("ALTER TABLE generation_runs ADD COLUMN execution_json TEXT NOT NULL DEFAULT '{}'");
+    // 分镜/画面按「厂商」分簿：豆包、MiniMax、ViDu… 各自一份目录，互不相串
+    const itemCols=db.prepare('PRAGMA table_info(workbench_items)').all();
+    if(!itemCols.some(c=>c.name==='vendor'))db.exec("ALTER TABLE workbench_items ADD COLUMN vendor TEXT NOT NULL DEFAULT ''");
+    db.exec("CREATE INDEX IF NOT EXISTS wb_vendor ON workbench_items(project_id,kind,vendor,position)");
     db.exec('INSERT OR IGNORE INTO workbench_schema VALUES(2)');
     return db;
   }
   let transactionDepth=0;
   const transaction = fn => { if(transactionDepth)return fn(); const d=open();transactionDepth++;  d.exec('BEGIN IMMEDIATE'); try { const r=fn();d.exec('COMMIT');return r; } catch(e) { d.exec('ROLLBACK');throw e; } finally {transactionDepth--;} };
-  const decode = r => r && ({id:r.id, projectId:r.project_id, kind:r.kind, title:r.title, position:r.position, draft:JSON.parse(r.draft_json), revision:r.revision, createdAt:r.created_at, updatedAt:r.updated_at, deletedAt:r.deleted_at});
+  const decode = r => r && ({id:r.id, projectId:r.project_id, kind:r.kind, title:r.title, position:r.position, vendor:r.vendor||'', draft:JSON.parse(r.draft_json), revision:r.revision, createdAt:r.created_at, updatedAt:r.updated_at, deletedAt:r.deleted_at});
+  // 旧数据没有 vendor 列：按 draft 里的 workflowId 推断一次，回填后按厂商隔离
+  function inferVendor(draft) {
+    const id = String((draft && draft.workflowId) || '').toLowerCase();
+    if (/doubao|seedance/.test(id)) return 'seedance';
+    if (/minimax|^rh:/.test(id)) return 'minimax';
+    if (/vidu/.test(id)) return 'vidu';
+    if (/muse/.test(id)) return 'muse';
+    if (/grok/.test(id)) return 'grok';
+    return 'other';
+  }
+  function migrateVendors(d, p) {
+    const rows = d.prepare("SELECT id,draft_json FROM workbench_items WHERE project_id=? AND kind='video' AND vendor=''").all(p);
+    if (!rows.length) return;
+    const set = d.prepare('UPDATE workbench_items SET vendor=? WHERE id=?');
+    for (const row of rows) {
+      let draft = {};
+      try { draft = JSON.parse(row.draft_json || '{}'); } catch (error) { draft = {}; }
+      set.run(inferVendor(draft), row.id);
+    }
+  }
   function get(id, p, k, deleted=false) {
     const r = open().prepare('SELECT * FROM workbench_items WHERE id=? AND project_id=? AND kind=?').get(id,project(p),kind(k));
     if (!r || (!deleted && r.deleted_at)) fail('分镜不存在或不属于当前项目',404);
     return decode(r);
   }
-  function list(p,k,deleted=false) {
+  function list(p,k,deleted=false,vendor=null) {
     const d=open();p=project(p);k=kind(k);
-    const items=d.prepare('SELECT * FROM workbench_items WHERE project_id=? AND kind=? AND deleted_at IS '+(deleted?'NOT NULL':'NULL')+' ORDER BY position,created_at').all(p,k).map(decode);
+    const rows = vendor
+      ? d.prepare('SELECT * FROM workbench_items WHERE project_id=? AND kind=? AND vendor=? AND deleted_at IS '+(deleted?'NOT NULL':'NULL')+' ORDER BY position,created_at').all(p,k,vendor)
+      : d.prepare('SELECT * FROM workbench_items WHERE project_id=? AND kind=? AND deleted_at IS '+(deleted?'NOT NULL':'NULL')+' ORDER BY position,created_at').all(p,k);
+    const items=rows.map(decode);
     const selected=d.prepare('SELECT active_item_id FROM workbench_selection WHERE project_id=? AND kind=?').get(p,k)?.active_item_id;
     const version=crypto.createHash('sha256').update(JSON.stringify(items.map(i=>[i.id,i.position,i.revision]))).digest('hex');
-    return {items,activeId:items.some(i=>i.id===selected)?selected:items[0]?.id||null,version,initialized:!!d.prepare('SELECT 1 FROM workbench_items WHERE project_id=? AND kind=? LIMIT 1').get(p,k)};
+    return {items,activeId:items.some(i=>i.id===selected)?selected:items[0]?.id||null,version,initialized:!!d.prepare('SELECT 1 FROM workbench_items WHERE project_id=? AND kind=?'+(vendor?' AND vendor=?':'')+' LIMIT 1').get(...(vendor?[p,k,vendor]:[p,k]))};
   }
   function create(p,k,input={}) {
     p=project(p);k=kind(k);const d=open();
     const id=crypto.randomUUID(),now=Date.now();
-    const position=Number(d.prepare('SELECT MAX(position) AS n FROM workbench_items WHERE project_id=? AND kind=?').get(p,k).n||0)+1;
+    const vendor=String(input.vendor||'').slice(0,40);
+    const position=Number(d.prepare('SELECT MAX(position) AS n FROM workbench_items WHERE project_id=? AND kind=?'+(vendor?' AND vendor=?':'')).get(...(vendor?[p,k,vendor]:[p,k])).n||0)+1;
     const title=String(input.title||(k==='video'?'分镜 ':'画面 ')+String(position).padStart(3,'0')).trim().slice(0,120);
-    d.prepare('INSERT INTO workbench_items(id,project_id,kind,title,position,draft_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)').run(id,p,k,title,position,JSON.stringify(input.draft||{}),now,now);
+    d.prepare('INSERT INTO workbench_items(id,project_id,kind,title,position,draft_json,created_at,updated_at,vendor) VALUES(?,?,?,?,?,?,?,?,?)').run(id,p,k,title,position,JSON.stringify(input.draft||{}),now,now,vendor);
     return get(id,p,k);
   }
   function update(id,p,k,input) {

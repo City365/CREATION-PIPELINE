@@ -5,6 +5,11 @@ const WB = (() => {
   let loadEpoch=0, locked=false;
   const clone=v=>JSON.parse(JSON.stringify(v));
   const runtime=k=>k==='video'?state.studio:state.image;
+  // 视频分镜按厂商分簿：豆包 / MiniMax / ViDu… 各自一份目录
+  function vendorOf(k) {
+    if (k !== 'video') return '';
+    try { return vendorKeyOf(currentWorkflow()); } catch (error) { return ''; }
+  }
   const current=k=>books[k]?.items.find(i=>i.id===books[k].activeId);
   const context=k=>({projectId:books[k]?.projectId||studioProjectId(),kind:k,itemId:books[k]?.activeId||null});
   function snapshot(k,source=runtime(k)) {
@@ -51,19 +56,20 @@ const WB = (() => {
     clearTimeout(timers[k]);timers[k]=setTimeout(()=>flush(k).catch(e=>{updateStatus();}),450);
   }
   async function flushAll(){await Promise.all(['image','video'].map(flush));}
-  async function load(p) {
+  async function load(p, vendorOverride) {
     const epoch=++loadEpoch;
     for(const k of ['video','image'])if(!defaults[k])defaults[k]=snapshot(k);
-    const data=await Promise.all(['video','image'].map(k=>api('/api/workbench/items?projectId='+enc(p)+'&kind='+k)));
+    const vendors={video:vendorOverride!==undefined?vendorOverride:vendorOf('video'),image:''};
+    const data=await Promise.all(['video','image'].map(k=>api('/api/workbench/items?projectId='+enc(p)+'&kind='+k+(vendors[k]?'&vendor='+enc(vendors[k]):''))));
     if(epoch!==loadEpoch||p!==studioProjectId())return;
     for(const [idx,k] of ['video','image'].entries()) {
-      const b={...data[idx],projectId:p};books[k]=b;
+      const b={...data[idx],projectId:p,vendor:vendors[k]};books[k]=b;
       if(!b.items.length) {
         // Import the single legacy client draft only once. Later empty lists stay empty.
         const marker='wmd.workbench.initialized.'+p+'.'+k;
         if(!b.initialized) {
           const legacy=k==='video'?snapshot(k):{};
-          const item=await api('/api/workbench/items',{method:'POST',body:{projectId:p,kind:k,draft:legacy}});
+          const item=await api('/api/workbench/items',{method:'POST',body:{projectId:p,kind:k,vendor:vendors[k],draft:legacy}});
           b.items=[item];b.activeId=item.id;
           localStorage.setItem(marker,'1');
         }
@@ -110,10 +116,15 @@ const WB = (() => {
     return '<div class="wb-layout" data-workbench="'+k+'">'+sidebar+'<div class="wb-content">'+(b.activeId?html:'<div class="wb-blank"><h2>新建'+(k==='video'?'分镜':'画面')+'</h2><p>每个条目独立保存提示词、参考图和生成记录。</p><button type="button" class="btn primary" data-wb="new">＋ 新建</button></div>')+'</div></div>';
   }
   async function refresh(k) {
-    const old=books[k],data=await api('/api/workbench/items?projectId='+enc(old.projectId)+'&kind='+k);
+    const old=books[k],vendor=vendorOf(k),data=await api('/api/workbench/items?projectId='+enc(old.projectId)+'&kind='+k+(vendor?'&vendor='+enc(vendor):''));
     if(books[k]!==old)return;
     for(const row of data.items){const before=old.items.find(i=>i.id===row.id);if(before){row.runtime=before.runtime;row.saved=before.saved;}}
-    books[k]={...data,projectId:old.projectId};
+    books[k]={...data,projectId:old.projectId,vendor};
+  }
+  // 切换厂商后重新拉取该厂商的目录
+  async function reloadVendor(p, vendor) {
+    await load(p||studioProjectId(), vendor);
+    return true;
   }
   async function selectItem(k,id){
     await flush(k);const b=books[k];const item=b.items.find(i=>i.id===id);if(!item)return;
@@ -124,7 +135,7 @@ const WB = (() => {
     await flush(k);const b=books[k];
     // 新建条目必须是干净的：场景建模数据显式清空，绝不继承上一个画面
     const blank=k==='video'?{...defaults[k],prompt:'',images:[],audios:[],videos:[]}:{...defaults[k],prompt:'',source:null,refs:[],results:[],reverseText:'',sceneFlow:null};
-    const item=await api('/api/workbench/items',{method:'POST',body:{projectId:b.projectId,kind:k,title,draft:draft||blank}});
+    const item=await api('/api/workbench/items',{method:'POST',body:{projectId:b.projectId,kind:k,vendor:vendorOf(k),title,draft:draft||blank}});
     b.items.push(item);await selectItem(k,item.id);
   }
   async function move(k,id,to) {
@@ -243,6 +254,6 @@ const WB = (() => {
       const origin=host.querySelector('#wb-open-origin');if(origin)origin.onclick=async()=>{try{await flushAll();if(d.projectId!==studioProjectId()){await setActiveProject(d.projectId,{silent:true});if(d.projectId!==studioProjectId())throw Error('原项目不存在');}await selectItem(d.kind,d.itemId);closeModal();location.hash=d.kind==='video'?'#studio':'#image';}catch(e){toast(e.message,true);}};
     }catch(e){host.textContent='生成资料读取失败：'+e.message;}
   }
-  return {reconcileImageTask,layout,paintSidebar,bind,load,flush,flushAll,schedule,context,complete,mediaDetails,current,snapshot};
+  return {reconcileImageTask,layout,paintSidebar,bind,load,reloadVendor,flush,flushAll,schedule,context,complete,mediaDetails,current,snapshot};
 })();
 

@@ -31,8 +31,21 @@ app=FastAPI(title='Creation-Studio Agent',version='0.2.0',lifespan=runtime.lifes
 locks=set()
 
 # 单轮允许的图执行步数上限（一次工具调用≈2 步：模型决策 + 工具执行）。
-# 批量出图这类任务一次要跑十几轮，原来 36 会在「图都出完了、只差收尾」时撞线，按 80 给足余量。
-RECURSION_LIMIT=max(25,min(400,int(os.getenv('WMD_RECURSION_LIMIT','80'))))
+# 批量出图这类任务一次要跑十几轮，原来 36 会在「图都出完了、只差收尾」时撞线。
+# 默认 120，界面上可以在输入框（联网后面）按次调整；环境变量仍是兜底默认值。
+RECURSION_LIMIT=max(25,min(400,int(os.getenv('WMD_RECURSION_LIMIT','120'))))
+# 输入框里那档「轮次」的合法区间
+ROUNDS_MIN, ROUNDS_MAX = 10, 400
+
+
+def ask_rounds(req) -> int:
+    """本次请求的执行步数上限：请求里带的优先，否则用默认值。"""
+    raw = getattr(req, 'max_rounds', None)
+    try:
+        value = int(raw) if raw is not None and str(raw).strip() != '' else RECURSION_LIMIT
+    except (TypeError, ValueError):
+        value = RECURSION_LIMIT
+    return max(ROUNDS_MIN, min(ROUNDS_MAX, value))
 
 # 后台运行登记：前端断开（刷新/关页）不再中止任务，事件先攒在内存里供重连读取
 LIVE_RUNS={}      # (project, session_id) -> {'run_id','started_at','task','finished'}
@@ -151,6 +164,8 @@ class ChatRequest(BaseModel):
     file_ids:list[str]=Field(default_factory=list,max_length=10)
     permission:str=Field(default='',max_length=20)
     web_search:bool=False
+    # 本次请求的执行步数上限（输入框里那档「轮次」，默认 120）
+    max_rounds:int|None=Field(default=None,ge=ROUNDS_MIN,le=ROUNDS_MAX)
 @app.get('/agent/health')
 def health(x_project_id: str = Header(default='wmd-local')):
     # 健康检查只返回模型/能力信息，不碰项目数据；启动器在 controller 模式下
@@ -304,9 +319,17 @@ async def _chat(req,project,authorization):
             sources.update(deepcopy(checkpoint.get('sources',{})))
             receipt['parent_run_id']=req.parent_run_id
     receipt['plan_required']=bool(topic or checkpoint)
-    tools=build_task_tools(receipt,req.text,pending.append,sources,project=project,session_id=req.session_id,skill_snapshot=skill_snapshot,allowed_topics={topic} if topic else set())
+    # 技能目录：模型常驻可见「本会话有哪些技能」，正文仍按需用 read_analysis_guidance 读。
+    # 之前只有用户先选技能，模型才看得见那一个；自定义技能名甚至不进工具描述。
+    from app.skills import catalog as skill_catalog_of
+    skill_list=skill_catalog_of(project)
+    allowed={item['topic'] for item in skill_list}
+    if topic:allowed.add(topic)
+    tools=build_task_tools(receipt,req.text,pending.append,sources,project=project,session_id=req.session_id,skill_snapshot=skill_snapshot,allowed_topics=allowed)
     if not topic and not checkpoint:
-        tools=[tool for tool in tools if tool.name not in ('create_task_plan','read_analysis_guidance','record_step_result')]
+        # 未选技能时仍保留 read_analysis_guidance（模型可以按目录自己去读），
+        # 但摘掉计划工具：闲聊不该被塞进流程。
+        tools=[tool for tool in tools if tool.name not in ('create_task_plan','record_step_result')]
     # 本产品不再绑定数据集/策略包（那套来自业务分析项目，已移除）。
     summary_prompt='本轮未绑定外部数据资源；项目风格、附件和对话历史是本地材料；外部资料需通过联网工具实际检索并引用来源。'
     if checkpoint:summary_prompt+='恢复例外：沿用已有计划，禁止重建计划或重复已完成步骤与交付文件，只继续未完成部分；本轮恢复仅允许读取和记录步骤，不允许新文件写入。已有任务状态：'+json.dumps({'plan':receipt['plan'],'artifacts':receipt['artifacts']},ensure_ascii=False)
@@ -325,7 +348,7 @@ async def _chat(req,project,authorization):
     if mode=='readonly':
         # 仅查看档不落盘：生成图片/视频、抽帧、交付文件都会写盘，一律不挂给模型。
         tools=[tool for tool in tools if tool.name not in ('create_workspace_artifact','publish_artifact','generate_image','submit_video_job','extract_frames')]
-    base_prompt=system_prompt(topic,req.skill,project_hint,summary_prompt,[{k:a[k] for k in ('id','name','status','suffix')}|{'excerpt':(a.get('text') or '')[:600]} for a in attachments],bool(checkpoint),permission=permission)
+    base_prompt=system_prompt(topic,req.skill,project_hint,summary_prompt,[{k:a[k] for k in ('id','name','status','suffix')}|{'excerpt':(a.get('text') or '')[:600]} for a in attachments],bool(checkpoint),permission=permission,skill_catalog=skill_list)
     if any(t.name == 'web_search' for t in tools): base_prompt += WEB_PROMPT
     else: base_prompt += '\n【联网检索关闭】本轮未启用联网检索，不可声称已搜索或读取网络网页，也不要通过命令工具绕过联网开关。需要实时资料时提示用户开启输入框旁的联网检索。'
     if not tools_ok:
@@ -356,6 +379,9 @@ async def _chat(req,project,authorization):
         raise HTTPException(503,'智能体工具初始化失败')
     async def stream():
         answer=''; completed=False; failure=''; first=True; sequence=0; final_observed=False
+        # 计速：text_first_at/text_last_at 是「同一段连续输出」的首尾时刻，每步（updates）累加后重置，
+        # 所以工具执行时间不会被算进解码时间。
+        text_first_at=None;text_last_at=None;decode_total=0.0
         def event(data):return 'data: '+json.dumps(data,ensure_ascii=False)+'\n\n'
         def trajectory(role,content,**extra):
             nonlocal sequence
@@ -399,7 +425,7 @@ async def _chat(req,project,authorization):
                 answer=text
                 first=False
                 yield event({'type':'delta','text':text})
-            source=_empty_stream() if direct_done else graph.astream({'messages':history},stream_mode=['messages','updates'],config={'recursion_limit':RECURSION_LIMIT})
+            source=_empty_stream() if direct_done else graph.astream({'messages':history},stream_mode=['messages','updates'],config={'recursion_limit':ask_rounds(req)})
             async for mode,payload in source:
                 if not isinstance(mode,str):
                     # Compatibility with test streams that emit message chunks only.
@@ -412,12 +438,13 @@ async def _chat(req,project,authorization):
                     cycle_trace.chunk(chunk)
                     text=content_text(chunk)
                     if text and first:
-                        first=False;receipt['first_token_ms']=tick()-receipt['started_at']
+                        first=False;receipt['first_token_ms']=tick()-receipt['started_at'];text_first_at=time.monotonic()
                     plan_steps=(receipt.get('plan') or {}).get('steps',[])
                     can_stream=not receipt['plan_required'] or bool(plan_steps) and all(s['status'] in ('completed','blocked') for s in plan_steps)
                     legacy_chunk=not hasattr(chunk,'type')
                     if text and (can_stream or legacy_chunk) and not getattr(chunk,'tool_call_chunks',None):
                         answer+=text
+                        text_last_at=time.monotonic()
                         # 模型把工具调用写成正文时，先别往屏幕上吐原始标记，收尾时统一救回成面板。
                         visible=choice_rescue.public_text(answer)
                         if visible == answer: yield event({'type':'delta','text':text})
@@ -425,6 +452,9 @@ async def _chat(req,project,authorization):
                     # 补充说明「已收到」这类旁路事件不用等模型下一个 updates 才吐出来
                     while pending:yield event(pending.popleft())
                 elif mode=='updates':
+                    if text_first_at and text_last_at and text_last_at>text_first_at:
+                        decode_total+=(text_last_at-text_first_at)*1000
+                    text_first_at=None;text_last_at=None
                     for node,state in payload.items():
                         if not isinstance(state,dict):continue
                         messages=state.get('messages',[])
@@ -486,7 +516,7 @@ async def _chat(req,project,authorization):
             status=getattr(exc,'status_code',None)
             if isinstance(exc,runtime.RunStopped):failure='任务已停止：'+exc.reason
             elif 'GraphRecursionError' in type(exc).__name__:
-                failure=('本轮执行步数达到上限（'+str(RECURSION_LIMIT)+' 步）；已跑完的工具结果和图片都已保留，'
+                failure=('本轮执行步数达到上限（'+str(ask_rounds(req))+' 步）；已跑完的工具结果和图片都已保留，'
                          '继续时直接说“继续”，从已有结果接着做，不要整轮重跑。')
             elif status==401 or 'Authentication' in type(exc).__name__:failure='模型密钥无效或已失效（401），请更新模型连接配置。'
             elif status==403 or 'PermissionDenied' in type(exc).__name__:failure='模型渠道拒绝请求（403），请检查渠道账号验证、权限或内容限制。'
@@ -521,6 +551,16 @@ async def _chat(req,project,authorization):
             except Exception as exc:receipt['workspace_scan']={'error':str(exc)}
             receipt['finished_at']=tick()
             receipt['duration_ms']=receipt['finished_at']-receipt['started_at']
+            # 计速：模型墙钟 / 工具墙钟 / 纯解码时间分开记，输出速率才有分母。
+            if text_first_at and text_last_at and text_last_at>text_first_at:
+                decode_total+=(text_last_at-text_first_at)*1000
+            output_tokens=(receipt.get('usage') or {}).get('output_tokens')
+            receipt['timing']={'llm_ms':round(cycle_trace.llm_ms),'tool_ms':round(cycle_trace.tool_ms),
+                               'model_calls':cycle_trace.cycle,'tool_calls':cycle_trace.tool_calls,
+                               'ttft_ms':receipt.get('first_token_ms'),
+                               'decode_ms':round(decode_total) or None,
+                               'decode_tokens':output_tokens,
+                               'tps':round(output_tokens/(decode_total/1000),1) if output_tokens and decode_total>0 else None}
             if guard:receipt['tool_guard']=guard.summary()
             if completed:receipt['status']='completed' if not ctx or receipt.get('outcome')=='succeeded' else receipt['outcome']
             elif receipt['status']=='running':receipt['status']='cancelled'
@@ -642,12 +682,48 @@ class CompactRequest(BaseModel):
     model_id: str | None = None
     reasoning_effort: Literal['none','low','high','max'] | None = None
 
+# 斜杠命令目录：前端只认这份表，加命令改这里一处，不用再去改输入框里的正则和按钮 title。
+# kind = popup（打开选择弹窗，arg 决定弹窗内容）| action（直接执行，arg 决定动作）
+COMMANDS=[
+    {'name':'model','label':'换模型','description':'切换本轮使用的模型','kind':'popup','arg':'model'},
+    {'name':'think','label':'换思考强度','description':'调整推理强度（思考档位）','kind':'popup','arg':'think'},
+    {'name':'compact','label':'压缩当前对话上下文','description':'把已有历史压成摘要，历史原文仍保留','kind':'action','arg':'compact'},
+    {'name':'help','label':'命令列表','description':'列出全部可用命令','kind':'action','arg':'help'},
+]
+
+@app.get('/agent/commands')
+def commands_catalog(project=Depends(project_id)):
+    return {'items':[dict(item) for item in COMMANDS]}
+
 @app.post('/agent/sessions/{sid}/compact')
 async def compact_session(sid: str, body: CompactRequest, project=Depends(project_id)):
     if runtime.enabled(project):
         if not store.get_session(project,sid):raise HTTPException(404,'会话不存在')
         return await runtime.operation(body,project,sid,'compacting',lambda: _compact_session(sid,body,project))
     return await _compact_session(sid,body,project)
+
+def compaction_card(payload):
+    """压缩结果落成一条会话消息，前端据此渲染压缩卡片。
+
+    模型看不到它：`harness_context.messages()` 只收 role 为 user/assistant 的消息。
+    这样压缩从「后端私事」变成「时间线上看得见的一件事」，同时不动任何模型上下文。
+    """
+    now=int(time.time()*1000)
+    summary=payload.get('summary') or ''
+    return {'id':str(uuid.uuid4()),'role':'compacted','text':summary,'time':now,
+            'compaction':{'shadowed':len(payload.get('message_ids') or []),
+                          'summary_chars':len(summary),
+                          'model':payload.get('model_id') or '',
+                          'prompt_version':payload.get('prompt_version'),
+                          'at':now}}
+
+def _compacted_response(c,payload,project):
+    """把压缩卡片写进会话并返回给前端；卡片本身不参与模型历史。"""
+    card=compaction_card(payload)
+    c.setdefault('messages',[]).append(card)
+    c['updated']=card['time']
+    store.save(project,c)
+    return {'ok':True,'messages':card['compaction']['shadowed'],'summary_chars':card['compaction']['summary_chars'],'message':card}
 
 async def _compact_session(sid,body,project):
     ctx=runtime.current.get()
@@ -660,13 +736,14 @@ async def _compact_session(sid,body,project):
         try:
             model=create_chat_model(body.model_id,body.reasoning_effort)
             payload=await harness_context.compact(project,sid,harness_context.messages(c),model,ctx,body.model_id,body.reasoning_effort)
-            return {'ok':True,'messages':len(payload['message_ids']),'summary_chars':len(payload['summary'])}
+            return _compacted_response(c,payload,project)
         finally:locks.discard(key)
     messages=harness_context.messages(c)
     old=store.get_compaction(project,sid)
     covered=len(old['message_ids']) if harness_context.valid(old,messages) else 0
-    fresh=messages[covered:]
+    fresh=harness_context.compaction_range(messages,covered)
     if not fresh:raise HTTPException(422,'没有需要压缩的新消息')
+    covered_messages=messages[:covered+len(fresh)]
     text=json.dumps([{'role':m['role'],'text':harness_context.message_content(m)} for m in fresh],ensure_ascii=False)
     if len(text)>100000:raise HTTPException(422,'待压缩内容过长，请拆分会话')
     locks.add(key)
@@ -677,10 +754,15 @@ async def _compact_session(sid,body,project):
         if ctx:ctx.budget.settle(call_id,getattr(response,'usage_metadata',None))
         summary=content_text(response).strip()
         if not summary or len(summary)>12000:raise ValueError('invalid summary')
+        # 收缩校验：不比原文短就说明这次压缩白做，原文保持不动。短历史不校验。
+        if len(text.encode())>4000 and len(summary.encode())>=len(text.encode())*0.9:
+            raise HTTPException(422,'摘要没有比原文更短，已放弃本次压缩；原文保持不变')
         # 与 harness 同一个 schema：带 hash 校验，ledger 与 legacy 互相认得，历史被编辑后摘要自动失效。
-        payload=harness_context.summary_payload(summary,messages,model_id=body.model_id,effort=body.reasoning_effort)
+        payload=harness_context.summary_payload(summary,covered_messages,model_id=body.model_id,effort=body.reasoning_effort)
         store.save_compaction(project,sid,payload)
-        return {'ok':True,'messages':len(payload['message_ids']),'summary_chars':len(summary)}
+        return _compacted_response(c,payload,project)
+    except HTTPException:
+        raise
     except Exception:
         raise HTTPException(503,'压缩失败，原上下文保留')
     finally:locks.discard(key)

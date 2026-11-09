@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 const IJ=(()=>{
  let initialized=false,polling=false,modalTask=null;
  const label={queued:'排队中',running:'生成中',paused:'已暂停',success:'完成',failed:'失败',interrupted:'服务中断'};
@@ -22,8 +22,9 @@ const IJ=(()=>{
   finally{polling=false;}
  }
  function panelHtml(){
-  const current=own(),task=current.find(t=>['queued','running','paused'].includes(t.status))||current[0];
-  return '<section id="image-task-panel" class="ij-panel"><div><b>图像任务</b><span id="ij-poll-state">'+(task?esc(label[task.status]||task.status)+' · '+esc(task.phase):'')+'</span></div><div class="ij-actions">'+(task?'<button class="btn sm" data-ij="detail" data-id="'+task.id+'">查看日志</button>'+controls(task):'')+'<button class="btn sm" data-ij="all">全部图像任务 / 日志</button></div></section>';
+  // 顶部状态条（标题「图像任务」+ 状态 + 日志入口）与页面标题重复，已移除。
+  // 生成中的暂停/继续仍在画布卡片里，日志在左侧二级菜单的「日志记录」入口。
+  return '';
  }
  function current(){return own().find(t=>['queued','running','paused'].includes(t.status))||null;}
  function canvas(){
@@ -46,7 +47,12 @@ const IJ=(()=>{
   openModal('<div class="modal-head"><h2>图像任务日志</h2><button class="btn" data-close="1">关闭</button></div><div class="modal-body"><div id="ij-detail-status"></div><p class="mono">'+esc(id)+'</p><div id="ij-log-lines"></div><details><summary>生成提示词</summary><pre class="wb-prompt">'+esc(task.snapshot.userPrompt||task.snapshot.prompt||'未记录')+'</pre></details><div id="ij-outputs"></div></div><div class="modal-foot">'+controls(task)+'<button class="btn" data-ij="refresh">刷新日志</button></div>');drawDetail(task);
  }
  function drawDetail(t){if(!t)return;const status=document.querySelector('#ij-detail-status'),lines=document.querySelector('#ij-log-lines'),out=document.querySelector('#ij-outputs');if(!lines)return;status.textContent=(label[t.status]||t.status)+' · '+t.phase+(t.error?' · '+t.error:'');lines.innerHTML=t.logs.map(l=>'<div class="ij-log '+esc(l.level)+'"><time>'+new Date(l.time).toLocaleTimeString()+'</time><span>'+esc(l.message)+'</span></div>').join('');out.innerHTML=(t.result?.items||[]).map((item,n)=>'<button type="button" class="ij-result" data-ij="result" data-id="'+t.id+'" data-index="'+n+'"><img src="/api/file?path='+enc(item.path)+'" alt="'+esc(item.name)+'"><span>'+esc(item.name)+'</span></button>').join('');}
- function init(){if(initialized)return;initialized=true;refresh();setInterval(refresh,1800);
+ function init(){if(initialized)return;initialized=true;refresh();
+  // 自适应轮询：有排队/生成中的任务时 2 秒一次，空闲时降到 8 秒。
+  // 原来固定 1.8 秒一直打接口，页面长期开着会白占 CPU / 内存 / 请求配额。
+  const busy=()=>(state.imageTasks||[]).some(t=>['queued','running','paused'].includes(t.status));
+  const loop=()=>{refresh().finally(()=>setTimeout(loop,busy()?2000:8000));};
+  setTimeout(loop,2000);
   document.addEventListener('click',async e=>{const btn=e.target.closest('[data-ij]');if(!btn)return;e.preventDefault();const action=btn.dataset.ij,id=btn.dataset.id;try{
     if(action==='all'){state.logTab='image';localStorage.setItem('wmd.logs.tab','image');if(location.hash==='#logs')render();else location.hash='#logs';return;}
     if(action==='detail'){await detail(id);return;}

@@ -163,6 +163,8 @@ const state = {
     promptMode: 'tags',
     warnings: [],
   },
+  // 各厂商独立的创作草稿：{ seedance: {...}, minimax: {...}, other: {...} }
+  studioDrafts: {},
 };
 
 
@@ -195,6 +197,31 @@ function studioApply(saved) {
   for (const key of ['aspectRatio', 'resolution', 'seed', 'model']) if (saved[key] !== undefined) s[key] = saved[key];
   for (const key of ['megapixels', 'megapixels2', 'duration', 'count']) if (Number.isFinite(saved[key])) s[key] = saved[key];
   s._restored = true;
+}
+/* 厂商分桶：Seedance / MiniMax-H3 / ViDu / Muse / Grok-Video / 其他
+   切换厂商时各自一份草稿，提示词、参考图、参考音频、时长等互不相串。 */
+function vendorKeyOf(wf) {
+  const id = String((wf && wf.id) || '').toLowerCase();
+  const label = String((wf && (wf.label || wf.display)) || '').toLowerCase();
+  if (id.includes('doubao') || id.includes('seedance') || label.includes('豆包') || label.includes('seedance')) return 'seedance';
+  if (id.includes('minimax') || id.startsWith('rh:') || label.includes('h3')) return 'minimax';
+  if (id.includes('vidu') || label.includes('vidu') || label.includes('生数')) return 'vidu';
+  if (id.includes('muse') || label.includes('muse')) return 'muse';
+  if (id.includes('grok') || label.includes('grok')) return 'grok';
+  return 'other';
+}
+function resetStudioDraft() {
+  const s = state.studio;
+  s.prompt = '';
+  s.promptMode = 'tags';
+  s.images = [];
+  s.audios = [];
+  s.videos = [];
+  s.seed = '';
+  s.model = '';
+  s.count = 1;
+  s.warnings = [];
+  s.skillFormat = '';
 }
 function studioBeacon() {
   try {
@@ -382,10 +409,93 @@ function mountWallpaper(theme) {
   document.documentElement.dataset.wallpaperPaused = String(paused);
   const video = layer.querySelector('video');
   if (video) {
-    video.muted = !state.config?.ui?.wallpaperSound || !!state.volume?.muted;
-    video.volume = Math.max(0, Math.min(100, Number(state.config?.ui?.wallpaperVolume ?? 40))) / 100;
-    if (paused) video.pause();
-    else video.play().catch(() => { if (!video.isConnected) return; document.documentElement.dataset.wallpaperPaused = 'true'; const button = $('#wallpaper-play'); if (button) { button.textContent = '▶'; button.title = '播放动态壁纸'; } });
+    const wantSound = !!state.config?.ui?.wallpaperSound && !state.volume?.muted;
+    const volume = Math.max(0, Math.min(100, Number(state.config?.ui?.wallpaperVolume ?? 40))) / 100;
+    video.volume = volume;
+    if (paused) {
+      video.muted = !wantSound;
+      video.pause();
+    } else {
+      // 浏览器只允许静音自动播放：先静音起播拿到播放权限，再按设置开声音。
+      // 否则带音轨的壁纸会被 autoplay 策略拦下，看起来就是「卡住不动」。
+      const start = () => {
+        video.muted = true;
+        const playing = video.play();
+        if (playing && typeof playing.then === 'function') {
+          playing.then(() => { video.muted = !wantSound; }).catch(() => {
+            document.documentElement.dataset.wallpaperPaused = 'true';
+            const button = $('#wallpaper-play');
+            if (button) { button.textContent = '▶'; button.title = '播放动态壁纸'; }
+          });
+        }
+      };
+      start();
+      // 用户第一次点页面任意处后补一次播放机会（有些浏览器要等交互才放行）
+      if (!mountWallpaper._retryBound) {
+        mountWallpaper._retryBound = true;
+        const retry = () => {
+          const v = document.querySelector('#wallpaper-layer video');
+          if (!v) return;
+          if (v.paused && !wallpaperIsPaused()) {
+            v.muted = true;
+            v.play().then(() => { v.muted = !(!!state.config?.ui?.wallpaperSound && !state.volume?.muted); }).catch(() => {});
+          }
+          document.removeEventListener('pointerdown', retry);
+          document.removeEventListener('keydown', retry);
+        };
+        document.addEventListener('pointerdown', retry, { once: true });
+        document.addEventListener('keydown', retry, { once: true });
+      }
+    }
+    startWallpaperWatchdog();
+  }
+}
+
+/**
+ * 视频壁纸看门狗。
+ * 4K 壁纸循环几个小时之后，浏览器解码器偶尔会掉帧、画面变黑/变灰（元素还在、时间不走），
+ * 这时只剩暗色蒙版，整页就是一片灰。这里每 5 秒检查一次，卡住就重新 load + play。
+ */
+function startWallpaperWatchdog() {
+  if (startWallpaperWatchdog._timer) return;
+  let stuck = 0;
+  let lastTime = -1;
+  startWallpaperWatchdog._timer = setInterval(() => {
+    const v = document.querySelector('#wallpaper-layer video');
+    if (!v || v.dataset.recovering === '1') return;
+    if (wallpaperIsPaused() || document.visibilityState !== 'visible') { stuck = 0; lastTime = -1; return; }
+    // 还在下载就别打扰它，否则会陷入 load 循环
+    if (!v.error && v.readyState < 2 && v.networkState === 2) { stuck = 0; lastTime = -1; return; }
+    const broken = !!v.error || (v.readyState < 2 && v.networkState !== 2) || (v.readyState >= 2 && v.videoWidth === 0);
+    const frozen = !broken && v.readyState >= 2 && Math.abs(v.currentTime - lastTime) < 0.04;
+    lastTime = v.currentTime;
+    if (!broken && !frozen) { stuck = 0; return; }
+    stuck += 1;
+    if (stuck < 2) return;
+    stuck = 0;
+    v.dataset.recovering = '1';
+    try {
+      const at = Math.round(v.currentTime * 10) / 10;
+      v.load();
+      v.muted = true;
+      v.play().catch(() => {});
+      const reason = broken ? '解码异常' : '画面停在 ' + at + 's';
+      console.warn('[wallpaper] 视频壁纸卡住（' + reason + '），已重新载入');
+      if (!startWallpaperWatchdog._notified) {
+        startWallpaperWatchdog._notified = true;
+        if (typeof toast === 'function') toast('壁纸画面丢失，已自动重新载入（4K 大文件容易掉帧，可换 1080p）', true);
+      }
+    } catch (error) { /* 忽略 */ }
+    setTimeout(() => { delete v.dataset.recovering; }, 1500);
+  }, 5000);
+  // 切回标签页时也补一次
+  if (!startWallpaperWatchdog._bound) {
+    startWallpaperWatchdog._bound = true;
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState !== 'visible') return;
+      const v = document.querySelector('#wallpaper-layer video');
+      if (v && v.paused && !wallpaperIsPaused()) { v.muted = true; v.play().catch(() => {}); }
+    });
   }
 }
 
@@ -451,6 +561,13 @@ function applySystemTypography(ui = {}) {
   }
 }
 
+/** 壁纸可见度（0=完全不透，100=完全透明）。键存在就用它（0 也是有效值），不存在才落默认。 */
+function visPref(ui, key, fallback) {
+  if (!ui || !(key in ui) || ui[key] === null || ui[key] === '') return fallback;
+  const n = Number(ui[key]);
+  return Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : fallback;
+}
+
 function applyTheme() {
   const active = currentTheme();
   document.documentElement.dataset.theme = active;
@@ -471,6 +588,14 @@ function applyTheme() {
   document.documentElement.style.setProperty('--skin-sidebar-dim', String(Math.max(0, Math.min(.95, Number(ui.wallpaperSidebarDim ?? .15)))));
   document.documentElement.style.setProperty('--skin-preview-alpha', String(1 - Math.max(0, Math.min(100, Number(ui.wallpaperPreviewTransparency ?? 85))) / 100));
   document.documentElement.style.setProperty('--skin-workspace-alpha', String(1 - Math.max(0, Math.min(100, Number(ui.wallpaperWorkspaceTransparency ?? 85))) / 100));
+  // 壁纸穿透的三档可见度（0=完全不透，100=完全透明露出壁纸）。
+  const uiCfg = state.config && state.config.ui;
+  const pageTrans = visPref(uiCfg, 'pageTransparency', 55);
+  document.documentElement.style.setProperty('--skin-page-vis', String(pageTrans));
+  const sideTrans = visPref(uiCfg, 'sidebarTransparency', 60);
+  document.documentElement.style.setProperty('--skin-side-vis', String(sideTrans));
+  const topTrans = visPref(uiCfg, 'topbarTransparency', 65);
+  document.documentElement.style.setProperty('--skin-top-vis', String(topTrans));
   mountWallpaper({ ...theme, wallpaper });
   syncBackgroundAudio();
   const anchorBtn = $('#settings-btn');
@@ -556,9 +681,33 @@ document.addEventListener('click', async (event) => {
 
 /* ------------------------------------------------------------------ shell */
 
+/* 路由参数：地址形如 #assets?dir=素材/人物/第1集，刷新能回到同一层 */
+function routeParams() {
+  const raw = (location.hash || '').replace(/^#/, '');
+  const cut = raw.indexOf('?');
+  const path = cut >= 0 ? raw.slice(0, cut) : raw;
+  return { route: path, params: new URLSearchParams(cut >= 0 ? raw.slice(cut + 1) : '') };
+}
+
+/** 只改地址栏、不触发 hashchange，避免二次渲染 */
+function syncHash(route, values) {
+  const params = new URLSearchParams();
+  Object.entries(values || {}).forEach(([key, value]) => {
+    if (value !== '' && value != null) params.set(key, String(value));
+  });
+  const query = params.toString();
+  const next = '#' + route + (query ? '?' + query : '');
+  if (location.hash !== next) {
+    try { history.replaceState(null, '', next); } catch (error) { /* 忽略 */ }
+  }
+}
+
+window.syncHash = syncHash;
+
 function setRoute() {
   const previousRoute = state.route;
-  let route = (location.hash || '#image').replace(/^#/, '');
+  const parsed = routeParams();
+  let route = parsed.route || 'image';
   // 旧路由兼容：批量任务 / 任务 / 任务日志 统一进「任务管理」的对应页签
   if (route === 'jobs' || route === 'batch' || route === 'logs') {
     state.taskTab = route === 'batch' ? 'batch'
@@ -569,6 +718,24 @@ function setRoute() {
     route = 'tasks';
   }
   state.route = ['image', 'studio', 'script', 'assets', 'batch', 'jobs', 'tasks', 'media', 'compare', 'logs', 'projects'].includes(route) ? route : 'image';
+  // 从地址栏恢复二级菜单状态
+  const tabParam = parsed.params.get('tab');
+  const dirParam = parsed.params.get('dir');
+  const vendorParam = parsed.params.get('vendor');
+  const taskParam = parsed.params.get('task');
+  if (state.route === 'image' && tabParam && ['edit', 'generate', 'reverse', 'scene'].includes(tabParam)) {
+    state.image.tab = tabParam;
+  }
+  if (state.route === 'tasks' && tabParam) state.taskTab = tabParam;
+  if (state.route === 'assets' && dirParam) state.assetView = { kind: 'dir', rel: dirParam, deep: false };
+  if (state.route === 'media' && taskParam) state.mediaTask = taskParam;
+  if (state.route === 'studio' && vendorParam) {
+    const target = (state.workflows || []).find((w) => vendorKeyOf(w) === vendorParam);
+    if (target && state.studio && state.studio.workflowId !== target.id) {
+      state.studio.workflowId = target.id;
+      state.studio.channelId = target.channelId || state.studio.channelId;
+    }
+  }
   if (state.route === 'tasks' && !state.taskTab) state.taskTab = localStorage.getItem('wmd.tasks.tab') || 'running';
   if (state.route !== 'projects' && !state.projectId) state.route = 'projects';
   if (state.route === 'script' && previousRoute !== 'script' && state.ask?.conversations && !state.ask.loading && !state.ask.generating) {
@@ -596,7 +763,7 @@ function render() {
   else if (state.route === 'batch') html = '<div class="page-scroll">' + renderBatch() + '</div>';
   else if (state.route === 'jobs') html = '<div class="page-scroll">' + renderJobs() + '</div>';
   else if (state.route === 'tasks') html = '<div class="page-scroll tasks-page">' + renderTasks() + '</div>';
-  else if (state.route === 'assets') html = '<div class="page-scroll assets-page" style="background:var(--wmd-bg-1) !important">' + renderAssets() + '</div>';
+  else if (state.route === 'assets') html = '<div class="page-scroll assets-page">' + renderAssets() + '</div>';
   else if (state.route === 'media') html = '<div class="page-scroll">' + renderMedia() + '</div>';
   else if (state.route === 'compare') html = '<div class="page-scroll is-compare">' + renderCompare() + '</div>';
   else if (state.route === 'logs') html = '<div class="page-scroll">' + renderLogs() + '</div>';
@@ -1268,10 +1435,6 @@ function stageEmptyHtml(wf) {
         <li><b>3</b><span>写提示词，用 &lt;Picture 1&gt; / &lt;Subject 1&gt; / &lt;Audio 1&gt; 引用素材，&lt;d&gt;写对白&lt;/d&gt;；或先插入骨架 / 示例。</span></li>
         <li><b>4</b><span>左上角选「渠道」（管理器里的豆包 / Gemini），底部选「视频模型」，再选画幅与时长，点「生成视频」。</span></li>
       </ol>
-      <div class="wmd-empty-actions">
-        <button type="button" class="wmd-btn" data-act="go-jobs"><span class="wmd-btn-icon">${ICON.play}</span>查看任务日志</button>
-        <button type="button" class="wmd-btn wmd-btn-ghost" data-act="insert-skeleton">插入骨架</button>
-      </div>
     </div>
   </div>`;
 }
@@ -1384,9 +1547,12 @@ function renderStudio() {
   const isAuto = wf.provider === 'autodl';
   const isManager = wf.provider === 'manager';
 
-  const modelChoices = s.channelId
+  // 当前厂商：渠道下拉与模型下拉都只列本厂商的东西，跨厂商互不出现
+  const studioVendor = vendorKeyOf(wf);
+  const modelChoices = (s.channelId
     ? state.workflows.filter((w) => w.channelId === s.channelId)
-    : state.workflows.filter((w) => w.provider !== 'autodl');
+    : state.workflows.filter((w) => w.provider !== 'autodl'))
+    .filter((w) => vendorKeyOf(w) === studioVendor);
   const images = s.images || [];
   const audios = s.audios || [];
   const nextEmpty = images.findIndex((x) => !x);
@@ -1400,9 +1566,15 @@ function renderStudio() {
   // 最近任务：最新的排前面（state.jobs 是创建顺序，直接 slice 会拿到最老的五条）
   const recent = ownJobs.slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).slice(0, 5);
 
-  const videoChannels = (state.channels.video || []).filter((c) => c.enabled !== false);
-  const autodlWorkflows = state.workflows.filter((w) => w.provider === 'autodl' && (!wf.channelId || w.channelId===wf.channelId));
-  const channelWorkflows = wf.channelId ? state.workflows.filter((w) => w.channelId === wf.channelId) : [];
+  const allVideoChannels = (state.channels.video || []).filter((c) => c.enabled !== false);
+  // 只保留「本厂商有工作流」的渠道；一个都没有时回退全量，避免下拉变空
+  const vendorChannels = allVideoChannels.filter((c) =>
+    state.workflows.some((w) => w.channelId === c.id && vendorKeyOf(w) === studioVendor));
+  const videoChannels = vendorChannels.length ? vendorChannels : allVideoChannels;
+  const autodlWorkflows = state.workflows.filter((w) => w.provider === 'autodl' && (!wf.channelId || w.channelId===wf.channelId) && vendorKeyOf(w) === studioVendor);
+  const channelWorkflows = wf.channelId
+    ? state.workflows.filter((w) => w.channelId === wf.channelId && vendorKeyOf(w) === studioVendor)
+    : [];
   const channelOptions = videoChannels.length
     ? videoChannels.map((c) => `<option value="${esc(c.id)}" ${c.id === wf.channelId ? 'selected' : ''}>${esc(c.name)}${c.active ? ' · 默认' : ''}</option>`).join('')
     : '<option value="">没有可用的视频渠道</option>';
@@ -1418,26 +1590,9 @@ function renderStudio() {
       ? channelWorkflows.map((w) => `<option value="${esc(w.id)}" ${w.id === wf.id ? 'selected' : ''}>${esc(shortModel(w))}</option>`).join('')
       : `<option value="${esc(wf.id)}" selected>${esc((channel && (channel.model || channel.name)) || wf.label)}</option>`);
 
-  const remote = isManager
-    ? `<div class="wmd-remote-group">
-      <button type="button" class="wmd-remote wmd-panel-remote is-ready" data-act="go-video-channels" title="外接管理器：用真实 Chrome 账号跑豆包 / Gemini">
-        <span class="wmd-remote-dot"></span>
-        <span class="wmd-remote-msg is-strong">${esc(wf.platform === 'gemini' ? 'Gemini · 管理器' : '豆包 · 管理器')}</span>
-        <span class="wmd-remote-host">${esc((channel && channel.baseUrl) || '127.0.0.1:17778')}</span>
-      </button>
-      <button type="button" class="wmd-btn wmd-btn-sm wmd-btn-ghost" data-act="open-manager" title="打开管理器工作台（本机 17778）">打开管理器</button>
-    </div>`
-    : isAuto
-    ? `<button type="button" class="wmd-remote wmd-panel-remote is-ready" data-act="go-video-channels" title="官网 API 直接按 Key 计费调用，无需开云端机器">
-        <span class="wmd-remote-dot"></span>
-        <span class="wmd-remote-msg is-strong">AutoDL 官方H3 · ${(channel?.hasKey || channel?.apiKey) ? '已配置密钥' : keyCount ? keyCount + ' 个 Key' : '待填写密钥'}</span>
-        <span class="wmd-remote-host">autodl.art</span>
-      </button>`
-    : `<button type="button" class="wmd-remote wmd-panel-remote ${channel ? 'is-ready' : 'is-unconfigured'}" data-act="go-video-channels" title="自定义视频渠道：填你自己的接口地址与 Key">
-        <span class="wmd-remote-dot"></span>
-        <span class="wmd-remote-msg is-strong">${channel ? esc(channel.name) : '自定义渠道'}</span>
-        <span class="wmd-remote-host">${esc((channel && channel.baseUrl) || '未填写接口')}</span>
-      </button>`;
+  // 渠道右侧的信息条（管理器地址 / AutoDL / 自定义渠道名）与上方「渠道」选择器重复，已移除。
+  // 进入渠道设置仍走左侧「管理器」按钮，打开管理器工作台走顶栏「管理器」。
+  const remote = '';
 
   const ratioOptions = (wf.ratios || []).length ? wf.ratios : ['9:16', '16:9', '1:1'];
   const currentRatio = (String(s.aspectRatio || '').match(/\d+:\d+/) || [wf.defaultRatio || '16:9'])[0];
@@ -1546,20 +1701,15 @@ function renderStudio() {
         <div class="wmd-field wmd-field-grow" ${wf.promptRequired === false ? 'style="display:none"' : ''}>
           <div class="wmd-field-head is-prompt-head">
             <span class="wmd-field-label">提示词</span>
+            <span class="wmd-prompt-count tnum" id="prompt-count">${s.prompt.length}字</span>
             <span class="wmd-field-right">
-              <span class="wmd-prompt-count tnum" id="prompt-count">${s.prompt.length}字</span>
               <span class="wmd-view-switch">
                 <button type="button" class="${mode === 'tags' ? 'is-on' : ''}" data-act="prompt-mode" data-mode="tags">标签</button>
                 <button type="button" class="${mode === 'code' ? 'is-on' : ''}" data-act="prompt-mode" data-mode="code">代码</button>
               </span>
-              <span class="wmd-skill-group">
-                <button type="button" class="wmd-skill-btn${skillFmt === 'h3' ? ' is-on' : ''}" data-act="optimize" data-format="h3" ${state.busy ? 'disabled' : ''} title="${state.busy ? '正在调用语言渠道' : 'H3 优化：扩写成 MiniMax H3 六段式（subject_definitions / summary / retention_analysis / detailed_description / overall_soundscape / non_diegetic_music）'}">${state.busy ? '优化中' : 'H3 优化'}</button>
-                <button type="button" class="wmd-skill-btn is-seedance${skillFmt === 'seedance' ? ' is-on' : ''}" data-act="optimize" data-format="seedance" ${state.busy ? 'disabled' : ''} title="${state.busy ? '正在调用语言渠道' : 'Seedance 2.0 优化：扩写成白昼 v0.5 分镜格式（场景/角色/时间/物品/音色锁定 + 人物锚点/场景锚点/剧情承接 + SHOT 与台词）'}">${state.busy ? '优化中' : 'Seedance 2.0'}</button>
-              </span>
-              <button type="button" class="wmd-iconbtn is-sm" data-act="llm-channel" title="Skill 优化：语言渠道">${ICON.wand}</button>
-              <button type="button" class="wmd-link wmd-slots-link" data-act="insert-skeleton" data-format="h3" title="插入 H3 六段式骨架">骨架 H3</button>
-              <button type="button" class="wmd-link wmd-slots-link" data-act="insert-skeleton" data-format="seedance" title="插入 Seedance 2.0 分镜节拍稿骨架（本组总时长 / 背景 / 看点 / 场景1 / Ⅰ Ⅱ Ⅲ 节拍与台词），优化时据此产出白昼正文">骨架 SD</button>
-              <button type="button" class="wmd-link wmd-slots-link" data-act="examples" title="插入示例提示词">示例</button>
+              <button type="button" class="wmd-tool-btn" data-act="optimize" data-format="${skillFmt}" ${state.busy ? 'disabled' : ''} title="${state.busy ? '正在调用语言渠道' : '按当前视频模型的分镜格式扩写提示词'}">${state.busy ? '优化中' : '提示词优化'}</button>
+              <button type="button" class="wmd-tool-btn" data-act="insert-skeleton" data-format="${skillFmt}" title="插入当前视频模型对应的分镜骨架">模板</button>
+              <button type="button" class="wmd-tool-btn" data-act="examples" title="插入示例提示词">示例</button>
               <span class="wmd-prompt-tools">
                 <button type="button" class="wmd-iconbtn is-sm" data-act="copy-prompt" title="复制全文">${ICON.copy}</button>
                 <button type="button" class="wmd-iconbtn is-sm" data-act="clear-prompt" title="清空">${ICON.trash}</button>
@@ -1608,7 +1758,6 @@ function renderStudio() {
           </div>
           <div class="wmd-generate">
             <button type="button" class="wmd-btn wmd-btn-primary wmd-btn-lg" data-act="generate" ${state.busy ? 'disabled' : ''}>生成视频</button>
-            <div class="wmd-generate-hint${studioModelName(wf, s) ? ' is-two-line' : ''}"><span class="tnum" id="studio-generate-hint">${studioGenerateHintHtml(wf, s)}</span></div>
           </div>
         </div>
       </div>
@@ -1644,6 +1793,8 @@ function bindStudio(root) {
 
   const applyWorkflowDefaults = (next) => {
     if (!next) return;
+    // state.studio 可能已被 WB.adopt 换成另一个对象，这里每次取最新引用
+    const s = state.studio;
     s.workflowId = next.id;
     s.skillFormat = ''; // 换了渠道 / 模型，模板与优化格式回到跟随该渠道
     s.channelId = next.channelId || '';
@@ -1653,6 +1804,17 @@ function bindStudio(root) {
     s.duration = Math.min(15, next.durationDefault || 10);
     if (next.defaultRatio) s.aspectRatio = next.defaultRatio;
     localStorage.setItem('wmd.workflowId', s.workflowId);
+  };
+
+  // 供外壳（左侧二级菜单）直接切换模型：先落盘当前分镜，再换到新厂商的目录，最后套模型参数
+  window.__studioSwitchWorkflow = async (id) => {
+    const next = workflowById(id);
+    if (!next) return false;
+    try { await WB.flush('video'); } catch (error) { /* 保存失败也继续切 */ }
+    await WB.reloadVendor(undefined, vendorKeyOf(next));
+    applyWorkflowDefaults(next);
+    render();
+    return true;
   };
 
   const channelSel = $('#channel-select', root);
@@ -2127,8 +2289,8 @@ function skillFormatOf(wf) {
 }
 
 function studioSkillFormat(s, wf) {
-  const manual = s && (s.skillFormat === 'h3' || s.skillFormat === 'seedance');
-  return manual ? s.skillFormat : skillFormatOf(wf || currentWorkflow());
+  // 格式完全由当前视频模型决定：Seedance 页面只出现 Seedance 工具，H3 页面只出现 H3 工具
+  return skillFormatOf(wf || currentWorkflow());
 }
 
 /**
@@ -2431,17 +2593,32 @@ function assetMatch(item) {
   return !query || String(item.name || '').toLowerCase().includes(query) || String(item.note || '').toLowerCase().includes(query);
 }
 
+const ASSET_VIEW_KEY = 'wmd.assets.view';
+function saveAssetView(view) {
+  try {
+    if (view && view.kind && view.kind !== 'overview') localStorage.setItem(ASSET_VIEW_KEY, JSON.stringify(view));
+  } catch (error) { /* 忽略存储失败 */ }
+}
 function currentAssetView() {
   const data = state.assetLibrary;
+  if (!state.assetView) {
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem(ASSET_VIEW_KEY) || 'null'); } catch (error) { saved = null; }
+    // 刷新后回到上次所在的分类；第一次进来默认「人物素材」
+    state.assetView = saved && saved.kind && saved.kind !== 'overview'
+      ? saved
+      : { kind: 'dir', rel: '素材/人物', deep: false };
+  }
   const raw = state.assetView || { kind: 'overview' };
   // 老的「素材分类」视图统一成目录视图：素材/<人物|场景|道具>
   const view = raw.kind === 'material'
     ? { kind: 'dir', rel: '素材/' + assetTypeMeta(raw.type).label, type: raw.type }
     : raw;
-  if (view.kind === 'dir' && !view.rel) return { kind: 'overview' };
+  saveAssetView(view);
+  if (view.kind === 'dir' && !view.rel) return { kind: 'dir', rel: '素材/人物', deep: false };
   if (view.kind === 'shot') {
     const task = (data?.tasks || []).find((row) => (view.taskId ? row.id === view.taskId : row.title === view.taskTitle));
-    if (!task || !(task.shots || []).some((shot) => shot.name === view.name)) return { kind: 'overview' };
+    if (!task || !(task.shots || []).some((shot) => shot.name === view.name)) return { kind: 'shot-root' };
     return { ...view, taskId: task.id, taskTitle: task.title };
   }
   return view;
@@ -2614,38 +2791,83 @@ function renderAssetOverview(data) {
   <div class="asset-folders">${cards}</div>`;
 }
 
-/** 右侧只列文件：点分类是这一类全部文件，点项目文件夹是它里面的文件，这里不再重复列文件夹。 */
+/** 人物 / 场景 / 道具：三栏——文件夹 → 文件列表 → 预览 */
 function renderDirView(view) {
   const rel = view.rel || '素材/人物';
-  const deep = view.deep === true;
-  const info = assetDirInfo(rel, deep);
   const parts = rel.split('/');
-  const name = parts[parts.length - 1];
-  // 只有「素材/人物」这一层才给上传按钮：上传接口固定写到 assets/素材/<类型>/ 根下
-  const material = ASSET_MATERIALS.find((row) => rel === '素材/' + row.label) || null;
+  const material = ASSET_MATERIALS.find((row) => rel === '素材/' + row.label)
+    || ASSET_MATERIALS.find((row) => rel.startsWith('素材/' + row.label))
+    || ASSET_MATERIALS[0];
+  const rootRel = '素材/' + material.label;
+  const rootInfo = assetDirAny(rootRel);
+  const folders = (rootInfo && rootInfo.dirs) || [];
+  const info = assetDirAny(rel);
   const query = String(state.assetQuery || '').toLowerCase();
   const files = ((info && info.files) || []).filter((file) => !query || String(file.name).toLowerCase().includes(query));
-  const cards = files.map((file) => ({
-    name: file.name,
-    rel: file.rel,
-    url: file.url,
-    kind: file.media,
-    // 分类从路径里取（素材/人物/…），深层目录时要带上所属项目文件夹
-    typeLabel: [assetTypeLabelOf(file.rel), deep ? (file.folder || '') : ''].filter(Boolean).join(' · '),
-    bytes: file.bytes,
-  }));
-  const body = (!info || (info.loading && !info.loaded))
-    ? `<div class="empty"><span class="spinner"></span></div>`
-    : info.error
-      ? assetLibraryEmpty('读不到这个目录', info.error)
-      : cards.length ? renderAssetGrid(cards, '', '') : assetLibraryEmpty('这里还没有文件', `把图放进 ${rel}/ 就会显示在这里。`);
+  const activeName = view.file || '';
+  const active = files.find((file) => file.name === activeName) || null;
+
+  const crumbs = parts.map((part, index) => {
+    const target = parts.slice(0, index + 1).join('/');
+    const isLast = index === parts.length - 1;
+    const node = isLast
+      ? `<span class="asset-crumb is-current">${esc(part)}</span>`
+      : `<button type="button" class="asset-crumb" data-asset-crumb="${esc(target)}">${esc(part)}</button>`;
+    return (index ? '<span class="asset-crumb-sep">/</span>' : '') + node;
+  }).join('');
+
+  const folderCol = folders.length
+    ? folders.map((dir) => {
+      const on = dir.rel === rel;
+      return `<button type="button" class="asset-nav-item${on ? ' is-on' : ''}" data-asset-folder="${esc(dir.rel)}" title="${esc(dir.rel)}">
+        <span class="asset-nav-icon">📁</span>
+        <span class="asset-nav-name">${esc(dir.name || dir.rel.split('/').pop())}</span>
+        <em>${dir.total == null ? '' : dir.total}</em>
+      </button>`;
+    }).join('')
+    : `<div class="shot-col-empty">${esc(material.label)}下面还没有项目文件夹</div>`;
+
+  const fileCol = files.length
+    ? files.map((file) => {
+      const on = file.name === activeName;
+      return `<button type="button" class="asset-nav-item asset-nav-file${on ? ' is-on' : ''}" data-asset-file="${esc(file.name)}" data-asset-rel="${esc(rel)}" title="${esc(file.name)}">
+        <span class="asset-nav-thumb">${file.media === 'image' ? `<img src="${file.url}" alt="" loading="lazy" />` : '♪'}</span>
+        <span class="asset-nav-name">${esc(file.name)}</span>
+      </button>`;
+    }).join('')
+    : `<div class="shot-col-empty">${info && info.loading && !info.loaded ? '读取中…' : '这个文件夹还没有文件'}</div>`;
+
+  const detail = active
+    ? `<div class="asset-preview-stage">
+        ${active.media === 'image'
+          ? `<img src="${active.url}" alt="${esc(active.name)}" />`
+          : '<span class="asset-preview-audio">音频文件</span>'}
+        <div class="asset-preview-tools">
+          <button type="button" class="wmd-tool-btn" data-asset-copy="${esc(active.url)}" data-asset-name="${esc(active.name)}" title="复制图片">复制</button>
+          <button type="button" class="wmd-tool-btn" data-asset-download="${esc(active.url)}" data-asset-name="${esc(active.name)}" title="下载图片">下载</button>
+          <button type="button" class="wmd-tool-btn" data-asset-meta-toggle="1" title="查看参数">参数</button>
+        </div>
+        <dl class="asset-preview-meta" id="asset-preview-meta" hidden>
+          <div><dt>名称</dt><dd>${esc(active.name)}</dd></div>
+          <div><dt>路径</dt><dd class="mono">${esc(active.rel)}</dd></div>
+          <div><dt>大小</dt><dd>${fmtBytes(active.bytes || 0)}</dd></div>
+        </dl>
+      </div>`
+    : `<div class="asset-preview-stage is-empty"><div class="shot-detail-empty"><b>选择中间的文件</b><p>点开图片在右侧预览。</p></div></div>`;
+
   return `<div class="library-main-head">
-    <div><h2>${esc(name)}</h2><p class="hint">${esc(parts.join(' → '))} · ${info && info.loaded ? info.total : '…'} 个文件${deep ? '（含各项目文件夹）' : ''}</p></div>
+    <div><nav class="asset-crumbs" aria-label="当前位置">${crumbs}</nav><p class="hint">${files.length} 个文件</p></div>
     <div class="library-actions">
-      ${material ? `<button class="btn" data-act="upload-material" data-material="${material.id}">上传${esc(material.label)}</button>` : ''}
+      <button type="button" class="btn sm ghost" data-act="open-assets">目录</button>
+      ${material ? `<button class="btn sm" data-act="upload-material" data-material="${material.id}">上传</button>` : ''}
+      <button type="button" class="btn sm ghost" data-act="refresh-assets">刷新</button>
     </div>
   </div>
-  ${body}`;
+  <div class="asset-browser">
+    <nav class="shot-col" aria-label="文件夹">${folderCol}</nav>
+    <nav class="shot-col" aria-label="文件">${fileCol}</nav>
+    <section class="shot-col asset-preview-col">${detail}</section>
+  </div>`;
 }
 
 function renderOtherView(data) {
@@ -2707,26 +2929,107 @@ function renderShotView(data, view) {
   ${renderShotFacts(shot)}`;
 }
 
+/* 分镜详情：9 宫格参考图 + 事实 */
+function renderShotDetail(shot) {
+  return `<div class="slot-grid">${shot.slots.map((slot) => renderSlotCard(shot, slot)).join('')}</div>
+${renderShotFacts(shot)}`;
+}
+
+/* 分镜三栏：任务 → 镜头（按顺序竖排）→ 详情 */
+function renderShotBrowser(data, view) {
+  const tasks = data.tasks || [];
+  const activeTask = tasks.find((row) => (view.taskId ? row.id === view.taskId : row.title === view.taskTitle)) || tasks[0] || null;
+  const shots = activeTask ? (activeTask.shots || []) : [];
+  const activeShot = view.kind === 'shot' ? shots.find((row) => row.name === view.name) : null;
+
+  const taskCol = tasks.map((task) => {
+    const key = assetTaskKey(task);
+    const on = activeTask && assetTaskKey(activeTask) === key;
+    return `<button type="button" class="shot-nav-item${on ? ' is-on' : ''}" data-shot-task="${esc(key)}" data-task-id="${esc(task.id || '')}" data-task-title="${esc(task.title)}" title="${esc(task.title)}">
+      <span class="shot-nav-name">${esc(task.title)}</span><em>${task.count}</em>
+    </button>`;
+  }).join('');
+
+  const shotCol = shots.map((shot, index) => {
+    const on = activeShot && activeShot.name === shot.name;
+    return `<button type="button" class="shot-nav-item shot-nav-shot${on ? ' is-on' : ''}" data-shot-nav="${esc(shot.name)}" data-task-id="${esc(activeTask.id || '')}" data-task-title="${esc(activeTask.title)}" title="${esc(shot.name)}">
+      <span class="shot-nav-index">${String(index + 1).padStart(2, '0')}</span>
+      <span class="shot-nav-name">${esc(shot.name)}</span><em>${shot.count}/9</em>
+    </button>`;
+  }).join('');
+
+  const detail = activeShot
+    ? renderShotDetail(activeShot)
+    : (shots.length
+      ? `<div class="shot-detail-empty"><b>选择左侧的镜头</b><p>按顺序点开镜头，查看它的 9 张参考图。</p></div>`
+      : assetLibraryEmpty('这个任务还没有镜头', '在创作台建好镜头后会同步过来。'));
+
+  return `<div class="library-main-head">
+    <div><nav class="asset-crumbs" aria-label="当前位置"><span class="asset-crumb is-current">分镜</span></nav><p class="hint">${tasks.length} 个任务 · ${shots.length} 个镜头</p></div>
+    <div class="library-actions">
+      <button type="button" class="btn sm ghost" data-act="open-assets">目录</button>
+      <button type="button" class="btn sm ghost" data-act="new-task">＋ 新建任务</button>
+      <button type="button" class="btn sm ghost" data-act="new-shot">＋ 新建镜头</button>
+      <button type="button" class="btn sm ghost" data-act="refresh-assets">刷新</button>
+    </div>
+  </div>
+  <div class="shot-browser">
+    <nav class="shot-col" aria-label="任务">${taskCol || '<div class="shot-col-empty">还没有任务</div>'}</nav>
+    <nav class="shot-col" aria-label="镜头">${shotCol || '<div class="shot-col-empty">这个任务还没有镜头</div>'}</nav>
+    <section class="shot-col shot-detail">${detail}</section>
+  </div>`;
+}
+
 function renderAssets() {
   if (!state.assetLibrary) return `<div class="empty"><span class="spinner"></span></div>`;
   const data = state.assetLibrary;
   const view = currentAssetView();
-  const body = view.kind === 'shot' ? renderShotView(data, view)
+  const body = (view.kind === 'shot' || view.kind === 'shot-root' || view.kind === 'shot-task')
+    ? renderShotBrowser(data, view)
     : view.kind === 'other' ? renderOtherView(data)
-    : view.kind === 'dir' ? renderDirView(view)
-    : renderAssetOverview(data);
+      : view.kind === 'dir' ? renderDirView(view)
+        : renderAssetOverview(data);
   return `<div class="library-page" style="width:100%">
     ${renderAssetSidebar(data, view)}
     <section class="library-main">
-      <div class="library-top">
-        <input class="input" id="asset-search" placeholder="搜索素材 / 分镜" value="${esc(state.assetQuery || '')}" />
-        <button class="btn sm ghost" data-act="refresh-assets">重新扫描</button>
-        <button class="btn sm ghost" data-act="open-assets">打开目录</button>
-      </div>
       ${body}
     </section>
   </div>`;
 }
+
+/* 左侧二级菜单直接切分类：人物 / 场景 / 道具 进目录，分镜进分镜三栏 */
+window.__assetsOpen = async (target) => {
+  if (target === 'shots') {
+    state.assetView = { kind: 'shot-root' };
+    state.assetExpanded = {};
+    if (state.route !== 'assets') { location.hash = '#assets'; return true; }
+    render();
+    return true;
+  }
+  const rel = String(target || '素材/人物');
+  const go = async () => {
+    state.assetView = { kind: 'dir', rel, deep: false };
+    syncHash('assets', { dir: rel });
+    render();
+    await loadAssetDir(rel, false);
+    // 分类根没有直接文件时，自动进第一个项目文件夹，三栏才不会是空的
+    const info = assetDirAny(rel);
+    const first = info && info.dirs && info.dirs[0];
+    if (first && !(info.files || []).length) {
+      state.assetView = { kind: 'dir', rel: first.rel, deep: false };
+      syncHash('assets', { dir: first.rel });
+      await loadAssetDir(first.rel, false);
+    }
+    render();
+  };
+  if (state.route !== 'assets') {
+    location.hash = '#assets';
+    setTimeout(go, 60);
+    return true;
+  }
+  await go();
+  return true;
+};
 
 function assetConfirm(title, text, onConfirm) {
   openModal(`<div class="modal-head"><h2>${esc(title)}</h2><button class="btn ghost sm" data-close="1">关闭</button></div>
@@ -2880,6 +3183,33 @@ async function openAssetPicker(task, shotName, slot) {
 function bindAssets(root) {
   // 只把总览读一次；目录树是纯本地缓存，用户点开某一层才去读盘，进来不会自己扫目录
   ensureAssetLibrary();
+  // 刷新后回到上次分类：该层目录还没读过就先读一次
+  {
+    const view0 = currentAssetView();
+    if (view0.kind === 'dir' && view0.rel && !assetDirAny(view0.rel)) {
+      loadAssetDir(view0.rel, false).then(() => {
+        const info = assetDirAny(view0.rel);
+        const first = info && info.dirs && info.dirs[0];
+        // 分类根没有直接文件时，自动落到第一个项目文件夹，三栏不会是空的
+        if (first && !(info.files || []).length) {
+          state.assetView = { kind: 'dir', rel: first.rel, deep: false };
+          syncHash('assets', { dir: first.rel });
+          return loadAssetDir(first.rel, false);
+        }
+        return null;
+      }).then(() => { if (state.route === 'assets') render(); }).catch(() => {});
+    }
+  }
+  // 点预览区以外的空白处收起参数浮层（全局只绑一次）
+  if (!window.__assetMetaOutsideBound) {
+    window.__assetMetaOutsideBound = true;
+    document.addEventListener('click', (e) => {
+      const box = document.querySelector('#asset-preview-meta');
+      if (!box || box.hidden) return;
+      if (box.contains(e.target) || (e.target.closest && e.target.closest('[data-asset-meta-toggle]'))) return;
+      box.hidden = true;
+    });
+  }
   const search = $('#asset-search');
   if (search) {
     search.oninput = () => {
@@ -2893,6 +3223,103 @@ function bindAssets(root) {
     };
   }
   root.addEventListener('click', async (event) => {
+    // 预览区右上角：复制 / 下载 / 参数
+    const copyBtn = event.target.closest('[data-asset-copy]');
+    if (copyBtn) {
+      event.preventDefault();
+      try {
+        const src = copyBtn.dataset.assetCopy;
+        const blob = await (await fetch(src)).blob();
+        await navigator.clipboard.write([new ClipboardItem({ [blob.type || 'image/png']: blob })]);
+        toast('图片已复制到剪贴板');
+      } catch (err) {
+        toast('复制失败：' + err.message, true);
+      }
+      return;
+    }
+    const downBtn = event.target.closest('[data-asset-download]');
+    if (downBtn) {
+      event.preventDefault();
+      const a = document.createElement('a');
+      a.href = downBtn.dataset.assetDownload;
+      a.download = downBtn.dataset.assetName || '';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      return;
+    }
+    const metaBtn = event.target.closest('[data-asset-meta-toggle]');
+    if (metaBtn) {
+      event.preventDefault();
+      const box = document.querySelector('#asset-preview-meta');
+      if (box) box.hidden = !box.hidden;
+      return;
+    }
+    // 文件夹列：切到该文件夹，文件列跟着换
+    const folder = event.target.closest('[data-asset-folder]');
+    if (folder) {
+      const rel = folder.dataset.assetFolder;
+      state.assetView = { kind: 'dir', rel, deep: false };
+      syncHash('assets', { dir: rel });
+      render();
+      const info = assetDirInfo(rel, false);
+      if (!info || (!info.loaded && !info.loading)) {
+        await loadAssetDir(rel, false);
+        if (state.route === 'assets') render();
+      }
+      return;
+    }
+    // 文件列：选中后在右侧预览
+    const fileNode = event.target.closest('[data-asset-file]');
+    if (fileNode) {
+      state.assetView = { kind: 'dir', rel: fileNode.dataset.assetRel, deep: false, file: fileNode.dataset.assetFile };
+      syncHash('assets', { dir: fileNode.dataset.assetRel });
+      render();
+      return;
+    }
+    // 面包屑：回到上一级
+    const crumb = event.target.closest('[data-asset-crumb]');
+    if (crumb) {
+      const rel = crumb.dataset.assetCrumb;
+      state.assetView = { kind: 'dir', rel, deep: false };
+      syncHash('assets', { dir: rel });
+      render();
+      const info = assetDirInfo(rel, false);
+      if (!info || (!info.loaded && !info.loading)) {
+        await loadAssetDir(rel, false);
+        if (state.route === 'assets') render();
+      }
+      return;
+    }
+    // 分镜分类的面包屑：回到任务列表
+    if (event.target.closest('[data-asset-crumb-shots]')) {
+      state.assetView = { kind: 'shot-root' };
+      render();
+      return;
+    }
+    // 分镜分类里的任务：切任务，镜头列跟着换
+    const shotTask = event.target.closest('[data-shot-task]');
+    if (shotTask) {
+      state.assetView = {
+        kind: 'shot-task',
+        taskId: shotTask.dataset.taskId,
+        taskTitle: shotTask.dataset.taskTitle,
+      };
+      render();
+      return;
+    }
+    // 镜头列：选中某个镜头，右侧出 9 宫格
+    const shotNav = event.target.closest('[data-shot-nav]');
+    if (shotNav) {
+      state.assetView = {
+        kind: 'shot',
+        name: shotNav.dataset.shotNav,
+        taskId: shotNav.dataset.taskId,
+        taskTitle: shotNav.dataset.taskTitle,
+      };
+      render();
+      return;
+    }
     // 资产树：整行可点（箭头跟在名称后面，只是提示）。
     //   分类行 → 展开/收起，并在右侧列出这一类「全部项目」的文件（deep）
     //   项目行 → 右侧只列它这一层的文件
@@ -3104,14 +3531,35 @@ async function loadMediaTaskItems(taskTitle) {
 }
 
 function mediaProjectHead(data, extraActions) {
-  const projects = state.projects || [];
+  // 本地磁盘路径不展示；需要时用「打开目录」按钮
   return `<div class="page-head">
-    <div><h1>媒体库</h1><p class="media-project-bar">
-      ${projects.length ? `<label>项目 <select class="select" id="media-project">${projects.map((project) => `<option value="${esc(project.id)}" ${project.id === data.projectId ? 'selected' : ''}>${esc(project.name)}</option>`).join('')}</select></label>` : `<span class="media-project">项目：${esc(data.projectName || data.projectId || '未选择项目')}</span>`}
-      <span class="mono">${esc(data.root || '')}</span></p></div>
+    <div><h1>媒体库</h1></div>
     <div class="page-actions">${extraActions}</div>
   </div>`;
 }
+
+/* 左侧二级菜单：全部成片 / 某个任务的分镜成片 */
+window.__mediaSetEpisode = async (target) => {
+  state.mediaKind = 'video';
+  if (state.route !== 'media') {
+    location.hash = '#media';
+    return true;
+  }
+  if (!target) {
+    state.mediaTask = '';
+    state.mediaTaskItems = null;
+    state.mediaEpisode = '';
+    syncHash('media', {});
+    render();
+    return true;
+  }
+  const title = String(target).startsWith('task:') ? String(target).slice(5) : String(target);
+  try { await loadMediaTaskItems(title); } catch (error) { /* 忽略 */ }
+  state.mediaEpisode = '';
+  syncHash('media', { task: title });
+  render();
+  return true;
+};
 
 /** 默认视图：按任务列出菜单，一个缩略图都不预加载。 */
 function renderMediaTaskMenu() {
@@ -3127,37 +3575,31 @@ function renderMediaTaskMenu() {
       <button class="btn" data-act="episode-new">新建分集</button>`;
   const menu = tasks.length ? `<div class="media-task-menu">${tasks.map((task) => `
     <button type="button" class="media-task-tile" data-media-task="${esc(task.taskTitle)}">
-      <span class="media-task-cover">${task.cover
-        ? (task.coverKind === 'video'
-          ? `<video src="${task.cover}#t=0.5" preload="none" muted></video>`
-          : `<img src="${task.cover}" loading="lazy" alt="" />`)
-        : '<span class="hint">无封面</span>'}</span>
+      <span class="media-task-cover" aria-hidden="true">📁</span>
       <span class="media-task-body">
         <b>${esc(task.taskTitle)}</b>
         <span class="hint">${task.videos ? `视频 ${task.videos}` : ''}${task.videos && task.images ? ' · ' : ''}${task.images ? `图像 ${task.images}` : ''} · ${fmtBytes(task.bytes)}</span>
         <span class="hint">最近 ${new Date(task.mtime).toLocaleString('zh-CN', { hour12: false })}</span>
       </span>
-      <span class="media-task-open">查看 →</span>
     </button>`).join('')}</div>`
     : `<div class="card"><div class="empty"><strong>还没有成片</strong><p>生成的成片会自动保存到媒体库目录，按日期 / 任务分文件夹；也可以用右上角「导入成片」把自己生成或下载的视频放进来。</p></div></div>`;
   return `
   ${mediaProjectHead(data, actions)}
-  <div class="filters">
-    <button class="chip ${kind === 'video' ? 'active' : ''}" data-kind="video">视频 ${counts.video || 0}</button>
-    <button class="chip ${kind === 'image' ? 'active' : ''}" data-kind="image">图像 ${counts.image || 0}</button>
-    <span class="hint media-task-tip">共 ${tasks.length} 个任务 · 点一个任务再加载它的成片，避免一次把全部缩略图都拉下来</span>
-  </div>
   ${menu}`;
 }
 
 function renderMedia() {
-  if (!state.mediaTask) return renderMediaTaskMenu();
-  const kind = state.mediaKind || 'video';
+  if (!state.mediaTask) return renderMediaTaskMenu();  const kind = state.mediaKind || 'video';
   const data = state.mediaTaskItems;
   if (!data) return `<div class="empty"><span class="spinner"></span></div>`;
   const { episodes, assignments, jianying } = episodeData();
-  const filter = state.mediaEpisode || '';
   const allItems = data.items.filter((i) => i.kind === kind);
+  // 分集只在这个任务内部生效：别的任务的分集不往这里带，避免越积越多
+  const usedEpisodeIds = new Set(allItems.map((item) => assignments[item.rel]).filter(Boolean));
+  const taskEpisodes = episodes.filter((episode) => usedEpisodeIds.has(episode.id));
+  let filter = state.mediaEpisode || '';
+  if (filter && filter !== '__none__' && !taskEpisodes.some((episode) => episode.id === filter)) filter = '';
+  if (filter === '__none__' && !allItems.some((item) => !assignments[item.rel])) filter = '';
   const items = allItems.filter((item) => mediaEpisodeMatches(item, filter));
   const shotNumber = (value) => {
     const match = /(\d+)/.exec(String(value || ''));
@@ -3170,38 +3612,53 @@ function renderMedia() {
     groups.get(key).push({ item, index });
   });
   groups.forEach((rows) => rows.sort((a, b) => (shotNumber(a.item.shotLabel || a.item.outputLabel) - shotNumber(b.item.shotLabel || b.item.outputLabel)) || (b.item.mtime - a.item.mtime)));
-  const current = episodes.find((episode) => episode.id === filter) || null;
+  const current = taskEpisodes.find((episode) => episode.id === filter) || null;
   const countOf = (episodeId) => allItems.filter((item) => assignments[item.rel] === episodeId).length;
   const unassigned = allItems.filter((item) => !assignments[item.rel]).length;
-  const importLabel = current ? '导入剪映：' + current.name : (episodes.length ? '导入剪映（全部集）' : '导入剪映');
+  const importLabel = current ? '导入剪映：' + current.name : '导入剪映（全部）';
   const importable = current
     ? countOf(current.id)
-    : (episodes.length ? episodes.reduce((sum, episode) => sum + countOf(episode.id), 0) : allItems.length);
+    : (taskEpisodes.length ? taskEpisodes.reduce((sum, episode) => sum + countOf(episode.id), 0) : allItems.length);
   const missing = jianying && jianying.available === false;
+  const epChip = (id, name, count, active) => `<button class="ep-chip${active ? ' active' : ''}" data-episode="${esc(id)}" data-drop-episode="${esc(id)}">
+      <svg class="ep-chip-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 3h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+      <span class="ep-chip-label">${esc(name)}</span>
+      <b>${count}</b>
+    </button>`;
   const actions = `
-      <button class="btn ghost" data-act="media-tasks-back">← 所有任务</button>
-      <button class="btn" data-act="media-import">导入成片</button>
       ${kind === 'video' ? '<button class="btn" data-act="rename-media-shots">按镜头名重命名</button>' : ''}
       <button class="btn" data-act="open-media-root">打开目录</button>
-      <button class="btn" data-act="refresh-media">刷新</button>
-      <button class="btn" data-act="episode-new">新建分集</button>
-      <button class="btn primary" data-act="jianying-import" ${importable ? '' : 'disabled'} title="把这一集（或全部集）的成片按镜头顺序做成剪映草稿">${importLabel}</button>`;
+      <button class="btn" data-act="refresh-media">刷新</button>`;
   return `
   ${mediaProjectHead(data, actions)}
-  <div class="media-task-current"><b>${esc(state.mediaTask)}</b><span class="hint">${allItems.length} 个${kind === 'video' ? '视频' : '图像'} · 只加载了这个任务</span></div>
-  <div class="filters">
-    <button class="chip ${kind === 'video' ? 'active' : ''}" data-kind="video">视频 ${data.items.filter((i) => i.kind === 'video').length}</button>
-    <button class="chip ${kind === 'image' ? 'active' : ''}" data-kind="image">图像 ${data.items.filter((i) => i.kind === 'image').length}</button>
-  </div>
-  <div class="ep-bar">
-    <button class="ep-chip ${filter ? '' : 'active'}" data-episode="" data-drop-episode="">全部 <b>${allItems.length}</b></button>
-    ${episodes.map((episode) => `<button class="ep-chip ${filter === episode.id ? 'active' : ''}" data-episode="${esc(episode.id)}" data-drop-episode="${esc(episode.id)}">${esc(episode.name)} <b>${countOf(episode.id)}</b></button>`).join('')}
-    ${episodes.length ? `<button class="ep-chip ${filter === '__none__' ? 'active' : ''}" data-episode="__none__" data-drop-episode="__none__">未分集 <b>${unassigned}</b></button>` : ''}
-    ${current ? `<span class="ep-actions"><button class="btn ghost sm" data-act="episode-rename">重命名</button><button class="btn ghost sm" data-act="episode-delete">删除分集</button></span>` : ''}
-    <span class="ep-hint">把卡片拖到某一集上即可归入 · 剪辑交给剪映：点右上「导入剪映」生成草稿后打开剪映接着剪${missing ? ' · 没找到剪映草稿目录，先打开一次剪映' : ''}</span>
-  </div>
+  <nav class="media-crumbs" aria-label="当前位置">
+    <button type="button" class="asset-crumb" data-act="media-tasks-back">媒体库</button>
+    <span class="asset-crumb-sep">/</span>
+    <span class="asset-crumb is-current">${esc(state.mediaTask)}</span>
+  </nav>
+  <section class="ep-section">
+    <div class="ep-head">
+      <h3>分集</h3>
+      <span class="hint">把成片卡片拖到某一集上即可归入</span>
+      <span class="grow"></span>
+      <span class="ep-actions">
+        ${current ? '<button class="btn ghost sm" data-act="episode-rename">重命名</button><button class="btn ghost sm" data-act="episode-delete">删除分集</button>' : ''}
+        <button class="btn sm primary" data-act="jianying-import" ${importable ? '' : 'disabled'} title="把这一集（或全部）的成片按镜头顺序做成剪映草稿">${importLabel}</button>
+      </span>
+    </div>
+    <div class="ep-bar">
+      ${epChip('', '全部', allItems.length, !filter)}
+      ${taskEpisodes.map((episode) => epChip(episode.id, episode.name, countOf(episode.id), filter === episode.id)).join('')}
+      ${unassigned ? epChip('__none__', '未分集', unassigned, filter === '__none__') : ''}
+      <button type="button" class="ep-chip ep-chip-new" data-act="episode-new">
+        <svg class="ep-chip-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+        <span class="ep-chip-label">新建分集</span>
+      </button>
+    </div>
+    <p class="hint ep-foot">剪辑交给剪映：点右上「导入剪映」生成草稿后打开剪映接着剪${missing ? ' · 没找到剪映草稿目录，先打开一次剪映' : ''}</p>
+  </section>
   ${items.length ? [...groups.entries()].map(([taskTitle, rows]) => `<section class="media-task-group">
-    <div class="media-task-head"><b>${esc(taskTitle)}</b><span class="hint">${rows.length} 条</span><span class="grow"></span><button class="btn ghost sm" data-act="group-assign" data-task="${esc(taskTitle)}">整组归入…</button></div>
+    <div class="media-task-head"><b>${esc(taskTitle)}</b><span class="hint">${rows.length} 条</span><span class="grow"></span><button class="btn ghost sm" data-act="group-assign" data-task="${esc(taskTitle)}">整组归入</button><button class="btn sm" data-act="media-import">导入成片</button></div>
     <div class="grid-cards">${rows.map(({ item, index }) => {
       const episodeName = episodeNameOf(assignments[item.rel] || '');
       return `
@@ -3387,6 +3844,7 @@ function bindMedia(root) {
         state.mediaEpisode = '';
         await loadMediaTaskItems(taskTile.dataset.mediaTask);
         await reloadMediaEpisodes();
+        syncHash('media', { task: taskTile.dataset.mediaTask });
         render();
       } catch (err) { toast(err.message, true); }
       return;
@@ -3659,15 +4117,18 @@ function bindSplitter(root, panelSel, onResize) {
 
 
 function imageTabsHtml(tab) {
-  return `<div class="wmd-page-tabs">
-    <button type="button" class="wmd-page-tab ${tab === 'edit' ? 'is-on' : ''}" data-img-tab="edit">图像编辑</button>
-    <button type="button" class="wmd-page-tab ${tab === 'generate' ? 'is-on' : ''}" data-img-tab="generate">图像生成</button>
-    <button type="button" class="wmd-page-tab ${tab === 'reverse' ? 'is-on' : ''}" data-img-tab="reverse">图像反推</button>
-    <button type="button" class="wmd-page-tab ${tab === 'scene' ? 'is-on' : ''}" data-img-tab="scene">场景建模</button>
-    <span class="wmd-toolbar-spacer"></span>
-    <button type="button" class="wmd-iconbtn" data-act="manage-image-channels" title="图像模型">${GEAR}</button>
-  </div>`;
+  // 子页签已由左侧二级菜单承担，这里不再输出页内工具条（含齿轮设置）
+  return '';
 }
+
+// 供左侧二级菜单直接切换图像子页签（页内按钮已移除）
+window.__imageSwitchTab = (tab) => {
+  if (!['edit', 'generate', 'reverse', 'scene'].includes(tab)) return false;
+  state.image.tab = tab;
+  syncHash('image', { tab });
+  render();
+  return true;
+};
 
 function generationPrefixValue(kind) {
   const value=kind==='video'?state.studio:state.image;
@@ -5113,6 +5574,14 @@ function askState() {
       // 参考出图开关：关掉就不调用图像渠道（省钱），设置跟着浏览器记住
       refImages: (() => { try { return localStorage.getItem('wmd.askRefImages') !== '0'; } catch { return true; } })(),
       webSearch: (() => { try { return localStorage.getItem('wmd.askWebSearch') === '1'; } catch { return false; } })(),
+      // 本次请求的执行步数上限（工具调用轮次）：默认 120，输入框里可改，跟着浏览器记住
+      maxRounds: (() => {
+        try {
+          const saved = Number(localStorage.getItem('wmd.askMaxRounds'));
+          if (Number.isFinite(saved) && saved >= 10 && saved <= 400) return saved;
+        } catch { /* 忽略 */ }
+        return 120;
+      })(),
       // 本地权限档位：仅查看 / 工作区权限 / 完全权限
       permission: (() => { try { return askPermission(localStorage.getItem('wmd.askPermission') || '').id; } catch { return ASK_PERM_DEFAULT; } })(),
       permMenu: false,
@@ -6586,6 +7055,114 @@ function askMessagesHtml(chat) {
   return messages.map((m, index) => askMessageHtml(m, index, messages, a)).join('');
 }
 
+// 计速：输出速率与首字延迟都来自 receipt.timing（后端把模型墙钟 / 工具墙钟 / 纯解码分开记）。
+// 缺字段就少显示一项，不编造数字。
+function askSecs(ms) {
+  const v = Number(ms) || 0;
+  return v >= 10000 ? (v / 1000).toFixed(0) + 's' : (v / 1000).toFixed(1) + 's';
+}
+
+function askSessionStats(chat) {
+  const list = (chat && chat.messages) || [];
+  const s = { turns: 0, steps: 0, llm: 0, tool: 0, dec: 0, decTokens: 0, input: 0, output: 0, ttftSum: 0, ttftN: 0 };
+  for (const m of list) {
+    if (m.role !== 'assistant') continue;
+    const ex = m.execution || null;
+    if (!ex) continue;
+    const t = ex.timing || null;
+    const u = ex.usage || null;
+    s.turns += 1;
+    if (t) {
+      s.steps += Number(t.model_calls) || 0;
+      s.llm += Number(t.llm_ms) || 0;
+      s.tool += Number(t.tool_ms) || 0;
+      s.dec += Number(t.decode_ms) || 0;
+      s.decTokens += Number(t.decode_tokens) || 0;
+      if (t.ttft_ms) { s.ttftSum += Number(t.ttft_ms); s.ttftN += 1; }
+    }
+    if (u) { s.input += Number(u.input_tokens) || 0; s.output += Number(u.output_tokens) || 0; }
+  }
+  s.ttftAvg = s.ttftN ? s.ttftSum / s.ttftN : 0;
+  s.tps = s.dec > 0 && s.decTokens ? Number((s.decTokens / (s.dec / 1000)).toFixed(1)) : 0;
+  return s;
+}
+
+// 输入框下方的统计条：一行「轮次/步骤/速度/耗时/首字」，一行 token 合计。
+function askStatDockHtml() {
+  const s = askSessionStats(askActive());
+  if (!s.turns) return '';
+  const activity = ['轮次 ' + s.turns, '步骤 ' + s.steps, s.tps ? s.tps + ' tok/s' : '',
+    s.llm ? '模型 ' + askSecs(s.llm) : '', s.tool ? '工具 ' + askSecs(s.tool) : '',
+    s.ttftAvg ? '首字 ' + askSecs(s.ttftAvg) : ''].filter(Boolean);
+  const usage = ['输入 ' + askFmtTokens(s.input), '输出 ' + askFmtTokens(s.output), '合计 ' + askFmtTokens(s.input + s.output)];
+  return `<div class="ask-stat-dock">
+    <span class="ask-stat" data-composer-stat="activity" title="本会话 ${s.turns} 轮：模型墙钟与工具墙钟分开计">${esc(activity.join(' · '))}</span>
+    <span class="ask-stat" data-composer-stat="usage">${esc(usage.join(' · '))}</span>
+  </div>`;
+}
+
+// 每轮用量：timing 与 usage 必须都在，缺一个就整块不显示——不拿部分总量冒充完整。
+function askTurnUsageHtml(m) {
+  const ex = (m && m.execution) || null;
+  const t = ex && ex.timing;
+  const u = ex && ex.usage;
+  if (!t || !u || u.output_tokens == null) return '';
+  const head = [];
+  if (t.tps) head.push(t.tps + ' tok/s');
+  if (t.ttft_ms) head.push('首字 ' + askSecs(t.ttft_ms));
+  head.push('输出 ' + u.output_tokens + ' tokens');
+  const rows = [['模型耗时', t.llm_ms != null ? askSecs(t.llm_ms) : '—'],
+    ['工具耗时', t.tool_ms != null ? askSecs(t.tool_ms) : '—'],
+    ['解码', t.decode_ms != null ? askSecs(t.decode_ms) : '—'],
+    ['模型调用', (t.model_calls || 0) + ' 次'],
+    ['工具调用', (t.tool_calls || 0) + ' 次'],
+    ['输入 tokens', u.input_tokens ?? '—'],
+    ['输出 tokens', u.output_tokens ?? '—']];
+  return `<details class="ask-turn-usage">
+    <summary>${esc(head.join(' · '))}</summary>
+    <div class="ask-turn-usage-body">${rows.map(([k, v]) => `<span><i>${esc(k)}</i><b>${esc(String(v))}</b></span>`).join('')}</div>
+  </details>`;
+}
+
+function askSpeedHtml(m) {
+  const usage = (m && m.execution && m.execution.usage) || null;
+  const t = (m && m.execution && m.execution.timing) || null;
+  const parts = [];
+  if (usage) parts.push('输入 ' + (usage.input_tokens ?? '?') + ' / 输出 ' + (usage.output_tokens ?? '?'));
+  if (t && t.tps) parts.push(t.tps + ' tok/s');
+  if (t && t.ttft_ms) parts.push('首字 ' + (t.ttft_ms / 1000).toFixed(1) + 's');
+  if (!parts.length) return '';
+  const tip = t ? ['模型 ' + ((t.llm_ms || 0) / 1000).toFixed(2) + 's',
+    '工具 ' + ((t.tool_ms || 0) / 1000).toFixed(2) + 's',
+    '解码 ' + ((t.decode_ms || 0) / 1000).toFixed(2) + 's',
+    '模型调用 ' + (t.model_calls || 0) + ' 次 · 工具 ' + (t.tool_calls || 0) + ' 次'].join(' · ') : '';
+  return `<span class="ask-usage" title="${esc(tip)}">${esc(parts.join(' · '))}</span>`;
+}
+
+// 压缩卡片：时间线上看得见「哪一次压了多少条」，正文可展开。
+// 压掉的原文仍在运行轨迹里，这里只放摘要，不给用户造成「历史被我删了」的错觉。
+function askCompactionCardHtml(m, index) {
+  const c = m.compaction || {};
+  const n = Number(c.shadowed) || 0;
+  const chars = Number(c.summary_chars) || 0;
+  const tokens = chars ? Math.max(1, Math.round(chars / 1.6)) : 0;
+  const stamp = m.time ? askTimeText(m.time) : '';
+  return `<article class="ask-message is-compacted" data-msg-index="${index}" data-msg-id="${esc(m.id || '')}">
+    <details class="ask-cps">
+      <summary>
+        <span class="ask-cps-ico" aria-hidden="true">▤</span>
+        <b>上下文已压缩</b>
+        <small>已压缩 ${n} 条历史记录${tokens ? '（约 ' + askFmtTokens(tokens) + ' tokens）' : ''}</small>
+        <span class="ask-cps-time">${esc(stamp)}</span>
+      </summary>
+      <div class="ask-cps-body">
+        <div class="ask-cps-label">压缩摘要</div>
+        <pre>${esc(String(m.text || '') || '压缩摘要不可用')}</pre>
+      </div>
+    </details>
+  </article>`;
+}
+
 // 流式回复按“已显示字数”渲染，字迹匀速推进，不会每来一块就整段跳一下
 function askShownText(m, index, messages, a) {
   const text = String((m && m.text) || '');
@@ -6889,6 +7466,7 @@ function askVisibleReply(text) {
 }
 
 function askMessageHtml(m, index, messages, a) {
+  if (m.role === 'compacted') return askCompactionCardHtml(m, index);
   const mine = m.role === 'user';
   const pending = a.generating && index === messages.length - 1;
   const usage = m.execution && m.execution.usage;
@@ -6907,6 +7485,7 @@ function askMessageHtml(m, index, messages, a) {
       </button>`).join('')}</div>` : ''}
       ${mine ? '' : askChoiceNoteHtml(m)}
       ${mine ? '' : askSupplementNoteHtml(m)}
+      ${mine ? '' : askTurnUsageHtml(m)}
       ${mine ? '' : askQuickHtml(m, index)}
       ${(!mine && !pending) ? `<div class="ask-reply-actions">
         ${m.execution && m.execution.checkpoint_available && ['partial', 'failed', 'cancelled', 'budget_exceeded', 'interrupted'].includes(m.execution.outcome || m.execution.status) ? `<button type="button" data-act="ask-resume" data-index="${index}" title="从最近检查点继续，只读恢复">继续任务</button>` : ''}
@@ -6923,7 +7502,7 @@ function askMessageHtml(m, index, messages, a) {
         <button type="button" class="${a.liked.has(m.id) ? 'is-on' : ''}" data-act="ask-like" data-index="${index}" title="点赞"><span>▲</span>点赞</button>
         <button type="button" class="${a.disliked.has(m.id) ? 'is-on' : ''}" data-act="ask-dislike" data-index="${index}" title="有问题"><span>▼</span>有问题</button>
         <button type="button" data-act="ask-regenerate" data-index="${index}" title="重新生成这条回复"><span>↻</span>重生成</button>
-        <span class="ask-usage" title="输入 ${esc(String((usage && usage.input_tokens) ?? '未知'))} / 输出 ${esc(String((usage && usage.output_tokens) ?? '未知'))}">${esc(usage ? '输入 ' + usage.input_tokens + ' / 输出 ' + usage.output_tokens : '')}</span>
+        ${askSpeedHtml(m)}
         <span class="ask-time">${esc(askTimeText(m.time))}</span>
       </div>` : (mine ? `<div class="ask-reply-actions is-user-row">
         <button type="button" class="ask-turn-delete" data-act="ask-delete-turn" data-index="${index}" title="删除这一轮：问题连同它的回复一起删除">🗑 删除这一轮</button>
@@ -7013,10 +7592,12 @@ function askComposerHtml() {
       <textarea id="ask-input" class="ask-input" rows="2" maxlength="3000" placeholder="${a.generating ? '当前回复生成中：Enter 加入队列，队首 ↑ 可补充给当前任务' : '聊聊你的想法，或输入 @ 选择技能'}">${esc(a.draft)}</textarea>
       <div class="ask-composer-bar">
         <button type="button" class="ask-icon-btn" data-act="ask-attach" title="添加附件（最多 5 个，单文件 10MB）">📎</button>
-        <button type="button" class="ask-icon-btn" data-act="ask-skill-picker" title="插入 @视角">@</button>
+        <button type="button" class="ask-icon-btn ask-at-btn" data-act="ask-at" title="引用技能或项目文件（快捷键 @）">@</button>
+        <button type="button" class="ask-icon-btn ask-slash-btn" data-act="ask-slash" title="快捷命令：/model /think /compact（快捷键 /）">/</button>
         <button type="button" class="ask-perm is-${esc(askPermission(a.permission).id)}" data-act="ask-permission" title="本地权限：${esc(askPermission(a.permission).label)}（点击切换）">${askPermission(a.permission).icon} ${esc(askPermission(a.permission).label)}</button>
         <button type="button" class="ask-ref-toggle ${a.refImages ? 'is-on' : ''}" data-act="ask-toggle-refs" aria-pressed="${a.refImages}" title="参考出图开关">出图</button>
-        <button type="button" class="ask-ref-toggle ${a.webSearch ? 'is-on' : ''}" data-act="ask-toggle-web" role="switch" aria-checked="${!!a.webSearch}" title="${a.webSearch ? '联网检索已开启，下次发送可搜索和读取网页' : '联网检索已关闭，下次发送不提供联网工具'}">🌐 联网检索</button>
+        <button type="button" class="ask-ref-toggle ${a.webSearch ? 'is-on' : ''}" data-act="ask-toggle-web" role="switch" aria-checked="${!!a.webSearch}" title="${a.webSearch ? '联网已开启，下次发送可搜索和读取网页' : '联网已关闭，下次发送不提供联网工具'}">🌐 联网</button>
+        <label class="ask-rounds" title="本次任务最多执行多少步（一次工具调用约 2 步），默认 120"><span>轮次</span><input type="number" id="ask-max-rounds" min="10" max="400" step="10" value="${Number(a.maxRounds) || 120}" /></label>
         <select class="ask-select" id="ask-model" title="模型">
           ${models.map((m) => `<option value="${esc(m.id)}" ${m.id === a.modelId ? 'selected' : ''} title="上下文 ${m.context_tokens ? Math.round(m.context_tokens / 1000) + 'k' : '默认 500k'}">${esc(m.label)}${m.context_tokens ? ' · ' + Math.round(m.context_tokens / 1000) + 'k' : ''}</option>`).join('') || '<option value="">默认模型</option>'}
         </select>
@@ -7029,6 +7610,7 @@ function askComposerHtml() {
           : `<button type="button" class="ask-send" data-act="ask-send" ${a.draft.trim() ? '' : 'disabled'}>发送 ↑</button>`}
       </div>
     </div>
+    ${askStatDockHtml()}
     ${a.toolsSupported === false ? '<div class="ask-hint"><span class="ask-perm-warn">⚠ 当前模型渠道不支持工具调用，文件与命令操作不会执行：把模型切到 deepseek-flash 或 gemini-3.8-flash</span></div>' : ''}
   </div>`;
 }
@@ -7108,14 +7690,42 @@ function askUpdateContextMeter() {
   host.title = `上下文占用：${askFmtTokens(s.used)} / ${askFmtTokens(s.total)}（${(s.ratio * 100).toFixed(1)}%）${s.exact ? '' : ' · 估算'}`;
 }
 
+/** 斜杠命令目录来自后端 /agent/commands：加命令只改后端一处，前端不再写死三个。 */
+async function askLoadCommands() {
+  const a = askState();
+  try {
+    const data = await askApi('/commands').then((r) => r.json());
+    const list = Array.isArray(data) ? data : data.items || [];
+    const mapped = list.filter((c) => c && c.name).map((c) => ({
+      name: String(c.name),
+      label: c.label || c.name,
+      description: c.description || '',
+      kind: c.kind === 'popup' ? 'popup' : 'action',
+      arg: c.arg || c.name,
+    }));
+    if (mapped.length) a.commands = mapped;
+  } catch {
+    a.commands = a.commands || [];
+  }
+}
+
+function askCommandList() {
+  const a = askState();
+  if (a.commands && a.commands.length) return a.commands;
+  return [{ name: 'model', label: '换模型', description: '', kind: 'popup', arg: 'model' },
+    { name: 'think', label: '换思考强度', description: '', kind: 'popup', arg: 'think' },
+    { name: 'compact', label: '压缩当前对话上下文', description: '', kind: 'action', arg: 'compact' }];
+}
+
 function askCommandItems() {
   const a = askState();
   const cmd = a.command;
   if (cmd.mode === 'model') return (a.models || []).map((m) => ({ id: m.id, label: m.label }));
   if (cmd.mode === 'think') return askEfforts().map((e) => ({ id: e, label: ASK_EFFORT_LABELS[e] || e }));
-  const all = [{ id: 'model', label: '换模型' }, { id: 'think', label: '换思考强度' }, { id: 'compact', label: '压缩当前对话上下文' }];
-  const q = cmd.query || '';
-  return all.filter((c) => c.id.includes(q));
+  const q = (cmd.query || '').toLowerCase();
+  return askCommandList()
+    .filter((c) => !q || c.name.includes(q) || (c.label + ' ' + c.description).toLowerCase().includes(q))
+    .map((c) => ({ id: c.name, label: c.label, desc: c.description }));
 }
 
 function askCommandPopup() {
@@ -7124,8 +7734,34 @@ function askCommandPopup() {
   const items = askCommandItems();
   const title = a.command.mode === 'model' ? '选择模型' : a.command.mode === 'think' ? '选择思考强度' : '快捷命令';
   return `<div class="ask-popup ask-slash-popup"><div class="ask-popup-title">${title}</div>
-    ${items.map((item, i) => `<button type="button" class="${i === a.command.index ? 'is-hl' : ''}" data-act="ask-cmd" data-id="${esc(item.id)}"><b>${a.command.mode ? '' : '/'}${esc(item.id)}</b><span>${esc(item.label)}</span></button>`).join('')}
+    ${items.map((item, i) => `<button type="button" class="${i === a.command.index ? 'is-hl' : ''}" data-act="ask-cmd" data-id="${esc(item.id)}"><b>${a.command.mode ? '' : '/'}${esc(item.id)}</b><span title="${esc(item.desc || '')}">${esc(item.label)}</span></button>`).join('')}
     ${items.length ? '' : '<p class="ask-popup-empty">暂无可用选项</p>'}</div>`;
+}
+
+/** 拉取当前项目工作区的文件（3 层内），给 @ 引用用。60 秒内复用缓存。 */
+async function askLoadWorkspaceFiles(force) {
+  const a = askState();
+  if (!force && a.wsFiles && Date.now() - (a.wsFilesAt || 0) < 60000) return a.wsFiles;
+  const pid = askProjectId();
+  const out = [];
+  const walk = async (dirPath, depth) => {
+    if (depth > 4 || out.length > 400) return;
+    try {
+      const url = '/api/agent/workspace/tree' + (dirPath ? '?path=' + encodeURIComponent(dirPath) : '');
+      const res = await fetch(url, { headers: { 'X-Project-Id': pid } });
+      if (!res.ok) return;
+      const data = await res.json();
+      for (const it of data.items || []) {
+        if (it.kind === 'directory') { await walk(it.relative_path, depth + 1); continue; }
+        out.push({ name: it.name, path: it.relative_path, size: Number(it.size) || 0 });
+        if (out.length > 400) return;
+      }
+    } catch (error) { /* 单层失败不影响其它目录 */ }
+  };
+  await walk('', 0);
+  a.wsFiles = out;
+  a.wsFilesAt = Date.now();
+  return out;
 }
 
 function askMentionSkills() {
@@ -7134,18 +7770,60 @@ function askMentionSkills() {
   return askSkillList().filter((s) => (s.name + ' ' + s.description + ' ' + s.id).toLowerCase().includes(q));
 }
 
+/** @ 弹层的统一列表：技能 + 项目文件 + 本对话附件，键盘导航按这个顺序走 */
+function askMentionItems() {
+  const a = askState();
+  const q = (a.mention && a.mention.query || '').toLowerCase();
+  const skills = askMentionSkills().map((s) => ({ kind: 'skill', id: s.id, name: s.name, desc: s.description, icon: askSkillIcon(s.id) }));
+  const seen = new Set();
+  const files = [];
+  for (const f of (a.attachments || [])) {
+    const name = f.name || '';
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    files.push({ kind: 'file', id: name, name, desc: '本对话附件', icon: '📎' });
+  }
+  for (const f of (a.wsFiles || [])) {
+    if (seen.has(f.path)) continue;
+    seen.add(f.path);
+    files.push({ kind: 'file', id: f.path, name: f.name, desc: f.path, icon: '📄' });
+  }
+  const hit = files.filter((f) => !q || (f.name + ' ' + f.desc).toLowerCase().includes(q)).slice(0, 40);
+  return [...skills, ...hit];
+}
+
+function askChooseMentionItem(item) {
+  if (!item) return;
+  if (item.kind === 'file') return askChooseFile(item.id);
+  return askChooseMention(item.id);
+}
+
 function askMentionPopup() {
   const a = askState();
   if (!a.mention) return '';
-  const list = askMentionSkills();
+  const items = askMentionItems();
+  const groups = [];
+  for (const it of items) {
+    const name = it.kind === 'skill' ? '创作视角' : '项目文件';
+    let g = groups.find((x) => x.name === name);
+    if (!g) { g = { name, items: [] }; groups.push(g); }
+    g.items.push(it);
+  }
   return `<div class="ask-popup ask-mention-popup">
-    <div class="ask-popup-title"><span>✧ 选择创作视角</span><small>${list.length} 项</small></div>
-    ${list.map((s, i) => `<button type="button" class="${i === a.mention.index ? 'is-hl' : ''}" data-act="ask-mention" data-skill="${s.id}">
-      <span class="ask-mention-ico">${askSkillIcon(s.id)}</span>
-      <span><b>${esc(s.name)}</b><small>${esc(s.description)}</small></span>
-      ${s.id === a.skillId ? '<span class="ask-check">✓</span>' : '<span class="ask-enter">↵</span>'}
-    </button>`).join('')}
-    ${list.length ? '' : '<p class="ask-popup-empty">没有匹配的视角，试试“分镜”或“审核”。</p>'}
+    <div class="ask-popup-title"><span>✧ 引用技能或文件</span><small>${items.length} 项</small></div>
+    ${groups.map((g) => `<div class="ask-popup-group"><div class="ask-popup-group-title">${g.name}</div>
+      ${g.items.map((it) => {
+        const i = items.indexOf(it);
+        const mark = it.kind === 'skill' && it.id === a.skillId ? '<span class="ask-check">✓</span>' : '<span class="ask-enter">↵</span>';
+        return `<button type="button" class="${i === a.mention.index ? 'is-hl' : ''}" data-act="ask-mention" data-kind="${it.kind}" data-id="${esc(it.id)}">
+          <span class="ask-mention-ico">${it.icon}</span>
+          <span><b>${esc(it.name)}</b><small>${esc(it.desc || '')}</small></span>
+          ${mark}
+        </button>`;
+      }).join('')}
+    </div>`).join('')}
+    ${items.some((it) => it.kind === 'file') ? '' : `<div class="ask-popup-group"><div class="ask-popup-group-title">项目文件</div><p class="ask-popup-empty">项目工作区里还没有文件；用 📎 上传，或先在素材库建素材。</p></div>`}
+    ${items.length ? '' : '<p class="ask-popup-empty">没有匹配的技能或项目文件。</p>'}
     <div class="ask-popup-foot">↑ ↓ 选择 · Enter / Tab 确认 · Esc 关闭</div>
   </div>`;
 }
@@ -8670,6 +9348,7 @@ async function askQueueReply(chat, question, insertAt, fileIds = [], resumeId = 
         model_id: a.modelId || undefined,
         reasoning_effort: a.effort || undefined,
         web_search: !!webSearch,
+        max_rounds: a.maxRounds || undefined,
         permission: a.permission || ASK_PERM_DEFAULT,
       }),
     });
@@ -8893,7 +9572,12 @@ async function askChooseCommand(id) {
   if (a.command.mode === 'think') { a.effort = id; a.draft = ''; askClosePopups(); askRenderAll(); return; }
   a.draft = '';
   a.command = { mode: null, query: null, index: 0 };
-  if (id === 'model' || id === 'think') { a.command = { mode: id, query: null, index: 0 }; askRenderAll(); return; }
+  const cmd = askCommandList().find((c) => c.name === id);
+  const kind = cmd ? cmd.kind : 'action';
+  const arg = cmd ? cmd.arg : id;
+  if (kind === 'popup') { a.command = { mode: arg, query: null, index: 0 }; askRenderAll(); return; }
+  if (arg === 'help') { a.draft = '/'; a.command = { mode: null, query: '', index: 0 }; askRenderAll(); return; }
+  if (arg !== 'compact') { toast('命令 /' + id + ' 还没有实现', true); return; }
   if (!a.activeId) return;
   const ok = confirm('将已有对话概括成摘要供后续消息使用，历史消息仍保留，会消耗 Token。继续？');
   if (!ok) return;
@@ -8904,7 +9588,13 @@ async function askChooseCommand(id) {
       body: JSON.stringify({ model_id: a.modelId || undefined, reasoning_effort: a.effort || undefined }),
     });
     const result = await res.json();
-    toast('上下文已压缩（' + (result.messages || 0) + ' 条消息）');
+    const card = result && result.message;
+    if (card) {
+      const chat = askActive();
+      if (chat) { if (!Array.isArray(chat.messages)) chat.messages = []; chat.messages.push(card); }
+      a.scrollIntent = 'bottom';
+    }
+    toast('上下文已压缩 · ' + (result.messages || 0) + ' 条历史记录');
   } catch {
     toast('压缩失败，原上下文保留', true);
   } finally {
@@ -8915,6 +9605,8 @@ async function askChooseCommand(id) {
 
 function askClosePopups() {
   const a = askState();
+  // 记住是哪个 @ 被关掉的：同一个位置 + 同一段查询不再自动弹回来。
+  if (a.mention) a.mentionClosed = { start: a.mention.start, query: a.mention.query };
   a.mention = null;
   a.command = { mode: null, query: null, index: 0 };
 }
@@ -8928,13 +9620,25 @@ function askUpdateMention() {
   const cmd = input.value.match(/^\/([a-z]*)$/);
   a.command = { mode: null, query: cmd ? cmd[1] : null, index: 0 };
   const prefix = input.value.slice(0, end);
-  const match = prefix.match(/(?:^|\s)@([^\s@]*)$/);
+  // @"带 空格的路径" 优先匹配；普通 @token 到空白就停。
+  const quoted = prefix.match(/(?:^|\s)@"([^"]*)$/);
+  const match = quoted || prefix.match(/(?:^|\s)@([^\s@]*)$/);
   if (!match || input.selectionStart !== input.selectionEnd) { a.mention = null; return; }
-  const start = end - match[1].length - 1;
-  if (!a.mention || a.mention.query !== match[1]) {
-    a.mention = { start, end, query: match[1], index: 0 };
+  const query = match[1] || '';
+  const start = end - query.length - (quoted ? 2 : 1);
+  // 关掉就保持关闭：同一个 @ 位置 + 同一段查询不再自动弹回来，改查询或换位置才重新武装。
+  const closed = a.mentionClosed;
+  if (closed && closed.start === start && closed.query === query) { a.mention = null; return; }
+  a.mentionClosed = null;
+  const firstOpen = !a.mention;
+  if (!a.mention || a.mention.query !== query) {
+    a.mention = { start, end, query, index: 0, quoted: Boolean(quoted) };
   } else {
-    a.mention.start = start; a.mention.end = end; a.mention.query = match[1];
+    a.mention.start = start; a.mention.end = end; a.mention.query = query;
+  }
+  // 第一次打开 @ 时把项目文件拉进来（技能是本地数据，文件要走接口）
+  if (firstOpen && !a.wsFiles) {
+    askLoadWorkspaceFiles().then(() => { if (askState().mention) askRenderPopups(); }).catch(() => {});
   }
 }
 
@@ -8949,6 +9653,7 @@ function askChooseMention(id) {
   const value = input ? input.value : a.draft;
   a.draft = value.slice(0, range.start) + token + value.slice(range.end);
   a.mention = null;
+  a.mentionClosed = null;
   askRenderPopups();
   const chip = document.querySelector('.ask-skill-context');
   if (chip) chip.textContent = '✧ ' + skill.name;
@@ -8960,6 +9665,47 @@ function askChooseMention(id) {
     const c = $('.ask-draft-count'); if (c) c.textContent = a.draft.length + '/3000';
     const send = $('[data-act="ask-send"]'); if (send) send.disabled = !a.draft.trim();
   }
+}
+
+function askChooseFile(path) {
+  const a = askState();
+  const range = a.mention;
+  if (!range) return;
+  // 路径里有空白就必须加引号，否则 @ 会在空格处断掉，后端只能看到一个残缺路径。
+  const token = '@' + (/\s/.test(path) ? '"' + path + '"' : path) + ' ';
+  const input = $('#ask-input');
+  const value = input ? input.value : a.draft;
+  a.draft = value.slice(0, range.start) + token + value.slice(range.end);
+  a.mention = null;
+  askRenderPopups();
+  const el = $('#ask-input');
+  if (el) {
+    el.value = a.draft;
+    el.focus();
+    el.setSelectionRange(range.start + token.length, range.start + token.length);
+    const c = $('.ask-draft-count'); if (c) c.textContent = a.draft.length + '/3000';
+    const send = $('[data-act="ask-send"]'); if (send) send.disabled = !a.draft.trim();
+  }
+}
+
+/** 点工具栏的 @ / / 按钮：在光标处补一个触发符，直接打开对应弹层 */
+function askInsertTrigger(ch) {
+  const a = askState();
+  const input = $('#ask-input');
+  if (!input) return;
+  const start = typeof input.selectionStart === 'number' ? input.selectionStart : input.value.length;
+  const end = typeof input.selectionEnd === 'number' ? input.selectionEnd : start;
+  const before = input.value.slice(0, start);
+  const lead = ch === '@' && before && !/\s$/.test(before) ? ' ' : '';
+  input.value = before + lead + ch + input.value.slice(end);
+  const caret = start + lead.length + ch.length;
+  input.focus();
+  input.setSelectionRange(caret, caret);
+  a.draft = input.value;
+  askUpdateMention();
+  askRenderPopups();
+  const c = $('.ask-draft-count'); if (c) c.textContent = a.draft.length + '/3000';
+  const send = $('[data-act="ask-send"]'); if (send) send.disabled = !a.draft.trim();
 }
 
 function askAttachStatusText(file) {
@@ -9095,6 +9841,7 @@ function bindAsk(root) {
   if (!root) return;
   if (!a.models) { a.models = []; askLoadModels().then(() => { if (state.route === 'script') askRenderAll(); }); }
   if (!a.customSkills) { a.customSkills = []; askLoadSkills().then(() => { if (state.route === 'script') askRenderAll(); }); }
+  if (!a.commands) { a.commands = []; askLoadCommands().then(() => { if (state.route === 'script') askRenderAll(); }); }
 
   if (a.generating) {
     clearInterval(a._genTimer);
@@ -9123,13 +9870,41 @@ function bindAsk(root) {
         }
       }
       if (mentionOpen) {
-        if (event.key === 'Escape') { event.preventDefault(); a.mention = null; askRenderPopups(); return; }
-        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); const list = askMentionSkills(); if (list.length) { a.mention.index = (a.mention.index + (event.key === 'ArrowDown' ? 1 : -1) + list.length) % list.length; askRenderPopups(); } return; }
-        if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey)) { event.preventDefault(); const skill = askMentionSkills()[a.mention.index]; if (skill) askChooseMention(skill.id); return; }
+        if (event.key === 'Escape') { event.preventDefault(); if (a.mention) a.mentionClosed = { start: a.mention.start, query: a.mention.query }; a.mention = null; askRenderPopups(); return; }
+        if (event.key === ' ' && !event.shiftKey) {
+          // 空格仲裁：有候选就选定，没候选就让空格正常输入，不吃键。
+          const list = askMentionItems();
+          if (list.length) { event.preventDefault(); askChooseMentionItem(list[a.mention.index] || list[0]); return; }
+          a.mentionClosed = { start: a.mention.start, query: a.mention.query };
+          a.mention = null; askRenderPopups();
+          return;
+        }
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); const list = askMentionItems(); if (list.length) { a.mention.index = (a.mention.index + (event.key === 'ArrowDown' ? 1 : -1) + list.length) % list.length; askRenderPopups(); } return; }
+        if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey)) { event.preventDefault(); const item = askMentionItems()[a.mention.index]; if (item) askChooseMentionItem(item); return; }
       }
       if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); askSend(); }
     };
     if (!a.draft) input.focus();
+  }
+
+  // 轮次输入：夹到 10~400，改完记住，下一次发送就带上
+  const rounds = $('#ask-max-rounds');
+  if (rounds) {
+    const commit = () => {
+      const raw = Number(rounds.value);
+      const value = Number.isFinite(raw) ? Math.max(10, Math.min(400, Math.round(raw))) : 120;
+      rounds.value = String(value);
+      a.maxRounds = value;
+      try { localStorage.setItem('wmd.askMaxRounds', String(value)); } catch { /* 忽略 */ }
+    };
+    rounds.onchange = commit;
+    rounds.onblur = commit;
+    rounds.onkeydown = (event) => {
+      if (event.key !== 'Enter') return;
+      event.preventDefault();
+      commit();
+      rounds.blur();
+    };
   }
 
   // 问句条里的「自行撰写」：边输边存，不整块重绘，避免丢焦点
@@ -9502,7 +10277,9 @@ function bindAsk(root) {
       if (act === 'ask-use-skill') { a.skillId = btn.dataset.skill; return askSend(btn.dataset.prompt); }
       if (act === 'ask-fill') { a.draft = btn.dataset.text; askRenderAll(); const el = $('#ask-input'); if (el) el.focus(); return; }
       if (act === 'ask-cmd') return askChooseCommand(btn.dataset.id);
-      if (act === 'ask-mention') return askChooseMention(btn.dataset.skill);
+      if (act === 'ask-mention') return btn.dataset.kind === 'file' ? askChooseFile(btn.dataset.id) : askChooseMention(btn.dataset.id || btn.dataset.skill);
+      if (act === 'ask-at') return askInsertTrigger('@');
+      if (act === 'ask-slash') return askInsertTrigger('/');
       if (act === 'ask-permission') { a.permMenu = !a.permMenu; askRenderPopups(); return; }
       if (act === 'ask-perm') {
         askPermissionSet(btn.dataset.id);
@@ -10224,8 +11001,9 @@ function renderTasks(){
     : tab==='monitor'?Events.renderMonitor()
     : tab==='logs'?Events.renderLogs()
     : Events.render('manage');
-  const tabActions=`<div class="task-tabbar-actions">${tab==='monitor'?'<button type="button" class="btn sm" data-event-range="7">近 7 天报告</button>':''}${tab==='create'?'':'<button type="button" class="btn sm ghost" data-task-refresh="1">刷新</button>'}</div>`;
-  return `<header class="task-header"><div><h1>${title}</h1></div><div class="task-media-switch" role="group" aria-label="媒体类型"><button class="btn ${media==='video'?'primary':''}" data-task-media="video" aria-pressed="${media==='video'}">视频</button><button class="btn ${media==='image'?'primary':''}" data-task-media="image" aria-pressed="${media==='image'}">图像</button></div></header><section class="task-workspace"><div class="task-tabbar"><div class="task-tabs" role="tablist" aria-label="任务生命周期">${TASK_TABS.map(([id,label])=>`<button type="button" role="tab" id="task-tab-${id}" aria-controls="task-panel" data-task-tab="${id}" aria-selected="${tab===id}">${label}</button>`).join('')}</div>${tabActions}</div><div class="task-panel" id="task-panel" role="tabpanel" aria-labelledby="task-tab-${tab}">${body}</div></section>`;
+  const mediaSwitch=`<button type="button" class="wmd-tool-btn${media==='video'?' is-on':''}" data-task-media="video" aria-pressed="${media==='video'}">视频</button><button type="button" class="wmd-tool-btn${media==='image'?' is-on':''}" data-task-media="image" aria-pressed="${media==='image'}">图像</button>`;
+  const tabActions=`<div class="task-tabbar-actions">${mediaSwitch}${tab==='monitor'?'<button type="button" class="wmd-tool-btn" data-event-range="7">近 7 天报告</button>':''}${tab==='create'?'':'<button type="button" class="wmd-tool-btn" data-task-refresh="1">刷新</button>'}</div>`;
+  return `<section class="task-workspace"><div class="task-tabbar"><span class="task-eyebrow">TASK MANAGER</span><div class="task-tabs" role="tablist" aria-label="任务生命周期">${TASK_TABS.map(([id,label])=>`<button type="button" role="tab" id="task-tab-${id}" aria-controls="task-panel" data-task-tab="${id}" aria-selected="${tab===id}">${label}</button>`).join('')}</div>${tabActions}</div><div class="task-panel" id="task-panel" role="tabpanel" aria-labelledby="task-tab-${tab}">${body}</div></section>`;
 }
 
 async function loadTaskLogs(force=false){
@@ -10247,7 +11025,7 @@ function bindTasks(root){
       return;
     }
     const button=event.target.closest('[data-task-tab]');
-    if(button){state.taskEventStatus='';state.taskEventQuery='';state.taskEventMonth='';state.taskEventSort='runtime_desc';state.taskPages={...(state.taskPages||{}),events:1};state.taskTab=button.dataset.taskTab;localStorage.setItem('wmd.tasks.tab',state.taskTab);await Events.load();render();return;}
+    if(button){state.taskEventStatus='';state.taskEventQuery='';state.taskEventMonth='';state.taskEventSort='runtime_desc';state.taskPages={...(state.taskPages||{}),events:1};state.taskTab=button.dataset.taskTab;localStorage.setItem('wmd.tasks.tab',state.taskTab);syncHash('tasks',{tab:state.taskTab});await Events.load();render();return;}
   });
   Events.bind(root);
 }
@@ -10359,6 +11137,9 @@ function appearancePane() {
         <label class="wallpaper-dim" for="wallpaper-sidebar-dim"><span>左侧记录栏柔和度</span><input id="wallpaper-sidebar-dim" type="range" min="0" max="95" value="${Math.round(Number(ui.wallpaperSidebarDim ?? .15) * 100)}" /><output id="wallpaper-sidebar-dim-value">${Math.round(Number(ui.wallpaperSidebarDim ?? .15) * 100)}%</output></label>
         <label class="wallpaper-dim" for="wallpaper-preview-alpha"><span>右侧预览框背景透明度</span><input id="wallpaper-preview-alpha" type="range" min="0" max="100" value="${Number(ui.wallpaperPreviewTransparency ?? 85)}" /><output id="wallpaper-preview-alpha-value">${Number(ui.wallpaperPreviewTransparency ?? 85)}%</output></label>
         <label class="wallpaper-dim" for="wallpaper-workspace-alpha"><span>右侧工作区背景透明度</span><input id="wallpaper-workspace-alpha" type="range" min="0" max="100" value="${Number(ui.wallpaperWorkspaceTransparency ?? 85)}" /><output id="wallpaper-workspace-alpha-value">${Number(ui.wallpaperWorkspaceTransparency ?? 85)}%</output></label>
+        <label class="wallpaper-dim" for="wallpaper-page-alpha"><span>其它页面壁纸可见度</span><input id="wallpaper-page-alpha" type="range" min="0" max="100" value="${visPref(ui, 'pageTransparency', 55)}" /><output id="wallpaper-page-alpha-value">${visPref(ui, 'pageTransparency', 55)}%</output></label>
+        <label class="wallpaper-dim" for="wallpaper-side-alpha"><span>左侧菜单栏壁纸可见度</span><input id="wallpaper-side-alpha" type="range" min="0" max="100" value="${visPref(ui, 'sidebarTransparency', 60)}" /><output id="wallpaper-side-alpha-value">${visPref(ui, 'sidebarTransparency', 60)}%</output></label>
+        <label class="wallpaper-dim" for="wallpaper-top-alpha"><span>顶部与外框壁纸可见度</span><input id="wallpaper-top-alpha" type="range" min="0" max="100" value="${visPref(ui, 'topbarTransparency', 65)}" /><output id="wallpaper-top-alpha-value">${visPref(ui, 'topbarTransparency', 65)}%</output></label>
         <div class="wallpaper-rotation"><label><input type="checkbox" id="wallpaper-rotate" ${ui.wallpaperRotate ? 'checked' : ''} /> 自动轮换</label><select class="input" id="wallpaper-rotation-kind" aria-label="轮换类型">${[['static', '只换静态'], ['dynamic', '只换动态'], ['all', '静态与动态']].map(([value, label]) => `<option value="${value}" ${value === (ui.wallpaperRotationKind || 'static') ? 'selected' : ''}>${label}</option>`).join('')}</select><select class="input" id="wallpaper-interval" aria-label="轮换间隔">${[[60, '每 1 分钟'], [300, '每 5 分钟'], [900, '每 15 分钟']].map(([value, label]) => `<option value="${value}" ${value === (ui.wallpaperInterval || 300) ? 'selected' : ''}>${label}</option>`).join('')}</select></div>
       </div>
       <details class="wallpaper-legacy"><summary>清爽纯色主题</summary><div class="theme-grid">${themes.filter((t) => !t.day).map(card).join('')}</div></details>
@@ -10970,14 +11751,20 @@ function bindSettings() {
       try { await saveAppearance({ wallpaperRotate: $('#wallpaper-rotate').checked, wallpaperRotationKind: $('#wallpaper-rotation-kind').value, wallpaperInterval: Number($('#wallpaper-interval').value) }); }
       catch (err) { toast(err.message, true); }
     };
-    for (const [id, key, variable] of [
-      ['wallpaper-preview-alpha', 'wallpaperPreviewTransparency', '--skin-preview-alpha'],
-      ['wallpaper-workspace-alpha', 'wallpaperWorkspaceTransparency', '--skin-workspace-alpha'],
+    for (const [id, key, variable, kind] of [
+      ['wallpaper-preview-alpha', 'wallpaperPreviewTransparency', '--skin-preview-alpha', 'alpha'],
+      ['wallpaper-workspace-alpha', 'wallpaperWorkspaceTransparency', '--skin-workspace-alpha', 'alpha'],
+      ['wallpaper-page-alpha', 'pageTransparency', '--skin-page-vis', 'vis'],
+      ['wallpaper-side-alpha', 'sidebarTransparency', '--skin-side-vis', 'vis'],
+      ['wallpaper-top-alpha', 'topbarTransparency', '--skin-top-vis', 'vis'],
     ]) {
       const slider = $('#' + id);
+      if (!slider) continue;
       slider.oninput = () => {
-        document.documentElement.style.setProperty(variable, String(1 - Number(slider.value) / 100));
-        $('#' + id + '-value').textContent = slider.value + '%';
+        const value = Number(slider.value);
+        document.documentElement.style.setProperty(variable, kind === 'alpha' ? String(1 - value / 100) : String(value));
+        const out = $('#' + id + '-value');
+        if (out) out.textContent = value + '%';
       };
       slider.onchange = async () => {
         try { await saveAppearance({ [key]: Number(slider.value) }); }
@@ -12366,6 +13153,8 @@ async function init() {
     connectEvents();
     IJ.init();
     refreshServices();
+    // 服务刚重启时第一次探测可能还没起来，3 秒后补一次，别让左下角一直红着
+    setTimeout(refreshServices, 3000);
     setInterval(refreshServices, 20000);
     bindProjectMenu($('#project-btn'));
     applyProjectChip();
@@ -12373,6 +13162,8 @@ async function init() {
     if (agentItem) agentItem.onclick = () => toggleService('agent', agentItem);
     const managerItem = document.querySelector('.wmd-svc-item[data-svc="manager"]');
     if (managerItem) {
+      // 左下角只有一个状态点：单击启停（打开管理器工作台走双击）
+      managerItem.onclick = () => toggleService('manager', managerItem);
       const power = managerItem.querySelector('.wmd-svc-power');
       if (power) power.onclick = (event) => { event.stopPropagation(); toggleService('manager', managerItem); };
       const label = managerItem.querySelector('.wmd-svc-label');

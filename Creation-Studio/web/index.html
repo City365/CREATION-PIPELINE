@@ -15,8 +15,10 @@
   .gu-ref-media { height:148px; max-height:148px; overflow:hidden; }
 </style>
 <link rel="stylesheet" href="/agent-workspace.css?v=7" />
+<link rel="stylesheet" href="/shell-spec.css?v=1" />
 </head>
 <body>
+<a class="wmd-skip" href="#view">跳到主内容</a>
 <div id="root">
   <div class="wmd-app" id="app">
     <header class="wmd-topbar">
@@ -27,32 +29,71 @@
           <span class="wmd-brand-sub">CREATIVE DESK</span>
         </div>
       </div>
-      <nav class="wmd-maintabs" id="nav">
-        <button type="button" class="wmd-maintab" data-route="image" title="Ctrl+1" style="--i:0">图像创作台</button>
-        <button type="button" class="wmd-maintab" data-route="studio" title="Ctrl+2" style="--i:1">视频创作台</button>
-        <button type="button" class="wmd-maintab" data-route="script" title="Ctrl+3" style="--i:2">剧本创作台</button>
-        <button type="button" class="wmd-maintab" data-route="assets" title="Ctrl+4" style="--i:3">素材库</button>
-        <button type="button" class="wmd-maintab" data-route="tasks" title="Ctrl+5" style="--i:4">任务管理<span class="wmd-maintab-count" id="job-count"></span></button>
-        <button type="button" class="wmd-maintab" data-route="media" title="Ctrl+6" style="--i:5">媒体库</button>
-        <button type="button" class="wmd-maintab" data-route="compare" title="Ctrl+7" style="--i:6">对比</button>
-      </nav>
       <span class="wmd-topbar-spacer"></span>
       <div class="wmd-topbar-right">
-        <span class="wmd-svc" id="svc-lights" title="服务状态"><button type="button" class="wmd-svc-item" data-svc="agent" aria-label="智能体服务" title="点击启动/停止智能体"><i></i><span>智能体</span><em class="wmd-svc-act">启动</em></button><span class="wmd-svc-item" data-svc="manager"><i></i><button type="button" class="wmd-svc-label" data-open-manager="1" title="打开管理器页面">管理器</button><button type="button" class="wmd-svc-power" title="启动/停止管理器">启动</button></span></span>
         <button type="button" class="wmd-project-btn" id="project-btn" title="项目" aria-haspopup="true" aria-expanded="false">
           <span class="wmd-project-kicker">项目</span>
           <b class="wmd-project-name" id="project-btn-name">未选择项目</b>
           <svg class="wmd-icon wmd-project-caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg>
         </button>
-        
-        <button type="button" class="wmd-iconbtn" id="settings-btn" title="设置 (Ctrl+,)">
+        <div class="wmd-clock" id="wmd-clock" title="当前时间"></div>
+        <div class="wmd-user" id="wmd-user" title="当前登录用户" role="button" tabindex="0" aria-haspopup="true" aria-expanded="false">
+          <span class="wmd-user-avatar" id="wmd-user-avatar">U</span>
+          <span class="wmd-user-name" id="wmd-user-name">未登录</span>
+        </div>
+        <div class="wmd-user-menu" id="wmd-user-menu" role="menu" hidden>
+          <button type="button" role="menuitem" data-user-act="profile">用户资料</button>
+          <button type="button" role="menuitem" data-user-act="settings">系统设置</button>
+          <button type="button" role="menuitem" data-user-act="about">关于系统</button>
+        </div>
+      </div>
+    </header>
+
+    <div class="wmd-shell">
+      <nav class="wmd-rail" id="nav" aria-label="主导航">
+        <button type="button" class="wmd-maintab" data-route="image" title="图像创作台 (Ctrl+1)" style="--i:0">
+          <svg class="wmd-rail-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg><span>图像创作</span>
+        </button>
+        <button type="button" class="wmd-maintab" data-route="studio" title="视频创作台 (Ctrl+2)" style="--i:1">
+          <svg class="wmd-rail-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="6" width="14" height="12" rx="2"/><path d="m22 8-6 4 6 4V8z"/></svg><span>视频创作</span>
+        </button>
+        <button type="button" class="wmd-maintab" data-route="script" title="剧本创作台 (Ctrl+3)" style="--i:2">
+          <svg class="wmd-rail-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h5"/></svg><span>剧本创作</span>
+        </button>
+        <button type="button" class="wmd-maintab" data-route="assets" title="素材库 (Ctrl+4)" style="--i:3">
+          <svg class="wmd-rail-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg><span>素材库</span>
+        </button>
+        <button type="button" class="wmd-maintab" data-route="tasks" title="任务管理 (Ctrl+5)" style="--i:4">
+          <svg class="wmd-rail-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg><span>任务管理</span><span class="wmd-maintab-count" id="job-count"></span>
+        </button>
+        <button type="button" class="wmd-maintab" data-route="media" title="媒体库 (Ctrl+6)" style="--i:5">
+          <svg class="wmd-rail-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></svg><span>媒体库</span>
+        </button>
+        <button type="button" class="wmd-maintab" data-route="compare" title="对比 (Ctrl+7)" style="--i:6">
+          <svg class="wmd-rail-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="18" rx="1"/><rect x="14" y="3" width="7" height="18" rx="1"/></svg><span>对比</span>
+        </button>
+      <div class="wmd-rail-foot">
+        <span class="wmd-svc" id="svc-lights" title="服务状态">
+          <button type="button" class="wmd-svc-item" data-svc="agent" aria-label="智能体服务" title="智能体服务 · 点击启动/停止">
+            <svg class="wmd-svc-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="8" width="18" height="12" rx="3"/><path d="M12 8V5"/><circle cx="12" cy="4" r="1.2"/><circle cx="9" cy="14" r="1.1"/><circle cx="15" cy="14" r="1.1"/></svg>
+            <span class="wmd-svc-name">智能体</span>
+            <i></i>
+          </button>
+          <button type="button" class="wmd-svc-item" data-svc="manager" aria-label="管理器服务" title="管理器服务 · 点击启动/停止 · 双击打开">
+            <svg class="wmd-svc-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 18v3"/></svg>
+            <span class="wmd-svc-name">管理器</span>
+            <i></i>
+          </button>
+        </span>
+        <button type="button" class="wmd-iconbtn" id="settings-btn" title="设置 (Ctrl+,)" aria-label="设置">
           <svg class="wmd-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
         </button>
         <span class="wmd-version">v2026.10.23</span>
       </div>
-    </header>
-
-    <main id="view" class="wmd-page"></main>
+      </nav>
+      <nav class="wmd-subnav" id="subnav" aria-label="二级导航" hidden></nav>
+      <main id="view" class="wmd-page" role="main" tabindex="-1"></main>
+    </div>
 
   </div>
 </div>
@@ -70,5 +111,6 @@
 <script src="/events.js?v=progress1"></script>
 <script src="/agent-workspace.js?v=2"></script>
 <script src="/app.js?v=proj42"></script>
+<script src="/shell-nav.js?v=1"></script>
 </body>
 </html>

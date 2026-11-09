@@ -96,6 +96,8 @@ const STATIC = {
   '/creative.js': ['creative.js', 'text/javascript; charset=utf-8'],
   '/creative.css': ['creative.css', 'text/css; charset=utf-8'],
   '/styles.css': ['styles.css', 'text/css; charset=utf-8'],
+  '/shell-spec.css': ['shell-spec.css', 'text/css; charset=utf-8'],
+  '/shell-nav.js': ['shell-nav.js', 'text/javascript; charset=utf-8'],
   '/skins.css': ['skins.css', 'text/css; charset=utf-8'],
   '/wallpaper-library.js': ['wallpaper-library.js', 'text/javascript; charset=utf-8'],
   '/skins/anime-sea.png': ['skins/anime-sea.png', 'image/png'],
@@ -1196,7 +1198,7 @@ async function controlService(name, action) {
 
   // 前端资源指纹：页面开着很久时用它发现「服务器已经换了新版本」，提示刷新，避免看到旧样式
   if (method === 'GET' && pathname === '/api/web-version') {
-    const files = ['index.html', 'app.js', 'styles.css'].map((name) => path.join(WEB, name));
+    const files = ['index.html', 'app.js', 'styles.css', 'shell-spec.css'].map((name) => path.join(WEB, name));
     const parts = files.map((file) => {
       try { return Math.round(fs.statSync(file).mtimeMs).toString(36); } catch { return '0'; }
     });
@@ -1228,9 +1230,11 @@ async function controlService(name, action) {
       stats: jobs.slotStats(),
       channels: {
         // 列表只返回 hasKey / masked；真正调用渠道时服务端自己按 id 取完整 Key。
-        llm: channels.list('llm'),
-        image: channels.list('image'),
-        video: channels.list('video'),
+        // 内部服务（智能体后端，凭 internal token 直接调用）例外：它要自己直连模型，
+        // 拿不到 Key 就只能退回单一模型，所以这条分支保留明文 Key。
+        llm: channels.list('llm', { includeSecrets: internalCall }),
+        image: channels.list('image', { includeSecrets: internalCall }),
+        video: channels.list('video', { includeSecrets: internalCall }),
       },
       channelTypes: channels.publicTypes(),
       prompt: {

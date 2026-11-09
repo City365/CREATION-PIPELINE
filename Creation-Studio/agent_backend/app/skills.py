@@ -79,3 +79,25 @@ def custom_skills(project):
 
 def all_skills(project):
     return builtin_skills() + custom_skills(project)
+
+
+def catalog(project):
+    """给模型看的技能目录：只有名字与简介，正文一律按需用 read_analysis_guidance 读。
+
+    目录只是索引：模型必须先读正文再动手，不允许凭简介臆测技能里的规则与步骤。
+    这是「模型不知道有哪些技能」和「全量塞 prompt」之间的中间态。
+    """
+    out = []
+    for item in all_skills(project):
+        if item.get('enabled') is False:
+            continue
+        name = str(item.get('name') or '').strip()
+        if not name:
+            continue
+        topic = item.get('topic') or ('skill:' + item['plugin_id'] if item.get('plugin_id') else '')
+        if not topic:
+            continue
+        desc = ' '.join(str(item.get('description') or '').split())[:200]
+        out.append({'name': name, 'description': desc, 'topic': topic,
+                    'source': item.get('source') or 'builtin'})
+    return out

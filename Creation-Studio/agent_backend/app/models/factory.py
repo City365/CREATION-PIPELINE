@@ -1,6 +1,7 @@
 """Model adapters migrated from smart_analysis; credentials are local-only."""
 import os
 import json
+import pathlib
 import time
 import urllib.request
 from app.models.observable_openai import ObservableChatOpenAI as ChatOpenAI
@@ -12,36 +13,63 @@ MODEL_TIMEOUT = float(os.environ.get('WMD_MODEL_TIMEOUT', '120'))
 WMD_BASE = os.environ.get('WMD_BASE_URL', 'http://127.0.0.1:17821').rstrip('/')
 _WMD_CACHE = {'at': 0, 'items': []}
 
+def _internal_token():
+    """创作台的内部服务凭据：环境变量优先，其次读 data/internal-token.json。"""
+    tok = os.environ.get('WMD_INTERNAL_TOKEN')
+    if tok:
+        return tok.strip()
+    here = pathlib.Path(__file__).resolve()
+    for base in (here.parents[3], here.parents[2], here.parents[2].parent):
+        try:
+            data = json.loads((base / 'data' / 'internal-token.json').read_text(encoding='utf-8'))
+            token = str(data.get('token') or '').strip()
+            if token:
+                return token
+        except Exception:
+            continue
+    return ''
+
+
 def _wmd_channels():
     """从创作台读取已启用的语言模型渠道，作为可选模型（带 20 秒缓存）。"""
     now = time.time()
     if _WMD_CACHE['items'] and now - _WMD_CACHE['at'] < 20:
         return _WMD_CACHE['items']
     items = []
+    headers = {'X-WMD-Internal': _internal_token() or '1'}
     try:
-        req = urllib.request.Request(WMD_BASE + '/api/state', headers={'X-WMD-Internal': '1'})
-        with urllib.request.urlopen(req, timeout=3) as res:
+        req = urllib.request.Request(WMD_BASE + '/api/state', headers=headers)
+        with urllib.request.urlopen(req, timeout=4) as res:
             data = json.loads(res.read().decode('utf-8'))
         for ch in ((data.get('data') or {}).get('channels') or {}).get('llm', []):
-            if ch.get('enabled') is False or not ch.get('apiKey') or not ch.get('model') or not ch.get('baseUrl'):
+            if ch.get('enabled') is False or not ch.get('model') or not ch.get('baseUrl'):
+                continue
+            # Key 由创作台按内部凭据给出；没有 Key 也保留条目，调用时再报错，至少菜单里看得见。
+            if not (ch.get('apiKey') or ch.get('hasKey')):
                 continue
             proto = {'openai-responses': 'responses', 'openai-chat': 'chat', 'anthropic': 'anthropic'}.get(ch.get('type'), 'chat')
+            ch_name = str(ch.get('name') or ch['id'])
+            # 渠道名和模型名不一样时带上渠道名，避免下拉框里出现两个同名 deepseek-flash
+            label = ch['model'] if (ch_name == ch['model'] or ch['model'] in ch_name) else (ch_name + ' · ' + ch['model'])
             items.append({
                 'id': 'channel:' + ch['id'] + ':' + ch['model'],
                 'provider': 'channel:' + ch['id'],
                 'channel_id': ch['id'],
                 'model': ch['model'],
-                'label': ch['model'],
-                'channel_name': ch.get('name') or ch['id'],
+                'label': label,
+                'channel_name': ch_name,
                 'base_url': ch['baseUrl'],
-                'api_key': ch['apiKey'],
+                'api_key': ch.get('apiKey') or '',
                 'max_tokens': ch.get('maxTokens') or 24000,
                 'temperature': 0.7,
                 'protocol': proto,
                 'context_tokens': ch.get('contextWindow') or 0,
             })
     except Exception:
-        items = []
+        # 失败不缓存，下一个请求立刻重试（否则会空 20 秒）
+        _WMD_CACHE['items'] = []
+        _WMD_CACHE['at'] = 0
+        return []
     _WMD_CACHE['items'] = items
     _WMD_CACHE['at'] = now
     return items
@@ -52,9 +80,9 @@ def model_options():
     for name in providers:
         cfg=get_provider_config(name)
         if not (cfg.get('api_key') or os.getenv(name.upper()+'_API_KEY')) or not cfg.get('model'):continue
+        # 只用系统配置里填的那个模型，不再自己凭空多列一个（配置是唯一事实来源）
         models=[cfg['model']]
-        deepseek='api.deepseek.com' in str(cfg.get('base_url','')) and cfg['model'] in ('deepseek-v4-pro','deepseek-flash')
-        if deepseek and not cfg.get('system_channel'):models=['deepseek-v4-pro','deepseek-flash']
+        deepseek='api.deepseek.com' in str(cfg.get('base_url',''))
         for model in models:
             choices.append({'id':name+':'+model,'provider':name,'model':model,'label':model,
                             'channel_name': cfg.get('label') or name,'context_tokens':cfg.get('context_tokens') or 0,'reasoning_efforts':['none','low','high','max'] if deepseek else []})
