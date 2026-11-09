@@ -8,6 +8,8 @@ from app.models import factory
 def system_config(tmp_path, monkeypatch):
     monkeypatch.setenv('WMD_DATA_DIR', str(tmp_path))
     monkeypatch.setattr(settings, 'SETTINGS_PATH', tmp_path / 'agent.json')
+    # 必须打桩：真实实现会向 127.0.0.1:17821 拉渠道，本机跑没跑控制器会让断言结果飘。
+    monkeypatch.setattr(factory, '_wmd_channels', lambda: [])
     channels = [
         dict(id='gpt', name='GPT 渠道', model='gpt-test', type='openai-responses', active=True, enabled=True, baseUrl='http://127.0.0.1:12345/v1', apiKey='private-key', contextWindow=123456, maxTokens=1234),
         dict(id='gemini', name='Gemini 渠道', model='gemini-test', type='openai-chat', enabled=True, baseUrl='http://127.0.0.1:12346/v1', apiKey='gemini-key'),

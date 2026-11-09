@@ -18,8 +18,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from langchain.agents import create_agent
 from app.models.factory import create_chat_model, model_options, resolve_model, supports_tools, probe_tools_background
-from app.chat_policy import selected_topic, system_prompt
-from app.app_packs import current as current_app_pack
+from app.chat_policy import selected_topic, system_prompt, segments as prompt_segments
+from app.app_packs import current as current_app_pack, load as load_app_pack
 # 名字不能叫 run_events：本文件有个同名路由函数会遮蔽它
 from app import run_events as run_event_log
 from app import spill, mcp, subagent, goal as goal_store, skills
@@ -781,6 +781,38 @@ def app_pack_info(project=Depends(project_id)):
     data['switch_note']='设置环境变量 WMD_APP_PACK 选择应用包后重启 agent 服务；留空即 creation-studio。'
     data['prompt_chars']=len(system_prompt(pack=pack))
     return data
+
+@app.get('/agent/app-pack/prompt')
+def app_pack_prompt(pack:str|None=None,compare:str|None=None,project=Depends(project_id)):
+    """系统提示全文 + 分段来源，用来「把切走的那部分原样取回」。
+
+    分段带 layer 标签：framework 不随应用变，application 换应用就换掉。
+    带上 compare 参数可以直接看出换应用时到底少了哪几段、原文是什么。
+    """
+    try:
+        chosen=current_app_pack() if not pack else load_app_pack(pack)
+        other=load_app_pack(compare) if compare else None
+    except KeyError as exc:
+        raise HTTPException(422,str(exc))
+    parts=prompt_segments(chosen)
+    live=[item for item in parts if item.get('enabled',True)]
+    body={'pack':{'id':chosen.id,'name':chosen.name,'product':chosen.product},
+          'chars':sum(item['chars'] for item in live),
+          'retained_chars':sum(item['chars'] for item in parts),
+          'application_chars':sum(item['chars'] for item in live if item['layer']=='application'),
+          'framework_chars':sum(item['chars'] for item in live if item['layer']=='framework'),
+          'segments':parts,
+          'prompt':''.join(item['text'] for item in live)}
+    if other is not None:
+        other_parts=prompt_segments(other)
+        here={item['id'] for item in parts}
+        there={item['id'] for item in other_parts}
+        body['compare']={'pack':other.id,'chars':sum(i['chars'] for i in other_parts if i.get('enabled',True)),
+                         'removed':[item for item in parts if item['id'] not in there],
+                         'removed_chars':sum(i['chars'] for i in parts if i['id'] not in there),
+                         'added':[item for item in other_parts if item['id'] not in here],
+                         'kept':sorted(here&there)}
+    return body
 
 @app.get('/agent/mcp/servers')
 def mcp_servers(project=Depends(project_id)):
