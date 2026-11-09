@@ -157,7 +157,12 @@
 .ask-cps-body pre { margin:0; max-height:320px; overflow:auto; white-space:pre-wrap; word-break:break-word; font-size:12px; line-height:1.6; color:var(--wmd-text-2,#3d4650); }
 
 /* 输入框下方统计条：两行读数，不抢 composer 的位置 */
-.ask-stat-dock { display:flex; flex-wrap:wrap; gap:4px 14px; padding:6px 6px 0; font-size:11px; color:var(--wmd-text-3,#8993a0); font-variant-numeric:tabular-nums; }
+/* 状态条：活动 · 用量 · 上下文环，三段用竖线分开。 */
+.ask-stat-dock { display:flex; flex-wrap:wrap; align-items:center; gap:4px 10px; padding:6px 8px 0; font-size:11px; color:var(--wmd-text-3,#8993a0); font-variant-numeric:tabular-nums; }
+.ask-stat-group { display:inline-flex; align-items:center; gap:5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; }
+.ask-stat-group > span { overflow:hidden; text-overflow:ellipsis; }
+.ask-stat-ico { display:inline-flex; flex:none; align-items:center; opacity:.7; }
+.ask-stat-sep { flex:none; width:1px; height:11px; background:var(--ask-line, var(--wmd-border)); opacity:.6; }
 .ask-stat { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%; }
 
 /* 每轮用量：默认收成一行，点开看分解 */

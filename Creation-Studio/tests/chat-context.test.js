@@ -45,17 +45,20 @@ test('圆圈周长用于 stroke-dasharray，能画出占比', () => {
   assert.ok(update.includes('setAttribute(\'stroke-dasharray\''), '要能就地更新占比');
 });
 
-test('输入框里放在发送按钮左边', () => {
+test('圆圈并进下方状态条，不再挤在输入工具栏里', () => {
+  // 工具栏是「输入时要改的控件」，占用是「状态读数」，两回事。
+  // 挪到状态条后跟活动、用量并排，工具栏里不该再出现它。
+  const dock = source.slice(source.indexOf('function askStatDockHtml('), source.indexOf('function askTurnUsageHtml('));
+  assert.ok(dock.includes('askContextMeterHtml()'), '状态条要有圆圈');
+  assert.equal((dock.match(/ask-stat-sep/g) || []).length, 2, '两个分隔线分成三段');
   const composer = source.slice(source.indexOf('function askComposerHtml('), source.indexOf('/* ----------------------- 上下文占用'));
-  const meterAt = composer.indexOf('askContextMeterHtml()');
-  const sendAt = composer.indexOf('data-act="ask-send"');
-  assert.ok(meterAt > 0 && sendAt > 0, '两者都要在输入区里');
-  assert.ok(meterAt < sendAt, '圆圈统计要排在发送按钮之前');
+  const bar = composer.slice(composer.indexOf('ask-composer-bar'));
+  assert.equal(bar.includes('askContextMeterHtml()'), false, '工具栏里不该再有圆圈');
 });
 
 test('上下文总量取所选模型的 context_tokens', () => {
   const stats = source.slice(source.indexOf('function askContextStats('), source.indexOf('function askFmtTokens('));
   assert.ok(stats.includes('context_tokens'), '总量来自模型能力');
-  assert.ok(stats.includes('input_tokens'), '已用优先取上一轮真实 usage');
+  assert.ok(stats.includes('input_tokens'), '已用优先取下一轮预计，回退到上一轮真实 usage');
   assert.ok(stats.includes('a.draft'), '草稿也要算进占用');
 });

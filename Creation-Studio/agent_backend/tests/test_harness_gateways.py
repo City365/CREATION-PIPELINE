@@ -85,7 +85,9 @@ def test_actual_graph_uses_gateways_and_aggregates_usage(isolated,monkeypatch):
     execution=result['execution']
     assert execution['budget']['model_calls']==3
     assert execution['budget']['tool_calls']==2
-    assert execution['usage']=={'input_tokens':30,'output_tokens':9,'total_tokens':39}
+    assert {k:execution['usage'][k] for k in ('input_tokens','output_tokens','total_tokens')}=={'input_tokens':30,'output_tokens':9,'total_tokens':39}
+    # 这次调用没有缓存明细，命中率必须是 None 而不是 0%——没数据就不编数字
+    assert execution['usage']['cache_hit_rate'] is None
     assert execution['budget']['usage_complete']
     assert execution['tool_manifest_hash']
     events=run_store.events('p1',result['id'])

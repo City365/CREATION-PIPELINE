@@ -7064,7 +7064,8 @@ function askTurnStats(ex) {
 
 function askSessionStats(chat) {
   const list = (chat && chat.messages) || [];
-  const s = { turns: 0, steps: 0, llm: 0, tool: 0, dec: 0, decTokens: 0, input: 0, output: 0, ttftSum: 0, ttftN: 0 };
+  const s = { turns: 0, steps: 0, llm: 0, tool: 0, dec: 0, decTokens: 0, input: 0, output: 0, ttftSum: 0, ttftN: 0,
+    cacheRead: 0, cacheInput: 0, cacheTurns: 0 };
   for (const m of list) {
     if (m.role !== 'assistant') continue;
     const ex = m.execution || null;
@@ -7081,28 +7082,45 @@ function askSessionStats(chat) {
       if (t.ttft_ms) { s.ttftSum += Number(t.ttft_ms); s.ttftN += 1; }
     }
     if (u) { s.input += Number(u.input_tokens) || 0; s.output += Number(u.output_tokens) || 0; }
+    // 缓存：只有这一轮的每次模型调用都报了缓存明细，u.cache_hit_rate 才不是 null。
+    // 缺一轮就不进分母，宁可整项不显示，也不拿部分数据凑百分比。
+    if (u && typeof u.cache_hit_rate === 'number') {
+      s.cacheRead += Number(u.cache_read_tokens) || 0;
+      s.cacheInput += Number(u.input_tokens) || 0;
+      s.cacheTurns += 1;
+    }
   }
   s.ttftAvg = s.ttftN ? s.ttftSum / s.ttftN : 0;
+  s.cacheRate = s.cacheTurns > 0 && s.cacheInput > 0
+    ? Number((s.cacheRead / s.cacheInput * 100).toFixed(1)) : null;
   s.tps = s.dec > 0 && s.decTokens ? Number((s.decTokens / (s.dec / 1000)).toFixed(1)) : 0;
   return s;
 }
 
-// 输入框下方的统计条。只放用户能感知的东西：快不快（速率）、多久出字（首字）、
-// 时间花在模型还是工具上（两个墙钟）。
-// 「轮次」「步骤」不在这里：用户自己数得出会话里发了几条，模型内部调了几次也不关他事，
-// 这两个数字是拿内部模型填界面，信息量为零。要看的细节在每轮展开面板里。
+// 输入框下方的状态条，抄 DSH 的三段式：活动 · 用量 · 上下文占用。
+// 图标 + 竖线分隔，一眼能扫到「跑得多快 / 用掉多少 / 还剩多少」。
+const ASK_ICO_CLOCK = '<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><circle cx="8" cy="8" r="5.7" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M8 4.7V8.2l2.3 1.4" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>';
+const ASK_ICO_DB = '<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><ellipse cx="8" cy="4.4" rx="5.2" ry="2.2" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M2.8 4.4v7.2c0 1.2 2.3 2.2 5.2 2.2s5.2-1 5.2-2.2V4.4" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>';
+
 function askStatDockHtml() {
   const s = askSessionStats(askActive());
   if (!s.turns) return '';
-  const activity = [s.tps ? s.tps + ' tok/s' : '',
-    s.ttftAvg ? '首字 ' + askSecs(s.ttftAvg) : '',
-    s.llm ? '模型 ' + askSecs(s.llm) : '',
-    s.tool ? '工具 ' + askSecs(s.tool) : ''].filter(Boolean);
-  // 输入与输出分列即可，合计是两者相加，不必占位置。
-  const usage = ['输入 ' + askFmtTokens(s.input), '输出 ' + askFmtTokens(s.output)];
+  // 活动：本会话多少轮、累计多少次模型调用、当前输出速率
+  const activity = [s.turns + ' 轮', s.steps + ' 步', s.tps ? s.tps + ' tok/s' : ''].filter(Boolean);
+  // 用量：累计 token 总量 + 缓存命中率（拿不到就不显示，不凑数字）
+  const usage = [askFmtTokens(s.input + s.output) + ' tok',
+    s.cacheRate != null ? '缓存命中 ' + s.cacheRate + '%' : ''].filter(Boolean);
+  const tipActivity = '本会话已跑 ' + s.turns + ' 轮 / ' + s.steps + ' 次模型调用'
+    + (s.llm ? ' · 模型 ' + askSecs(s.llm) : '') + (s.tool ? ' · 工具 ' + askSecs(s.tool) : '')
+    + (s.ttftAvg ? ' · 首字均值 ' + askSecs(s.ttftAvg) : '');
+  const tipUsage = '输入 ' + s.input + ' / 输出 ' + s.output
+    + (s.cacheRate != null ? ' · 缓存读 ' + s.cacheRead + '（' + s.cacheTurns + ' 轮有完整上报）' : ' · 渠道未上报缓存明细');
   return `<div class="ask-stat-dock">
-    <span class="ask-stat" data-composer-stat="activity" title="本会话 ${s.turns} 轮合计：模型墙钟与工具墙钟分开计">${esc(activity.join(' · '))}</span>
-    <span class="ask-stat" data-composer-stat="usage">${esc(usage.join(' · '))}</span>
+    <span class="ask-stat-group" data-composer-stat="activity" title="${esc(tipActivity)}"><i class="ask-stat-ico">${ASK_ICO_CLOCK}</i><span>${esc(activity.join(' · '))}</span></span>
+    <span class="ask-stat-sep" aria-hidden="true"></span>
+    <span class="ask-stat-group" data-composer-stat="usage" title="${esc(tipUsage)}"><i class="ask-stat-ico">${ASK_ICO_DB}</i><span>${esc(usage.join(' · '))}</span></span>
+    <span class="ask-stat-sep" aria-hidden="true"></span>
+    ${askContextMeterHtml()}
   </div>`;
 }
 
@@ -7606,7 +7624,6 @@ function askComposerHtml() {
         ${efforts.length ? `<select class="ask-select" id="ask-effort" title="思考强度">${efforts.map((e) => `<option value="${esc(e)}" ${e === a.effort ? 'selected' : ''}>思考 ${esc(ASK_EFFORT_LABELS[e] || e)}</option>`).join('')}</select>` : ''}
         <span class="ask-draft-count">${(a.draft || '').length}/3000</span>
         <span class="grow"></span>
-        ${askContextMeterHtml()}
         ${a.generating
           ? `<button type="button" class="ask-send is-stop" data-act="ask-stop" aria-label="停止生成" title="停止生成">■</button>`
           : `<button type="button" class="ask-send" data-act="ask-send" ${a.draft.trim() ? '' : 'disabled'}>发送 ↑</button>`}
