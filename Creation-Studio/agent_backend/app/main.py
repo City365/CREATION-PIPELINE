@@ -22,7 +22,7 @@ from app.chat_policy import selected_topic, system_prompt
 from app.app_packs import current as current_app_pack
 # 名字不能叫 run_events：本文件有个同名路由函数会遮蔽它
 from app import run_events as run_event_log
-from app import spill, mcp, subagent
+from app import spill, mcp, subagent, goal as goal_store, skills
 from app.configs.settings import get_active_model_name, get_provider_config
 from app import store
 from app.harness import runtime, run_store, recovery, registry, identity
@@ -338,6 +338,9 @@ async def _chat(req,project,authorization):
     skill_list=skill_catalog_of(project)
     allowed={item['topic'] for item in skill_list}
     if topic:allowed.add(topic)
+    # 跨轮目标：先记一轮，再把目标注进系统提示。没有目标时全程为空。
+    goal_state=goal_store.bump_turn(project,req.session_id)
+    if goal_state:receipt['goal']=goal_state
     tools=build_task_tools(receipt,req.text,pending.append,sources,project=project,session_id=req.session_id,skill_snapshot=skill_snapshot,allowed_topics=allowed)
     if not topic and not checkpoint:
         # 未选技能时仍保留 read_analysis_guidance（模型可以按目录自己去读），
@@ -363,12 +366,15 @@ async def _chat(req,project,authorization):
     # 外部 MCP 工具：配置在应用包的 mcp_servers 里，加一个 server 不用改后端代码。
     # 工具调用本身已经由 tool_call/tool_result 事件覆盖，这里不再另发事件。
     tools += mcp.build_mcp_tools(current_app_pack().mcp_servers, project=project, run_id=run_id)
+    # 跨轮目标维护工具：任何应用、任何权限档位都保留（只写自己的 goal 记录）。
+    tools += goal_store.build_goal_tools(project, req.session_id)
     if mode=='readonly':
         # 仅查看档不落盘：生成图片/视频、抽帧、交付文件都会写盘，一律不挂给模型。
         tools=[tool for tool in tools if tool.name not in ('create_workspace_artifact','publish_artifact','generate_image','submit_video_job','extract_frames')]
     base_prompt=system_prompt(topic,req.skill,project_hint,summary_prompt,[{k:a[k] for k in ('id','name','status','suffix')}|{'excerpt':(a.get('text') or '')[:600]} for a in attachments],bool(checkpoint),permission=permission,skill_catalog=skill_list)
     if any(t.name == 'web_search' for t in tools): base_prompt += WEB_PROMPT
     else: base_prompt += '\n【联网检索关闭】本轮未启用联网检索，不可声称已搜索或读取网络网页，也不要通过命令工具绕过联网开关。需要实时资料时提示用户开启输入框旁的联网检索。'
+    base_prompt += goal_store.prompt_block(goal_state)
     if not tools_ok:
         base_prompt += ('\n\n【渠道能力】当前模型所在渠道不支持工具调用（function calling），所以本地文件工具、命令工具、生图生视频工具都无法执行。'
                        '禁止声称已经调用工具或已经写盘；需要落盘/移动文件时，如实说明是渠道限制，并提示用户把模型切到支持工具调用的渠道（deepseek-flash、gemini-3.8-flash），'
@@ -378,7 +384,8 @@ async def _chat(req,project,authorization):
     # 子智能体：只挂一层。子 run 有自己的 run_id 和事件流，父回执里只留一条引用。
     if tools_ok:
         tools += subagent.build_tools(project=project,parent_run_id=run_id,model=model,tools=tools,
-                                      system_prompt=base_prompt,depth=0,create_agent=create_agent)
+                                      system_prompt=base_prompt,depth=0,create_agent=create_agent,
+                                      model_factory=create_chat_model)
     receipt['context']={**(receipt.get('context') or {}),'report':context_report.build(
         history,tools,base_prompt,skill_text,_window,
         tool_count=len(tools),skill_count=skill_used,tool_names=[getattr(tool,'name','') for tool in tools])}
@@ -798,6 +805,44 @@ def spill_stats(project=Depends(project_id)):
     """落盘的工具输出占用情况（保留 7 天，启动时自动清理过期目录）。"""
     return {**spill.stats(),'retention_days':spill.RETENTION_DAYS,
             'preview_chars':spill.PREVIEW_CHARS}
+
+@app.get('/agent/catalog')
+def catalog(project=Depends(project_id)):
+    """这个 agent 现在有什么能力、各自来自哪一层。
+
+    我们的「插件市场」形态：单机产品没有社区生态，真正缺的是一个能一眼看清
+    「框架层给什么 / 应用层加什么 / 外部接什么」的地方。加能力时先看这里。
+    """
+    pack=current_app_pack()
+    envelope=pack.envelope()
+    builtin=[{'name':item['name'],'description':item.get('description') or '','topic':item.get('topic') or ''}
+             for item in skills.catalog(project)]
+    local=[tool.name for tool in build_local_tools(project=project,session_id='',mode='readonly',roots=[],publish=lambda e:None,receipt={})]
+    base_tools=sorted(set(local)|{'create_task_plan','record_step_result','read_analysis_guidance',
+                                  'create_workspace_artifact','publish_artifact','ask_choice',
+                                  'read_tool_output','mcp__*','spawn_subagent','run_parallel_subagents',
+                                  'set_goal','add_goal_progress','complete_goal'})
+    return {
+        'app_pack':{**envelope,'prompt_chars':len(system_prompt(pack=pack))},
+        'layers':{
+            'framework':['session/run/turn/step/event 投影','工具与技能注册表','模型路由与预算',
+                         '权限档位','执行中追加','跨轮目标','子智能体','输出落盘','MCP 客户端'],
+            'application':{'identity':pack.product,'policies':[p['id'] for p in envelope['policies']],
+                           'skill_topics':envelope['skill_topics'],
+                           'tool_groups':envelope['tool_groups']},
+            'external':[item.get('name') for item in pack.mcp_servers],
+        },
+        'skills':builtin,
+        'tools':base_tools,
+        'commands':[{'name':item['name'],'description':item['description']} for item in COMMANDS],
+        'mcp_servers':[{'name':item.get('name'),'command':item.get('command')} for item in pack.mcp_servers],
+        'switch_notes':{
+            'application':'改环境变量 WMD_APP_PACK 后重启 agent 服务',
+            'skill':'把技能放进 skill_library 目录，或走插件管理',
+            'tool':'MCP server 写进应用包的 mcp_servers，不用改后端代码',
+            'framework':'这套能力不随应用变，也不由应用关闭',
+        },
+    }
 
 @app.post('/agent/sessions/{sid}/compact')
 async def compact_session(sid: str, body: CompactRequest, project=Depends(project_id)):

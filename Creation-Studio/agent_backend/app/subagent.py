@@ -21,6 +21,7 @@ from langchain_core.tools import tool
 from app import store
 
 MAX_DEPTH = 1
+PARALLEL_LIMIT = 6
 DEFAULT_TIMEOUT = 600
 SUMMARY_CHARS = 4000
 
@@ -113,7 +114,8 @@ async def execute(*, project, parent_run_id, task, model, tools, system_prompt,
     sub_prompt = _prompt(system_prompt, task, depth)
     # 不管调用方传了什么，子 run 里一律拿掉 spawn_subagent：递归只能由
     # build_tools 的 depth 控制，不能靠调用方自觉。
-    usable = [item for item in tools if getattr(item, 'name', '') != 'spawn_subagent']
+    usable = [item for item in tools
+              if getattr(item, 'name', '') not in ('spawn_subagent', 'run_parallel_subagents')]
     started = time.monotonic()
     try:
         graph = create_agent(model=model, tools=usable, middleware=[], system_prompt=sub_prompt)
@@ -144,11 +146,20 @@ def _prompt(base, task, depth):
 
 
 def build_tools(*, project, parent_run_id, model, tools, system_prompt, depth=0,
-                create_agent, timeout=DEFAULT_TIMEOUT):
-    """生成 spawn_subagent 工具；到深度上限时返回空列表（父 agent 就看不到它）。"""
+                create_agent, timeout=DEFAULT_TIMEOUT, model_factory=None):
+    """生成 spawn_subagent / run_parallel_subagents；到深度上限时返回空列表。"""
     if depth >= MAX_DEPTH:
         return []
-    usable = [item for item in tools if item.name != 'spawn_subagent']
+    usable = [item for item in tools if item.name not in ('spawn_subagent', 'run_parallel_subagents')]
+
+    def fresh_model():
+        # 并行时每个子 run 要自己的模型实例：同一个实例被多个协程同时用，
+        # 请求级状态（思考强度、重试计数）会互相污染。
+        factory = model_factory or (lambda: model)
+        try:
+            return factory()
+        except Exception:
+            return model
 
     @tool
     async def spawn_subagent(task: str, label: str = '') -> dict:
@@ -159,8 +170,41 @@ def build_tools(*, project, parent_run_id, model, tools, system_prompt, depth=0,
         里要写全必要背景。返回子任务的结论与 run_id；细节去 run_id 查。
         """
         return await execute(project=project, parent_run_id=parent_run_id, task=task,
-                             model=model, tools=usable, system_prompt=system_prompt,
+                             model=fresh_model(), tools=usable, system_prompt=system_prompt,
                              label=label, depth=depth + 1, timeout=timeout,
                              create_agent=create_agent)
 
-    return [spawn_subagent]
+    @tool
+    async def run_parallel_subagents(tasks: list, label: str = '') -> dict:
+        """把多个互不依赖的子任务同时交给多个子智能体并行完成。
+
+        tasks 是字符串数组，每项是一条完整、自包含的任务说明（子智能体看不到
+        本轮对话）。一次最多 6 个。返回每一项的结论与 run_id；某一项失败不影
+        响其它项，各自的状态都在结果里。
+        """
+        items = [str(item).strip() for item in (tasks or []) if str(item).strip()]
+        if not items:
+            return {'ok': False, 'error': 'tasks 不能为空'}
+        if len(items) > PARALLEL_LIMIT:
+            items = items[:PARALLEL_LIMIT]
+        runs = await asyncio.gather(*[
+            execute(project=project, parent_run_id=parent_run_id, task=task,
+                    model=fresh_model(), tools=usable, system_prompt=system_prompt,
+                    label=(label + ' ' + str(index + 1)).strip(), depth=depth + 1,
+                    timeout=timeout, create_agent=create_agent)
+            for index, task in enumerate(items)
+        ], return_exceptions=True)
+        results = []
+        for task, outcome in zip(items, runs):
+            if isinstance(outcome, BaseException):
+                results.append({'ok': False, 'task': task, 'error': type(outcome).__name__ + ': ' + str(outcome)})
+            else:
+                results.append({'ok': outcome.get('ok', False), 'task': task,
+                                'run_id': outcome.get('run_id'), 'summary': outcome.get('summary'),
+                                'error': outcome.get('error', ''), 'duration_ms': outcome.get('duration_ms')})
+        return {'ok': any(item['ok'] for item in results), 'count': len(results),
+                'succeeded': sum(1 for item in results if item['ok']),
+                'items': results,
+                'note': '每个子任务的完整轨迹在 /agent/executions/<run_id>，这里只给结论。'}
+
+    return [spawn_subagent, run_parallel_subagents]

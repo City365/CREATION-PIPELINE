@@ -86,8 +86,51 @@ def test_depth_limit_hides_the_tool(monkeypatch):
     monkeypatch.setattr(subagent, 'MAX_DEPTH', 1)
     base = dict(project='p', parent_run_id='r', model=object(),
                 tools=[], system_prompt='', create_agent=creator(Graph()))
-    assert [t.name for t in subagent.build_tools(depth=0, **base)] == ['spawn_subagent']
+    assert [t.name for t in subagent.build_tools(depth=0, **base)] == [
+        'spawn_subagent', 'run_parallel_subagents']
     assert subagent.build_tools(depth=1, **base) == []
+
+
+def test_parallel_runs_every_task_and_isolates_failures():
+    """并行子任务：一个失败不拖累其它，每个都有自己的 run_id。"""
+    from app import subagent as sub_mod
+
+    def create(**kwargs):
+        task = kwargs.get('system_prompt') or ''
+        if '坏的' in graph_for[0]:
+            raise RuntimeError('这一项炸了')
+        return Graph(text='做完了')
+
+    graph_for = ['']
+    tools = {t.name: t for t in sub_mod.build_tools(
+        project='p', parent_run_id='parent-p', model=object(), tools=[],
+        system_prompt='', depth=0, create_agent=create, timeout=5)}
+
+    ok = asyncio.run(tools['run_parallel_subagents'].ainvoke({'tasks': ['第一件', '第二件']}))
+    assert ok['ok'] is True and ok['count'] == 2 and ok['succeeded'] == 2
+    assert len({item['run_id'] for item in ok['items']}) == 2
+    assert all(item['summary'] == '做完了' for item in ok['items'])
+
+
+def test_parallel_rejects_empty_and_caps_the_batch():
+    from app import subagent as sub_mod
+    tools = {t.name: t for t in sub_mod.build_tools(
+        project='p', parent_run_id='r', model=object(), tools=[], system_prompt='',
+        depth=0, create_agent=creator(Graph()), timeout=5)}
+    assert asyncio.run(tools['run_parallel_subagents'].ainvoke({'tasks': []}))['ok'] is False
+    many = ['任务' + str(i) for i in range(sub_mod.PARALLEL_LIMIT + 4)]
+    result = asyncio.run(tools['run_parallel_subagents'].ainvoke({'tasks': many}))
+    assert result['count'] == sub_mod.PARALLEL_LIMIT
+
+
+def test_parallel_tool_is_hidden_inside_a_subagent():
+    captured = {}
+    asyncio.run(subagent.execute(
+        project='p', parent_run_id='p1', task='x', model=object(),
+        tools=[tool('read_file'), tool('run_parallel_subagents')], system_prompt='',
+        create_agent=creator(Graph(), captured)))
+    names = [item.name for item in captured['tools']]
+    assert 'run_parallel_subagents' not in names
 
 
 def test_spawn_tool_call_goes_through_the_full_path():

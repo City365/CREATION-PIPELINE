@@ -897,6 +897,60 @@ def risk_of(name): ...
 
 `tests/test_subagent.py`（8 条）：子 run 独立落库且 `parent_run_id`/`kind` 正确、子 agent 工具表不含 `spawn_subagent`、深度上限隐藏工具、`spawn_subagent` 工具全链路、超时上报不抛、内部异常上报不抛、空答复判失败、父 run 的工具表里真有这个工具。
 
+---
+
+## 18. 跨轮目标（P2-1 已落地）
+
+`checkpoint` 是**一轮内**的任务计划，run 结束就停在回执里。用户说「把这本小说做成短剧」这种要跨十几轮的目标，没有地方承载——下一轮模型只看得到历史消息，不知道自己在为哪个目标服务。
+
+`app/goal.py`：
+
+| 项 | 做法 |
+|---|---|
+| 存储 | `goals(project, session_id, payload)`，一会话最多一个 active |
+| 注入 | 每轮 `prompt_block()` 拼进系统提示：目标 + 已推进几轮 + 已登记阶段 + 最近 5 条进展 |
+| 维护 | `set_goal` / `add_goal_progress` / `complete_goal` 三个工具 |
+| 计数 | `bump_turn()` 每轮 +1，用来判断这个目标拖了多少轮 |
+| 换方向 | 同一目标改描述保留 id 与进展，记 `replaced` 旧描述；结束后再开是新目标 |
+| 关闭 | `complete_goal` 后 `active()` 返回 None，提示不再注入，但记录留着 |
+
+刻意不复用 plan：**plan 是「这一轮怎么走」，goal 是「这些轮为了什么」**。
+
+`tests/test_goal.py`（12 条）：无目标不注入、设定后注入、进展记录与展示、无目标时记进展被拒、完成后停止注入、轮次计数只在 active 时递增、改描述保留身份、完成后重开干净、按会话与项目隔离、空目标被拒，外加两条真实请求链路（目标真的进了下一轮的系统提示、回执里的 `goal` 能通过事件重放）。
+
+---
+
+## 19. 并行子任务（P2-2 已落地）
+
+`run_parallel_subagents(tasks)` 是 workflow 的最小可用形态：不复用 DSH 那套 JS 编排脚本，而是把「fan-out 后收集」这一件最常用的事做实。
+
+- 一次最多 `PARALLEL_LIMIT = 6` 个，`asyncio.gather(..., return_exceptions=True)`
+- 每个子 run **自己的模型实例**（`model_factory`）：同一个实例被多个协程同时用，请求级状态会互相污染
+- 单项失败只影响自己，`items[]` 里逐项给 `ok / run_id / summary / error / duration_ms`
+- 子 agent 的工具表里同时拿掉 `spawn_subagent` 与 `run_parallel_subagents`；`execute()` 里再兜一遍
+
+---
+
+## 20. 能力目录（P2-3 已落地）
+
+DSH 的 `dsh-plugin-market` 是给有社区生态的产品装第三方扩展用的。单机产品没有那个生态，真正缺的是**一眼看清「这个 agent 现在有什么能力、各自来自哪一层」**。
+
+`GET /agent/catalog` 返回：
+
+```
+app_pack         当前应用包、政策段、提示词字数
+layers.framework 框架层能力清单（不随应用变，也不由应用关闭）
+layers.application  identity / policies / skill_topics / tool_groups
+layers.external   MCP server 名
+skills            技能目录（名字 + 简介 + topic）
+tools             工具全集（含 mcp__* 通配）
+commands          命令注册表
+switch_notes      每一层怎么改：应用层换 WMD_APP_PACK、技能进目录、工具写 mcp_servers、框架层不可改
+```
+
+`tests/test_catalog.py`（5 条）：三层都在、本轮新增能力全在里面、切到 `generic` 包时框架能力一个不少而应用层政策清空、每一层都有切换说明、关掉一段政策后 `prompt_chars` 的缩减量精确等于该段字数。
+
+
 
 
 
