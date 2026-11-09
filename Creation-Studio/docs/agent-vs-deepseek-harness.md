@@ -3,6 +3,19 @@
 对照对象：本机 `DeepSeek Harness` 桌面版（Electron + cordis 插件化 monorepo，约 240 个 `@deepseek-ai/dsh-*` 包，已解包到 `Creation-Studio/_tmp/dsh-src/`，每个包自带中文设计文档 `README.zh.md`）。
 对照范围：`@` / `/` 交互 · 计速 · 上下文压缩 · 技能，外加轮次语义与运行态展示。
 
+**这是一张台账，不是工作汇报。** 用法：
+
+| 章节 | 用途 |
+|---|---|
+| §0–§6 | 六个主题逐项对比，「差距」表带状态列（✅ 已消除 / ◐ 部分 / ❌ 仍缺）与「现在怎么做的」 |
+| **§7** | **差距总台账**：已落地清单 / 仍缺按该不该做排序 / 判定不学并附理由。**要动手先看这里** |
+| §8 | 反向：我们有、DSH 没有 |
+| **§9** | 推进记录 + 下一轮该做什么 |
+| §10 | 我们的 SSE 事件全清单（含 3 处死分支） |
+| §11 | 实现档案：只记「为什么这么做」和「怎么验的」 |
+
+维护规则：**每消除一条差距，回头改 §0–§6 的对应行和 §7.2，不要另起一章写「本轮已落地」**。上一版就是把台账写成了流水账——后面九章全在说「我做了什么」，而前面的差距表还停在改前一天，等于同一份文档同时撒两个谎。
+
 ---
 
 ## 0. 先看清我们自己的架构事实
@@ -32,7 +45,7 @@
 
 | 环节 | 实现 | 位置 |
 |---|---|---|
-| 触发判定 | `/(?:^|\s)@([^\s@]*)$/`，要求光标无选区 | `app.js:9470-9472` |
+| 触发判定 | 要求「行首或空白紧跟 `@`」且光标无选区 | `app.js:9470-9472` |
 | 状态 | `a.mention = {start, end, query, index}` | `app.js:9476` |
 | 候选 | `askMentionItems()` = 技能 + 附件 + 工作区文件，拍平成一个数组 | `app.js:7635-7654` |
 | 拉文件 | `askLoadWorkspaceFiles()` 递归 `/api/agent/workspace/tree?path=`，深度 ≤4、≤400 个、60s 缓存 | `app.js:7603-7626` |
@@ -84,15 +97,17 @@
 
 ### 差距
 
-| 项 | 我们 | DSH |
-|---|---|---|
-| source | 1 个（三类混排） | 文件 / 目录 / 会话 / 技能四个独立 source |
-| 语法 | 无引号规则，空格即断 | `@path`、`@"path"`、`@"dir/` 开放式 |
-| 目录 | 递归后丢弃层级 | drill + 面包屑 |
-| 原子性 | 纯文本，`file_ids` 不写 | 原子行内 chip + 稳定剪贴板形式 |
-| 空格/回车 | 无仲裁 | `matchSpace`/`matchEnter` 仲裁 |
-| 重开抑制 | 无 | 有 |
-| 内容 | 选中即引用 | 只给路径，内容靠工具读 |
+状态：✅ 已消除 ｜ ◐ 部分 ｜ ❌ 仍缺（截至 2026-11-10）
+
+| 项 | 我们原来 | DSH | 状态 | 现在 |
+|---|---|---|---|---|
+| source | 1 个（三类混排） | 文件 / 目录 / 会话 / 技能四个独立 source | ❌ | 仍是单 source，`askMention` 里三类混排 |
+| 语法 `@"path"` | 无引号规则，空格即断 | `@path`、`@"path"`、`@"dir/` 开放式 | ✅ | 引号包路径，带空格的可选 |
+| 目录 | 递归后丢弃层级 | drill + 面包屑 | ❌ | 仍拍平 |
+| 原子性 | 纯文本，`file_ids` 不写 | 原子行内 chip + 稳定剪贴板形式 | ❌ | 仍纯文本回写 |
+| 空格/回车 | 无仲裁 | `matchSpace`/`matchEnter` 仲裁 | ✅ | keydown 里加 `' '` 仲裁 |
+| 重开抑制 | 无 | 有 | ✅ | `a.mentionClosed`，选中后不再弹出 |
+| 内容 | 选中即引用 | 只给路径，内容靠工具读 | ◐ | 仍选中即引用，靠附件摘要兜 |
 
 ---
 
@@ -143,6 +158,8 @@ ctx.commands.register({
 ### 差距
 
 我们是「三个 if 分支 + 一个正则」，DSH 是「注册表 + 会话级目录缓存 + 四类派发 + 可装饰（给既有命令加弹窗但保留其参数声明）」。加命令的成本差一个量级。
+
+**现状（✅ 已消除）**：`COMMANDS` 注册表 + `GET /agent/commands`，前端只读这份表，加命令改一处。四类派发（`popup` / `action`）已落地，别名与装饰器未做（我们的命令只有 4 条，暂时用不上）。
 
 ---
 
@@ -218,15 +235,17 @@ ctx.commands.register({
 
 ### 差距
 
-| 项 | 我们 | DSH |
-|---|---|---|
-| token 总量 | 有（legacy 不累加） | 有（累加 + 缓存分桶） |
-| TTFT | **采了没展示** | `ttftMs`/`ttftSteps`，展示在 dock |
-| 总耗时 | 有，只进「用时」文案 | 有，但**故意不显示在完成页脚** |
-| LLM / 工具分解 | 无 | `llmMs` / `toolMs` |
-| 输出速率 | 无 | `decodeTokens/decodeMs` |
-| 缓存命中 | 无 | `cacheRead` / `cacheWrite` + 命中率 |
-| 不完整时 | 拿到什么显示什么 | 整块隐藏 |
+状态：✅ 已消除 ｜ ◐ 部分 ｜ ❌ 仍缺（截至 2026-11-10）
+
+| 项 | 我们原来 | DSH | 状态 | 现在 |
+|---|---|---|---|---|
+| token 总量 | 有（legacy 不累加） | 有（累加 + 缓存分桶） | ❌ | legacy 的 `usage` 仍是最后一次的，没累加 |
+| TTFT | **采了没展示** | `ttftMs`/`ttftSteps`，展示在 dock | ✅ | `turn.stats.ttft_ms`，dock 与每轮页脚都显示 |
+| 总耗时 | 有，只进「用时」文案 | 有，但**故意不显示在完成页脚** | — | 两边一致，都不显示 |
+| LLM / 工具分解 | 无 | `llmMs` / `toolMs` | ✅ | `cycle_trace` 累加，`turn.stats.llm_ms/tool_ms` |
+| 输出速率 | 无 | `decodeTokens/decodeMs` | ✅ | `tps = decode_tokens / (decode_ms/1000)` |
+| 缓存命中 | 无 | `cacheRead` / `cacheWrite` + 命中率 | ❌ | 未做，渠道侧也没回传 |
+| 不完整时 | 拿到什么显示什么 | 整块隐藏 | ✅ | `askTurnUsageHtml` 缺 stats 或 usage 就整块不渲染 |
 
 ---
 
@@ -336,22 +355,24 @@ compaction/end{...}                                     ← 恰好一次
 
 ### 差距
 
-| 项 | 我们 | DSH |
-|---|---|---|
-| 摘要 | 有（≤1500 字自由中文，hash 校验） | 有（**8 段固定 schema**，空段 `(none)`，已有摘要要合并） |
-| 覆盖校验 | 有（`message_hashes`） | 有（surface 位置锚点 + 影子价） |
-| **收缩校验** | 无 | **摘要 token 必须小于被遮蔽量，否则抛错** |
-| 阈值 | `estimate > 预算×0.7` + 消息 >6 条（仅 harness） | `floor(min(W×0.8, W−O−65536))` **绝对值**比较 |
-| 保留尾部 | 无——`trim_to_budget` 从最旧 pop | `floor((W−O)×0.16)` 从尾逐节点累加 |
-| 边界安全 | 无 | **系统提示词永不遮蔽** + 回退到 tool 配对平衡点 |
-| 溢出兜底 | `>0.9` 直接 422 | 收到 `CONTEXT_WINDOW_EXCEEDED` 后 `retain=0` 强制压缩并重试 1 次 |
-| 事务 | 无，直接写库 | `start`（即加锁）→ `summary` → 替换 → `end`，恰好闭合一次 |
-| 自动触发 | **只有 harness，产品未启用** | 三级：软阈值 / 硬溢出 / 模型切换前 |
-| 手动 | `/compact` + `confirm` | `/compact`（无参数，busy 拒绝） |
-| **通知前端** | **无** | **有（日志事件 + 投影）** |
-| **UI 呈现** | 只有一个 toast | 压缩卡片（`已压缩 N 条历史（约 M tokens）`）+ `ContextMeter` 环 + Trajectory `Between turns` |
-| 占用口径 | `input+output` 累加 + 后续按字数估 | `used = projectedTokens ?? pressureTokens`（**压缩一落地就变小**） |
-| 图片 / 工具结果 / 大输出 | 无独立策略 | 三条独立策略（prune 8192/4096/1024、spill 首尾各半） |
+状态：✅ 已消除 ｜ ◐ 部分 ｜ ❌ 仍缺（截至 2026-11-10）
+
+| 项 | 我们原来 | DSH | 状态 | 现在 |
+|---|---|---|---|---|
+| 摘要 | 有（≤1500 字自由中文，hash 校验） | 有（**8 段固定 schema**，空段 `(none)`，已有摘要要合并） | ❌ | 仍是自由中文。结构化的好处是合并有锚点、不漂 |
+| 覆盖校验 | 有（`message_hashes`） | 有（surface 位置锚点 + 影子价） | ✅ | 我们更严格，保留 |
+| **收缩校验** | 无 | **摘要 token 必须小于被遮蔽量，否则抛错** | ✅ | `shadowed_units > 4000` 时 `<90%` 才放行 |
+| 阈值 | `estimate > 预算×0.7` + 消息 >6 条 | `floor(min(W×0.8, W−O−65536))` **绝对值** | ✅ | harness 层已换绝对值 |
+| 保留尾部 | 无——`trim_to_budget` 从最旧 pop | `floor((W−O)×0.16)` 从尾逐节点累加 | ✅ | `compaction_range()` 实现 |
+| 边界安全 | 无 | **系统提示词永不遮蔽** + 回退到 tool 配对平衡点 | ✅ | 两处都有：`compact()` + `compaction_range()` |
+| 溢出兜底 | `>0.9` 直接 422 | 收到 `CONTEXT_WINDOW_EXCEEDED` 后 `retain=0` 强制压缩并重试 1 次 | ◐ | 仍 422，没做强制压缩重试 |
+| 事务 | 无，直接写库 | `start`（即加锁）→ `summary` → 替换 → `end`，恰好闭合一次 | ❌ | 仍直接写库 |
+| 自动触发 | **只有 harness，产品未启用** | 三级：软阈值 / 硬溢出 / 模型切换前 | ◐ | harness 有软阈值；产品跑 legacy 没有自动压缩 |
+| 手动 | `/compact` + `confirm` | `/compact`（无参数，busy 拒绝） | ✅ | 有 |
+| **通知前端** | **无** | **有（日志事件 + 投影）** | ✅ | `role='compacted'` 消息 + `compaction` 字段 |
+| **UI 呈现** | 只有一个 toast | 压缩卡片 + `ContextMeter` 环 + Trajectory `Between turns` | ✅ | 卡片做了；`ContextMeter` 等价物是 `ask-ctx` 环；轨迹里的「轮间压缩」未做 |
+| 占用口径 | `input+output` 累加 + 后续按字数估 | `used = projectedTokens ?? pressureTokens`（**压缩一落地就变小**） | ❌ | 仍用上一轮实际值 |
+| 图片 / 工具结果 / 大输出 | 无独立策略 | 三条独立策略（prune 8192/4096/1024、spill 首尾各半） | ◐ | **大输出 spill 做了**（P1-B）；图片 prune 未做 |
 
 ---
 
@@ -415,16 +436,18 @@ If the user names a skill, or the task clearly matches a skill's description, ca
 
 ### 差距
 
-| 项 | 我们 | DSH |
-|---|---|---|
-| 数量 | 单选 1 个 | 多选叠加 |
-| 目录可见性 | 系统提示只写选中的那一个；自定义技能名不进工具描述 | 持久目录列出全部（名 + 截断描述，默认 500 字符） |
-| 加载 | `read_analysis_guidance(topic)` 按需取正文（**已具备**） | `skill` 工具按需取正文 |
-| 正文体积 | `compose()` 全量拼接 references，60k 硬上限 + 截断 | 正文无上限（明确列为已知限制），资源只给指引 |
-| 目录更新 | 每轮重拼 | 追加式替换 + digest 差分 + 空目录作废 |
-| 调用策略 | 启用 / 停用 | `modelInvocable` × `userInvocable` 四组合 |
-| 用户路径 | 只能在 `@` 里挑 | `/name` 直接键入，注入到步骤最后 |
-| 可见性 | 只有工具行「正在读取指导文档」 | `Instructions` 卡片 + 可展开正文 + 右侧栏看 SKILL.md |
+状态：✅ 已消除 ｜ ◐ 部分 ｜ ❌ 仍缺（截至 2026-11-10）
+
+| 项 | 我们原来 | DSH | 状态 | 现在 |
+|---|---|---|---|---|
+| 数量 | 单选 1 个 | 多选叠加 | ❌ | 仍单选。多选要先定「多个技能冲突谁优先」 |
+| 目录可见性 | 系统提示只写选中的那一个；自定义技能名不进工具描述 | 持久目录列出全部（名 + 截断描述，默认 500 字符） | ✅ | `skills.catalog()` + 【可用技能目录】，实测 18 条 |
+| 加载 | `read_analysis_guidance(topic)` 按需取正文 | `skill` 工具按需取正文 | ✅ | 两边同构，本来就有 |
+| 正文体积 | `compose()` 全量拼接 references，60k 硬上限 | 正文无上限（列为已知限制），资源只给指引 | ◐ | 仍全量拼接 |
+| 目录更新 | 每轮重拼 | 追加式替换 + digest 差分 + 空目录作废 | ❌ | 每轮重拼，18 条目录约 1.2k 字，暂时可接受 |
+| 调用策略 | 启用 / 停用 | `modelInvocable` × `userInvocable` 四组合 | ❌ | 仍两态 |
+| 用户路径 | 只能在 `@` 里挑 | `/name` 直接键入，注入到步骤最后 | ❌ | 仍走 `@` |
+| 可见性 | 只有工具行「正在读取指导文档」 | `Instructions` 卡片 + 可展开正文 + 右侧栏看 SKILL.md | ❌ | 仍只有工具行 |
 
 ---
 
@@ -450,29 +473,80 @@ If the user names a skill, or the task clearly matches a skill's description, ca
 
 轨迹我们**有底子**：`trajectory_events` 表（`store.py:43-77`）+ 分页接口 `GET /agent/sessions/{sid}/trajectory?offset&limit&run_id`（`main.py:640-648`）+ SSE 的 `trajectory_item` / `trajectory_delta` + 前端 `ask-traj`（`app.js:7692-7702`，最近 50 条，role / kind / 时间 / 内容前 500 字）。缺的是：时间概览、TTFT 与解码时间条、可展开调用检查器、虚拟化。
 
+**现状（2026-11-10）**：
+
+- ✅ **turn/step 领域模型落了**，但只在数据层：`receipt.turn = {index, run_id, started_at, ended_at, step_count, steps, stats}`，`step` 对应原来含糊的 `cycle`。事件流按 turn 聚合，子 run 靠 `parent_run_id` 挂回 turn。
+- ✅ **界面上的「轮次」撤了**。加过一版「轮次 2 · 步骤 1」，后来判定是自我证明式数字——用户自己数得出发了几条消息，模型内部调了几次也不关他事。现在 dock 只留速率、首字、模型/工具墙钟。这条是教训：**内部模型该支撑数据，不该漏到界面上**。
+- ❌ **运行态展示没动**：仍是固定文案 + 秒表，没有「第几步 / 现在跑哪个工具」，shimmer、完成时收起、间距规范全未做。
+- ❌ **Trajectory 时间概览、TTFT 与解码条、调用检查器、虚拟化**：全未做。
+- ❌ **`max_rounds` 还摆在用户面前**（输入框默认 120），DSH 明确不把 recursion limit 暴露给用户。
+
 ---
 
-## 7. DSH 有、我们没有 —— 按落地价值排序
+## 7. 差距总台账（DSH 有、我们没有）
 
-| 优先级 | 能力 | DSH 包 | 我们的缺口 |
+状态：✅ 已消除 ｜ ◐ 部分 ｜ ❌ 仍缺 ｜ ⏸ 判定不学（附理由）
+
+### 7.0 先认一个错
+
+这张表最初的版本把 **subagent / workflow / goal / plan-mode / MCP / plugin market / turn-step 模型** 整体打成 P3「不学」，理由是「创作台不吃这套」。
+
+那个理由本身就是错的：**它是拿应用层的短期需求去否决框架层的契约**。harness 的意义恰好是反过来的——框架层只出通用契约，应用层（创作台、管理器、任何新应用）用 skill + 配置去实现，换应用只换配置和技能。当时判「不学」的七项里，五项已经落了，而且落的时候没有一项需要改应用层逻辑。
+
+真正的判断标准只有一条：**这项能力是不是「换应用也不变」的框架能力**。是，就该在框架层；不是，才该留在应用层。用「当前产品用不上」去否决它，等于把框架层焊死在第一个应用上。
+
+### 7.1 已落地
+
+| 优先级 | 能力 | DSH 包 | 我们现在的做法 |
 |---|---|---|---|
-| **P0** | 让压缩变成可见事件 | `dsh-compaction*` / `dsh-command-compact` | 压缩静默，只有一个 toast |
-| **P0** | 技能持久目录（清单型，非单选） | `dsh-skill` / `dsh-tool-skill` | 系统提示只写选中那一个，自定义技能名模型看不见 |
-| **P0** | `sessionStats` 投影（turns/steps/llmMs/toolMs/ttftMs/decodeMs/decodeTokens） | `dsh-session-stats` | 有 `first_token_ms`/`duration_ms`/`usage`，无分解无速率 |
-| **P0** | 命令注册表 + 会话级目录 | `dsh-commands` / `dsh-client-ui-commands` | `/` 正则里三个写死命令 |
-| **P1** | composer dock 统计控件（activity / usage） | `dsh-client-ui-chat` | 一个环形占用 |
-| **P1** | 输入触发 source 注册 + drill + 空格/回车仲裁 | `dsh-client-ui-input-trigger` | 单 source，无仲裁，无重开抑制 |
-| **P1** | 原子引用 + `@"..."` 语法 | `dsh-client-ui-reference` / `dsh-file-reference` | 纯文本回写，带空格路径选不到 |
-| **P1** | 每轮 token 用量页脚（不完整则整块隐藏） | `dsh-client-ui-chat` | 无 |
-| **P1** | 启用 harness 路径 | — | 设计好了没开开关 |
-| **P2** | Trajectory 时间概览（TTFT vs 解码条） | `dsh-client-ui-trajectory` | 有简化轨迹列表，无时间轴 / 无检查器 |
-| **P2** | 图片 offload / 工具结果裁剪 / 输出落盘 | `dsh-compaction-*` / `dsh-spill-policy` | 无 |
-| **P2** | 会话日志事件流 + 投影回放 | `dsh-session*` | 消息数组 + SQLite 摘要表 |
-| **P2** | 排队 / steer / 回执发件机器 | `dsh-client-ui-conversation` | 单条在途 |
-| **P2** | 技能 `Instructions` 卡片 | `dsh-client-ui-skill` | 只有工具行文案 |
-| **P2** | turn/step 领域模型 | `dsh-agent-loop` | 用 LangGraph 递归步数顶替 |
-| **P3** | 子代理 / workflow / goal / plan / schedule | `dsh-subagent` / `dsh-workflow` / `dsh-goal` / `dsh-plan-mode` | 无 |
-| **P3** | 插件市场 / MCP / ACP | `dsh-plugin-market` / `dsh-mcp-client` / `dsh-acp` | 无 |
+| P0 | 命令注册表 + 会话级目录 | `dsh-commands` | `COMMANDS` + `GET /agent/commands` |
+| P0 | 技能持久目录（清单型，非单选） | `dsh-skill` / `dsh-tool-skill` | `skills.catalog()` + 【可用技能目录】 |
+| P0 | sessionStats 投影 | `dsh-session-stats` | `receipt.turn.stats`：llm/tool/ttft/decode/tps |
+| P0 | 压缩可见 | `dsh-compaction*` | `role='compacted'` 消息 + 压缩卡片 |
+| P0 | 原子引用 + `@"..."` 语法 | `dsh-client-ui-reference` | 引号包路径 |
+| P0 | 输入触发仲裁 + 重开抑制 | `dsh-client-ui-input-trigger` | keydown 空格仲裁 + `mentionClosed` |
+| P1 | composer dock 统计 | `dsh-client-ui-chat` | `ask-stat-dock`（速率 / 首字 / 双墙钟） |
+| P1 | 每轮 token 页脚（不完整则整块隐藏） | `dsh-client-ui-chat` | `ask-turn-usage` |
+| P1 | **框架层/应用层分离** | （DSH 隐含在插件体系里） | `app_packs/` + `WMD_APP_PACK` |
+| P1 | **事件流 + 投影回放** | `dsh-session*` | `run_events` 表 + `/events` + `/projection` |
+| P1 | **turn/step 领域模型** | `dsh-agent-loop` | `receipt.turn`（数据层，界面不展示） |
+| P1 | **输出落盘（spill）** | `dsh-spill-policy` | `spill.py` + `read_tool_output` |
+| P1 | **MCP client** | `dsh-mcp-client` | `mcp.py` + `Pack.mcp_servers` |
+| P1 | **子代理** | `dsh-subagent` | `spawn_subagent`，子 run 独立事件流 |
+| P2 | **并行 fan-out（workflow 最小形态）** | `dsh-workflow` | `run_parallel_subagents`（≤6） |
+| P2 | **跨轮目标** | `dsh-goal` | `goal.py` + 3 个工具 |
+| P2 | **能力目录（plugin market 的实际形态）** | `dsh-plugin-market` | `GET /agent/catalog` 三层视图 |
+
+### 7.2 仍缺 —— 按该不该做排序
+
+| 优先级 | 能力 | DSH 包 | 缺口 | 为什么值得做 |
+|---|---|---|---|---|
+| **P0** | 启用 harness 路径 | — | 设计好了，产品始终跑 legacy（`engine_version: legacy`） | 两套代码跑弱的一套：legacy 的 `usage` 不累加、没有自动压缩、技能冻结不生效 |
+| **P0** | 图片 offload | `dsh-compaction-image` | 图片一直内联，上下文被大图吃掉 | 大输出已落盘，图片是同一类问题的最后一块 |
+| **P0** | 占用口径改 `projectedTokens` | `dsh-context-meter` | 用上一轮实际值，压缩落地后环不变小 | 用户看到「压了还这么满」，等于压缩白做 |
+| **P1** | 自动化测试不依赖本机服务 | — | 多处测试真连 17821 拉渠道，服务起没起决定断言 | 假通过比没有测试更危险，这轮已经踩到两次 |
+| **P1** | 运行态展示 | `dsh-client-ui-chat` | 仍是固定文案 + 秒表 | 「现在跑到第几步、卡在哪个工具」用户完全看不到 |
+| **P1** | Trajectory 时间概览 + 调用检查器 | `dsh-client-ui-trajectory` | 只有简化列表 | 排查用，和 dock 的统计是两回事 |
+| **P1** | 摘要 8 段 schema | `dsh-compaction-basic` | 自由中文，合并无锚点 | 多次压缩后摘要会漂，结构化才能合并 |
+| **P2** | 压缩事务 | `dsh-compaction-basic` | 直接写库 | 压缩中途失败会留下半状态 |
+| **P2** | 溢出兜底强制压缩重试 | `dsh-compaction*` | 仍 422 | 用户撞上就断线，DSH 会自己救一次 |
+| **P2** | 技能多选叠加 | `dsh-skill` | 仍单选 | 要先定冲突优先序 |
+| **P2** | `/name` 直接键入技能 | `dsh-client-ui-skill` | 仍走 `@` | 少一次挑选 |
+| **P2** | `Instructions` 卡片 | `dsh-client-ui-skill` | 只有工具行 | 用户不知道技能正文长什么样 |
+| **P2** | 缓存命中分桶 | `dsh-token-meter` | 无 | 要先确认渠道回传 `cacheRead` |
+| **P3** | 完整 workflow 编排 | `dsh-workflow` | 只有并行 fan-out | 阶段性依赖 + 结果传递，等有真实多阶段需求 |
+| **P3** | 多 source `@` 注册表 + drill | `dsh-client-ui-input-trigger` | 单 source、目录拍平 | 现有三类混排够用 |
+| **P3** | 原子 chip 引用 | `dsh-client-ui-reference` | 纯文本回写 | 改输入框数据结构，收益中等 |
+| **P3** | ACP | `dsh-acp` | 无 | 没有对端要接入 |
+
+### 7.3 判定不学（附理由，随时可翻）
+
+| 能力 | 理由 |
+|---|---|
+| `dsh-plan-mode`（只读探索、只出方案不动手） | 我们的权限档位里已有 `readonly`，只差一个「不许写盘但允许一轮多步」的组合。要等真有人用「先看看，别动」这个说法再补，现在补是猜需求 |
+| 虚拟列表 + 长会话性能 | 单机会话量到不了那个量级，先有真实卡顿再优化 |
+
+> 上一版把 plan-mode 和 image offload 都放在这里，image offload 已改判为 P0——理由一样，那是框架能力，不是应用需求。
 
 ## 8. 我们有、DSH 没有
 
@@ -484,24 +558,55 @@ If the user names a skill, or the task clearly matches a skill's description, ca
 | 预算硬闸 | `budget.py` 的 `output_tokens_exceeded` / `tool_calls` 上限 + 422 不静默截断 |
 | 压缩覆盖 hash 校验 | `message_hashes` 逐条比对；DSH 用位置锚点 |
 | 技能正文 `compose()` 拼接 | 自动带上 `references/` 与根目录文本；DSH 只给资源指引不列举 |
+| **运行时换应用** | `WMD_APP_PACK` 一个环境变量切应用包，框架代码不动。DSH 换产品是重打包（插件组合在构建期定） |
+| **投影自证接口** | `/agent/executions/{id}/projection` 用落库事件重放整份回执并逐字段比对，`identical` 直接给出「事件够不够当真相」。DSH 有 session 投影，但没有这个自证口 |
+| **应用层文案可整体取回** | `/agent/app-pack/prompt` 按 `layer` 分段返回全文，关掉的政策原文照样在；DSH 的提示词靠代码拼接，没有分段台账 |
 
 ---
 
-## 9. 落地顺序
+## 9. 推进记录
 
-1. **先把 harness 打开，或者把 harness 里那几项搬进 legacy**。现在等于拿着两套代码跑弱的一套：`usage` 不累加、没有每调用计时、没有自动压缩、技能冻结不生效。这是所有后续工作的前提。
-2. **让压缩可见**（半天量级，收益最大）：
-   - 后端压缩成功后 append 一条 SSE：`{type:'compacted', compaction:{id, shadowed, shadowed_chars, summary_chars, kept, model, at, summary}}`，`shadowed` 用 `len(summary['message_ids'])`。
-   - 前端在消息流里插一张可展开卡片，标题「上下文已压缩」，副标题「已压缩 N 条历史记录（约 M tokens）」，展开显示摘要正文；样式照 DSH 的 `CompactionItem`（图标 + 折叠箭头 + sticky 头栏）。
-   - `ask-ctx` 环的 `used` 改成**优先用「下一轮预计」而不是「上一轮实际」**——DSH 用 `projectedTokens ?? pressureTokens`，这样压缩一落地环就变小。
-   - 压缩完同时刷新 `receipt.context`，让 Summary 面板的 6 分项条同步。
-3. **把 `/` 从正则改成注册表**：前端一个 `commands` 数组 + 一个 `GET /agent/commands` 目录接口，顺手把「加命令要改两处」消掉。
-4. **上 sessionStats**：后端补 `llmMs` / `toolMs` / `decodeMs` / `decodeTokens`（harness 的 `model_finished.duration_ms` 已经给了单次模型时间），前端加 composer dock 两个控件。TTFT 和速率自然就有了。
-5. **技能改成持久目录**：把「选中的那一个」换成「持久目录消息 + 工具按名加载」，同时把自定义技能的 description 带进目录。我们已经有 `read_analysis_guidance(topic)` 这个按需加载通道，缺的只是**目录**——把系统提示里那一行换成 `name + description` 列表即可，`allowed_topics` 相应放宽到目录全集。
-6. **压缩算法对齐**（可选的第二轮）：阈值换成绝对值 `floor(min(W×0.8, W−O−65536))`、保留尾部 `floor((W−O)×0.16)`、加「系统提示词不遮蔽」和「摘要必须小于被遮蔽量」两条硬校验。`Message_hashes` 的覆盖校验我们已经有了，比 DSH 的位置锚点更严格，保留。
-7. **`@` 加引号语法和 drill**：先解决「带空格路径选不到」这个硬 bug，再考虑下钻。
+### 9.1 当初排的顺序，后来怎么走的
 
-> DSH 的结论均来自 `_tmp/dsh-src/<包名>/README.zh.md`（各包自带中文设计文档）。我们的行号对应本次提交时的 `web/app.js`、`agent_backend/app/*.py`、`src/server.js`。
+原计划的 7 步，实际执行时顺序被改过一次，原因写在下面——这次改动本身是个教训。
+
+| 原计划 | 实际 | 为什么改 |
+|---|---|---|
+| ① 先打开 harness | **没做** | 打开它之前得先解决「两套代码行为不一致」，否则一开就是换引擎顺手换 bug |
+| ② 让压缩可见 | ✅ 做了 | 按计划 |
+| ③ `/` 改注册表 | ✅ 做了 | 按计划 |
+| ④ 上 sessionStats | ✅ 做了 | 按计划 |
+| ⑤ 技能改持久目录 | ✅ 做了 | 按计划 |
+| ⑥ 压缩算法对齐 | ✅ 做了 | 按计划 |
+| ⑦ `@` 加引号 | ✅ 做了（drill 没做） | 按计划 |
+
+原计划里**没有**的一项成了第一件事：**框架层与应用层的分离**。原计划把 harness 那批能力当「加功能」来做，做到一半发现前提是错的——那些能力之所以装不进来，是因为框架层里焊着应用层的东西。所以先拆层，再装能力。
+
+### 9.2 2026-11-09 / 11-10 两轮实际顺序
+
+| 顺序 | 做了什么 | 为什么排在这个位置 | 提交 |
+|---|---|---|---|
+| 1 | 命令注册表 / 技能目录 / sessionStats / 压缩卡片 / `@` 引号 | 收益直接、风险低、不碰运行时 | `07b3758` |
+| 2 | **应用包分层（P0-A）** | 后面每一项都卡在这：能力没地方声明 | `33eaa07` |
+| 3 | **事件流收口（P0-B）** | 加能力不再改 receipt schema 的前提 | `44cff9c` |
+| 4 | turn/step 命名（P0-C） | 和 B 同一次切，顺手 | `44cff9c` |
+| 5 | **输出落盘（P1-B）** | 比 MCP 先做：MCP 工具的输出更要落盘 | `e70dc3e` |
+| 6 | MCP 客户端（P1-A） | 落盘就位后才接外部工具 | `e70dc3e` |
+| 7 | 子智能体（P1-C） | 要事件流 + 落盘都就位 | `72bb67e` |
+| 8 | 跨轮目标 / 并行子任务 / 能力目录（P2） | 复用子智能体 | `dca0ed8` |
+| 9 | 提示词分段留存 | 分层之后原文不能丢 | `421279f` |
+| 10 | dock 撤掉「轮次/步骤」 | 内部模型不该漏到界面 | `d110262` |
+
+### 9.3 下一轮该做什么
+
+按 §7.2 的 P0/P1 排，前四件事：
+
+1. **启用 harness 或把 harness 那几项搬进 legacy**（P0）——这是唯一还挡在路上的结构性欠账。不解决它，legacy 的 `usage` 不累加、没有自动压缩、技能冻结不生效这三条会一直挂着。
+2. **图片 offload**（P0）——大输出已经落盘，图片是同一类问题的最后一块，不补上下文照样被吃穿。
+3. **占用口径改 `projectedTokens`**（P0）——现在压缩落地后环不变小，用户会认为压缩没生效。
+4. **测试去掉对本机服务的依赖**（P1）——这轮已经踩到两次假通过（`test_models` / `test_system_models` 连 17821 拉渠道，服务起没起决定断言）。
+
+> DSH 的结论均来自 `_tmp/dsh-src/<包名>/README.zh.md`（各包自带中文设计文档）。我们的行号对应本次提交时的 `web/app.js`、`agent_backend/app/*.py`、`src/server.js`，已随提交推移，看代码时以符号名为准。
 
 ---
 
@@ -534,423 +639,100 @@ If the user names a skill, or the task clearly matches a skill's description, ca
 
 ---
 
-## 11. 本轮已落地（2026-11-09）
+## 11. 实现档案（2026-11-09 / 11-10）
 
-8 条「值得学」全部实现并逐条实测。
+两轮共 10 个提交。这里只记「为什么这么做」和「怎么验的」，过程略；差距的当下状态看 §7。
 
-| # | 能力 | 改了哪里 | 实测 |
-|---|---|---|---|
-| 1 | 压缩可见 | `main.py` `compaction_card()` / `_compacted_response()`；`app.js` `askCompactionCardHtml()`；`agent-workspace.css` `.ask-cps` | 压缩后会话 42 条（41 + 1 卡片），`shadowed=41`、摘要 2072 字；模型可见仍 41 条（`messages()` 只收 user/assistant） |
-| 2 | 技能持久目录 | `skills.py` `catalog()`；`chat_policy.py` 目录段；`main.py` `allowed_topics` 放宽；`task_tools.py` 动态 docstring | 目录 18 条（5 内置 + 13 自定义）；`read_analysis_guidance('skill:dir:抽帧检查')` 返回 `ok=True`，正文 532 字 |
-| 3 | 计速 | `cycle_trace.py` `awrap_tool_call` + `llm_ms/tool_ms`；`main.py` `receipt['timing']`；`app.js` `askSpeedHtml()` | `{"llm_ms":3094,"tool_ms":0,"model_calls":1,"ttft_ms":2939,"decode_ms":828,"decode_tokens":79,"tps":95.4}` |
-| 4 | 命令注册表 | `main.py` `COMMANDS` + `GET /agent/commands`；`app.js` `askLoadCommands()` / `askCommandList()` | `/` 弹层 4 条：`/model /think /compact /help` |
-| 5 | `@` 语法 | `app.js` `askUpdateMention()` 引号分支 + `mentionClosed`；`askChooseFile()` 自动加引号；keydown 空格仲裁 | `@"3d` → `quoted:true`；选中带空格路径写出 `@"assets/a b.png" `；关闭后同位置不重开、改查询重新武装；空格选中 `@普通聊天 ` |
-| 6 | composer dock | `app.js` `askSessionStats()` / `askStatDockHtml()`；CSS `.ask-stat-dock` | `轮次 2 · 步骤 1 · 95.4 tok/s · 模型 3.1s · 首字 2.9s` / `输入 16k · 输出 359 · 合计 16k` |
-| 7 | 每轮页脚 | `app.js` `askTurnUsageHtml()`；CSS `.ask-turn-usage` | `95.4 tok/s · 首字 2.9s · 输出 79 tokens`，展开 7 项分解；无 timing 的旧轮整块不显示 |
-| 8 | 压缩硬校验 | `context.py` `compaction_range()` + 收缩校验；`main.py` 同步 | 末尾未答完的一条不被压缩；摘要不比原文短（>4000 字节才校验）则 422；二次压缩 422「没有需要压缩的新消息」 |
+### 11.1 应用包分层（`33eaa07`）
 
-### 顺带修掉的一个真 bug
+**问题**：框架层里焊着应用层的 43 处领域词，代码里 `preset`/`profile`/`app_id` 零命中，换应用等于改代码。
 
-原来的 `summary_payload(summary, items)` 把**全部** `items` 标成已覆盖，但摘要只基于 `fresh`。如果压缩时末尾那条被剔除（或未来任何范围收窄），那条消息会被标成「已覆盖」然后悄悄消失——下一轮模型再也看不到它。
+**做法**：`Pack` 只认七个字段（product / forbidden_pipelines / policies / skill_topics / skill_sources / tool_groups / mcp_servers）。创作台那三段政策不是手抄的——脚本从原字符串按段首标记切出来再 `repr()` 落盘，自带 `assert rebuilt == identity`，切分有损就中止。
 
-改成 `summary_payload(summary, covered_items)`，`covered_items = items[:covered + len(fresh)]`，只标记真正进了摘要的部分。
+**验收**：**逐字节相同**，五种参数组合 5/5 PASS（空参数 / 选技能 / 技能目录+附件 / 恢复+完全权限 / 工作区权限多根目录）。换包实测 3401 → 818 字，**工具 22 个、技能 18 条一个不少**。
 
-### 测试
+**回滚**：`WMD_APP_PACK=` 留空即回创作台。
 
-- `agent_backend`：234 passed / 4 failed。4 个失败里 1 个按新行为更新了断言（`test_chat_policy`），3 个（`test_models` / `test_system_models` ×2）是渠道环境隔离问题，与本次改动无关（`model_options()` 读到了真实 `agent_settings.json` 的 5 个渠道）。
-- 前端 `node --test`：108 passed。
+### 11.2 事件流收口（`44cff9c`）
 
----
+**问题**：receipt 26 个平铺字段，加一个能力要改 schema + 前端解析 + 测试三处。
 
-## 12. 分层改造：框架层只出契约，应用层出配置（P0-A 已落地）
+**做法**：不重写，先让写入变成事件。`TracedDict`/`TracedList` 代理 dict/list 的写操作，`stream()` 里那 26 处赋值**一行都没改**。`project()` 重放，`verify()` 比对。
 
-### 12.1 之前错在哪
+**实测**：一轮 39 事件，重放与内存值逐字段相等，存储 1.93×。落库后 `/projection` 的 `identical` 就是「事件够不够当真相」的答案。
 
-先说清楚判断错在哪：原来把「创作台不需要这些」当成不学 harness 的理由——这是**用应用层的短期需求去否决框架层的契约**。harness 的意义是反的：框架层只提供通用契约，应用层（创作台、管理器、任何新应用）用 skill + 配置去实现，换应用只换配置和技能。
+**兜底**：缓冲上限 2 万条，超限时 `verify()` 自曝 `truncated=true` 且 `ok=false`——不拿半截事件流说相等。
 
-而且实测出来的耦合度比预想的更深：
+**回滚**：`WMD_TRACE_RECEIPT=0`。
 
-| 指标 | 改前 |
-|---|---|
-| `chat_policy.system_prompt()` 单串长度 | **3405 字**，一个 f-string 拼到底 |
-| 其中应用层领域词 | GenUI 2 · AsyncImage 4 · target_path 3 · ask_choice 3 · 小说 4 · 分镜 5 · 剧本 5 · 素材 9 · 短剧 1 · 资产 7 = **43 处** |
-| 代码里的「应用」概念 | `preset` / `profile` / `application` / `app_id` / `domain` 全 **0** 命中 |
-| 加第 27 个能力要改几处 | receipt 字段 + 前端解析 + 测试，三处起步 |
+### 11.3 turn / step（`44cff9c` / `d110262`）
 
-结论：框架层和应用层糊在同一个字符串里，所以「换应用」等于改代码，「加能力」等于改 schema。
+`receipt.turn = {index, run_id, started_at, ended_at, step_count, steps, stats}`，`step` 即原来含糊的 `cycle`；`receipt.timing` 保留同值快照。
 
-### 12.2 契约
+**后来把界面上的「轮次/步骤」撤了**：用户自己数得出发了几条消息，模型内部调了几次不关他事。turn 留在数据层做聚合标识和 `parent_run_id` 的挂点，不上界面。
 
-```
-框架层（不随应用变）              应用层（换应用只换这层）
-─────────────────────────────   ─────────────────────────────
-session / run / turn / step        product        产品名
-event / projection                 forbidden_pipelines  不该被当流水线的领域词
-tool / skill / command registry    policies[]     可整体开关的政策段
-模型路由 · 预算 · 权限 · 沙箱        skill_topics   技能名 → 指导正文 topic
-执行中追加 · 恢复标记 · 附件元数据    skill_sources  技能从哪加载
-```
+### 11.4 输出落盘（`e70dc3e`）
 
-`Pack` 只是个 dataclass（`agent_backend/app/app_packs/base.py`），框架代码只认这七个字段，不认识任何领域词。
+两处截断（`tool_guard` 24000 / `harness/tool_gateway` 30000 字符）直接丢内容。模型为了看后半截只能重复调同一个工具，把上下文和额度一起烧，还容易被判死循环。
 
-### 12.3 落地物
+`spill.py`：全文落 `data/spills/<project>/<run_id>/`，回模型 4000 字预览 + `spill_id` + `next_start`，`read_tool_output` 分页读完。
 
-| 文件 | 作用 |
-|---|---|
-| `app/app_packs/base.py` | `Pack` / `Policy` 契约 + `envelope()` 诊断视图 |
-| `app/app_packs/framework.py` | 框架层文案：身份基线（`{product}` / `{forbidden}` 两个占位符）+ 执行中追加 |
-| `app/app_packs/creation_studio.py` | 创作台包：3 段政策原文（GenUI 1081 字 / 出图路径 423 字 / ask_choice 1075 字）+ skill_topics |
-| `app/app_packs/generic.py` | 通用助手包：0 段政策、0 个技能 topic |
-| `app/app_packs/__init__.py` | 注册表 + `WMD_APP_PACK` 选择器 |
-| `app/chat_policy.py` | 从 126 行降到只做**顺序与条件分支**，领域词 43 → 0 |
-| `GET /agent/app-pack` | 当前包 id / 政策段字数 / 可用包 / 提示词总字数 / 切换说明 |
+**为什么不用 `read_file`**：spill 目录在 `agent_backend/data` 下，通常不在用户权限根里，`read_file` 会按档位拒绝。专用读取只认 spill 根，`spill_id` 走 `^s[0-9a-f]{6,32}$` 白名单 + `relative_to(ROOT)` 校验，既不放宽权限也不留穿越缝。
 
-创作台的 3 段政策**不是手抄的**：由 `_tmp/split_policy.py` 从原 `identity` 串按段首标记切出来再用 `repr()` 落盘，脚本自带 `assert rebuilt == identity`，切分有损就中止。
+### 11.5 MCP 客户端（`e70dc3e`）
 
-### 12.4 实测
+stdio + 换行分隔 JSON-RPC 2.0（initialize / initialized / tools/list / tools/call）。工具变 `mcp__<server>__<tool>`，`args_schema` 由 `inputSchema` 现场生成 pydantic 模型，模型看到的是真实参数。
 
-```
-包 id             名称       提示词字数  政策段  残留领域词
-creation-studio   创作台          3401      3   GenUI、AsyncImage、target_path、ask_choice、素材、
-                                                分镜、剧本、小说、出图、集数、三视图、短剧
-generic           通用助手         818      0   （无）
-```
+**stdout 必须独立线程 + queue**：`readline()` 阻塞，不这么做超时就是摆设（改前实测 32 秒，改后 1.5 秒）。
 
-- 换应用：`WMD_APP_PACK=generic` → 同一个后端的提示词从 3401 字降到 818 字，剩的 818 字全是框架层（身份基线 + 执行中追加 + 技能分支 + 附件元数据），一处领域词都不带。
-- 关能力：把 `image.paths` 的 `enabled` 置 false → 提示词 3401 → 2978 字，差 **423 字**，正好等于该政策原文长度，其余一字不动。
-- 环境变量留空 / 未设置 → `creation-studio`，产品行为不变。
+`harness/registry.py` 加 `CAPABILITY_PREFIXES = {'mcp__': 'external'}`，加一个 server 不用改能力表。
 
-### 12.5 验收口径
+### 11.6 子智能体（`72bb67e`）
 
-**逐字节相同**，不是「跑起来看着对」。`_tmp/verify_prompt.py` 从 `git show 07b3758:.../chat_policy.py` 取出拆层前的实现，与拆层后并排跑五种参数组合：
+子 run 有自己的 run_id / receipt / 事件流，父 run 只留一条 `subagents[]` 追加事件。**父回执不随子任务变大**——这个形态只有在事件流收口之后才成立。
 
-```
-OK   bare                    3401 chars
-OK   topic                   3557 chars
-OK   catalog+attachment      3982 chars
-OK   checkpoint+full-perm    4672 chars
-OK   workspace-perm          3925 chars
-result: PASS
-```
+递归双保险：`MAX_DEPTH=1` 时 `build_tools` 返回空列表，`execute()` 再过滤一遍，不靠调用方自觉。
 
-组合覆盖：空参数、选技能、技能目录 + 附件、恢复标记 + 完全访问权限、工作区权限（多根目录）。目录用例里还塞了空 description、无 topic、无名条目、超 200 字简介四种边界。
+顺带修 `store.save_run` 的裸 `INSERT` → upsert：子 run 先落初始回执、跑完更新同一 id，会撞 `UNIQUE constraint failed`。
 
-### 12.6 回滚
+### 11.7 跨轮目标（`dca0ed8`）
 
-`agent_backend/app/app_packs/` 是纯新增目录，`chat_policy.system_prompt()` 签名一字未改（末尾多一个可选 `pack=None`）。要退回旧行为直接把 `WMD_APP_PACK` 设成 `creation-studio` 或留空；要退回旧代码就 checkout 上一个提交。
+会话级，一会话最多一个 active。每轮注入「目标 + 已推进几轮 + 已登记阶段 + 最近 5 条进展」。
 
-### 12.7 新增测试
+**刻意不复用 plan**：plan 是「这一轮怎么走」，goal 是「这些轮为了什么」。
 
-`tests/test_app_packs.py`（8 条）把分层的硬约束钉住：
+### 11.8 并行 fan-out（`dca0ed8`）
 
-- `framework.py` 与 `chat_policy.py` 里不允许出现 `GenUI / AsyncImage / target_path / ask_choice / 出图 / 分镜 / 集数 / 剧本 / 小说`（这两个文件是框架层，出现就是分层失败）
-- 创作台包必须含全部领域词，通用包必须一个都不含
-- 关掉一段政策，提示词缩减量精确等于该段字数，且 `full.replace(text, '') == cut`
-- 未知包名抛 `KeyError`，空值回落到 `creation-studio`
-- `build(pack)` 是纯函数：环境变量在调用之间变化不影响结果
+`run_parallel_subagents` ≤6 个，`gather(return_exceptions=True)`。**每项用自己的 model 实例**——同一个实例被多个协程同时用，请求级状态（思考强度、重试计数）会互相污染。
 
-顺带修掉两条**本来就坏**的测试（不是这次改坏的）：
+### 11.9 能力目录（`dca0ed8`）
 
-- `test_skills.py` 引用被搬走的 `skills.SKILL_TOPICS`，改为 `skills.skill_topics()`。
-- `test_models.py::test_request_selection_and_effort_mapping` 依赖真实运行中的创作台服务（`_wmd_channels()` 打 HTTP 到 17821），服务没起就假失败；同时它还在用一个「provider 会凭空多列 deepseek-flash」的旧契约。改成打桩渠道 + 用配置里的真实模型名。
+`GET /agent/catalog` 分三层：框架 / 应用 / 外部。单机产品没有社区生态，「插件市场」的实际形态就是**一眼看清每个能力来自哪一层、怎么换**。
 
-### 12.8 后续阶段
+### 11.10 提示词留存（`421279f`）
 
-| 阶段 | 内容 | 验收 |
+分层后 2579 字应用层政策搬进了 `creation_studio.py`，没有任何入口能读回来；关掉一段政策还会把原文一起丢掉。
+
+`chat_policy.segments()` 返回 `{id, layer, chars, enabled, text}`，`build()` 只是 join enabled 的那部分——**关掉只影响进不进提示，原文一直在**。`GET /agent/app-pack/prompt?compare=generic` 能取回切走的 2579 字全文（三段：GenUI 1081 / 出图路径 423 / 智能推荐 1075）。
+
+### 11.11 这两轮踩到的坑
+
+全是真问题，没有一条是环境问题。
+
+| 坑 | 表现 | 修法 |
 |---|---|---|
-| ~~**P0-B**~~ | ~~事件流收口~~ | ✅ 已完成，见 12.9 |
-| ~~**P0-C**~~ | ~~turn / step 命名~~ | ✅ 已完成，见 12.10 |
-| **P1-A** | MCP client：`mcp_servers` 进 `Pack`，工具动态注册 | 接一个本地 MCP server，工具结果落进事件流 |
-| **P1-B** | 输出 spill：大工具输出落盘 + 回读 | >100KB 输出不再被截断丢弃 |
-| **P1-C** | subagent：子 run 作为独立事件子流 | 一个 3 集任务拆成 3 个子 run 并行 |
-| **P2** | workflow / goal / plugin market | 等 P0/P1 长稳 |
+| 哑巴 503 | 工具初始化失败只回「智能体工具初始化失败」，异常被 `except Exception:` 吞掉 | 记 `logging.exception`，一眼看到 `Unregistered runtime capability` |
+| 能力表要手工登记 | 新工具不在 `CAPABILITIES` 里就 503 | 补登记 + `mcp__` 前缀放行 |
+| 测试连真服务 | `_wmd_channels()` 打 17821，服务起没起决定断言（2 vs 6 个模型） | 打桩。**假通过比没有测试更危险** |
+| `readline()` 阻塞 | MCP 超时设 0.5 秒，实际跑了 32 秒 | 独立线程 + `queue.Queue` |
+| 裸 `INSERT` | 子 run 撞 `UNIQUE constraint failed` | 改 `ON CONFLICT DO UPDATE` |
+| 前端 2 条顽固失败 | `asset-folders` 仍在渲染、缺 `id="studio-generate-hint"` | **未修**，属之前没收尾的 UI 重构 |
 
-为什么 P0-A 先做、P0-B 后做：P0-A 不碰运行时（纯提示词装配），能用「逐字节相同」验收；P0-B 要动 receipt 和前端，风险高一档，而且它需要应用包先声明「这个应用关心哪些投影字段」——那个声明现在才刚有地方放。
-
----
-
-## 13. 事件流收口（P0-B 已落地）
-
-### 13.1 思路：先不重写，先让写入变成事件
-
-`receipt` 是一个单一 JSON，26 个字段由 `stream()` 里散落的赋值一点点填起来。直接推倒重写风险太高，所以第一步只做一件事：**让每次写入自动变成一条事件**。
-
-`app/run_events.py` 提供 `TracedDict` / `TracedList`——dict 与 list 的写操作代理：
-
-```python
-receipt = run_events.trace({...})     # 返回代理，不是普通 dict
-receipt['status'] = 'running'         # 自动生成 op=set 事件
-receipt['plan']['steps'][0]['status'] = 'running'   # 深层写入也抓得住
-receipt['tools'].append({...})        # list 追加同样落事件
-run_events.project(events_of(receipt))   # 重放成普通 dict
-run_events.verify(receipt)               # 比对重放结果与内存里的值
-```
-
-**关键点：`stream()` 里那 26 处赋值一行都没改。** 只是把 `receipt={...}` 换成 `receipt=run_events.trace({...})`。取到嵌套容器时自动包装，所以 `plan.steps[i].status` 这种深层改动也能捕获。
-
-### 13.2 事件与重放
-
-事件形如 `{seq, at, op, path, value}`，`op` ∈ `set / append / del`。`path` 是键与索引混合的数组，`project()` 按序重放并自动建中间容器。
-
-三层自证：
-
-| 层次 | 手段 | 结果 |
-|---|---|---|
-| 单元 | `verify()` 比对重放与内存值 | 覆盖嵌套 dict / list 追加 / 深层 step 状态 / 删除 |
-| 单元 | `dict.__setitem__` 绕过代理写入 | `verify()` 必须报警（`ok=false` + diff 指明 key） |
-| 集成 | 真实一轮 run 结束后 `receipt.event_stream` | `ok=true`，见下 |
-
-事件缓冲上限 20000 条。**超限时 `verify()` 自曝 `truncated=true` 且 `ok=false`**——不能拿半截事件流说「相等」。
-
-### 13.3 落库与两个接口
-
-`store.py` 新增 `run_events(project, run_id, seq, payload)` 表；一轮 run 结束时 `store.append_run_events(...)` 一次性写入。
-
-| 接口 | 作用 |
-|---|---|
-| `GET /agent/executions/{run_id}/events?after=&limit=` | 事件流本身，加能力只要发新 `op`，不必再改 receipt 的 schema |
-| `GET /agent/executions/{run_id}/projection` | 从**落库的事件**重放整份回执并与落库的回执逐字段比对，`identical` 就是「事件够不够当真相」的答案 |
-
-实测（连续三轮真实 run）：
+### 11.12 测试盘子与真机验证
 
 ```
-turn 1   events=39  identical=True  diff=[]   receipt=3041 B  events=5884 B  ratio=1.93x
-turn 2   events=39  identical=True  diff=[]   receipt=3039 B  events=5883 B  ratio=1.94x
-turn 3   events=39  identical=True  diff=[]   receipt=3043 B  events=5887 B  ratio=1.93x
+后端  321 passed   服务全开着跑出来的，不依赖外部状态
+前端  551 passed / 2 failed   上面那两条
 ```
 
-一轮约 39 条事件、存储开销 1.93 倍。这是「加能力不再改 schema」的代价，可接受。
-
-### 13.4 回滚
-
-`WMD_TRACE_RECEIPT=0` 关掉代理，`trace()` 直接返回普通 dict，事件一条不记，其余逻辑全不变。
-
----
-
-## 14. turn / step 领域模型（P0-C 已落地）
-
-之前 `cycle`（模型调用序号）、`max_rounds`（LangGraph 递归上限）、`plan.steps`（业务步骤）三个概念混用，指标只能往 receipt 平铺。现在显式定义：
-
-- **turn** = 一次用户提交（一次 run）
-- **step** = 一次模型调用（原来的 `cycle`）
-- **plan step** = 业务步骤，保留原样（那是应用层的任务计划）
-
-收据里多一个 `turn` 对象：
-
-```json
-"turn": {
-  "index": 2,               // 本会话第几轮
-  "run_id": "bf6141c0-…",
-  "started_at": …, "ended_at": …,
-  "step_count": 3,          // 本次 turn 有几次模型调用
-  "steps": [],
-  "stats": {"llm_ms": 3094, "tool_ms": 0, "model_calls": 3, "tool_calls": 2,
-            "ttft_ms": 2939, "decode_ms": 828, "decode_tokens": 79, "tps": 95.4}
-}
-```
-
-`receipt.timing` 保留一份**同值快照**，未升级的读法不会坏。前端加了归一化入口：
-
-```js
-function askTurnStats(ex) {          // 优先 turn.stats，回退 timing
-  const turn = ex && ex.turn;
-  if (turn && turn.stats) return turn.stats;
-  return (ex && ex.timing) || null;
-}
-```
-
-统计条、每轮用量页脚、速率提示三处全改成走这个函数；每轮用量面板多一行「本会话轮次 第 N 轮」。
-
-`tests/test_turn_model.py` 钉住三件事：`turn.index` 连续递增、`turn.stats === receipt.timing`（不许漂移）、`turn` 能通过事件重放（`projection.identical` 仍为 true）。
-
----
-
-## 15. 工具输出落盘（P1-B 已落地）
-
-### 15.1 之前丢的是什么
-
-两处截断都直接丢内容：
-
-| 位置 | 行为 |
-|---|---|
-| `tool_guard.py:96` | `text > 24000` → `text[:24000]`，后半截**永久消失** |
-| `harness/tool_gateway.py:54` | `content > 32000` → `content[:30000]`，同样丢 |
-
-后果不是「看得少一点」：模型为了看后半截只能再调一次同一个工具，把上下文和额度一起烧，还可能被 `ToolGuard` 判成死循环。
-
-### 15.2 现在的做法
-
-`app/spill.py`：完整输出落盘到 `data/spills/<project>/<run_id>/<spill_id>-<tool>.txt`，回给模型的是
-
-```json
-{"truncated": true, "spill_id": "s3f2a1b9c0", "characters": 152340,
- "preview": "前 4000 字…", "next_start": 4000,
- "note": "完整输出共 152340 字符，已落盘。用 read_tool_output(spill_id=…, start=next_start) 继续读，不要为了看全内容重复调用原工具。"}
-```
-
-模型用新增的 `read_tool_output(spill_id, start, limit)` 分段读完。两处截断都改成走它。
-
-**为什么不复用 `read_file`**：spill 目录在 `agent_backend/data` 下，通常不在用户的权限根里，`read_file` 会按权限档位拒绝。专用回读工具只认 spill 目录、`spill_id` 走 `^s[0-9a-f]{6,32}$` 白名单、命中后还要 `relative_to(ROOT)` 校验，既不放宽权限也不给路径穿越留缝。
-
-其它约束：
-
-| 项 | 值 |
-|---|---|
-| 预览长度 | 4000 字 |
-| 单页上限 | 40000 字，默认 6000 |
-| 保留期 | 7 天，`lifespan` 启动时 `spill.purge()` |
-| 落盘失败 | 回退成「预览 + 错误说明」，不空手而归，也不打断工具调用 |
-| 目录布局 | 按 project/run 分组，`purge` 整目录删 |
-| 指标 | `receipt.tool_guard.spill_count`；`GET /agent/spill/stats` |
-
-### 15.3 顺带修掉的一个哑巴 503
-
-`main.py` 的工具初始化 `except Exception:` 直接把真实异常吞成「智能体工具初始化失败」。排查时只能猜。现在记 `logging.exception`，这次就是靠它一眼看到 `Unregistered runtime capability`。
-
----
-
-## 16. 外部工具服务器（P1-A 已落地）
-
-### 16.1 缺口
-
-之前工具全部写死在 `build_*_tools()` 里，加一个外部能力就要改后端代码、改 `harness/registry.py` 的能力表、再改测试。DSH 的 `dsh-mcp-client` 正是为了反过来的：harness 只认协议，能力来自外部。
-
-### 16.2 实现
-
-`app/mcp.py` —— stdio 传输、换行分隔 JSON-RPC 2.0：
-
-```
-initialize → notifications/initialized → tools/list → tools/call
-```
-
-- 工具包装成普通 LangChain 工具，名字 `mcp__<server>__<tool>`，`args_schema` 由 MCP 的 `inputSchema` 现场生成 pydantic 模型，模型看到的是真实参数
-- 进程按 server 名复用常驻，`atexit` 统一关，`tools/list` 缓存 300 秒
-- **stdout 用独立线程 + `queue.Queue` 读**：`readline()` 是阻塞的，不这么做超时就是摆设（改前测出来的超时是 32 秒，改后 1.5 秒）
-- 单个 server 起不来只丢它自己的工具，失败清单进 `mcp.LAST_FAILURES`，不影响 agent 启动
-
-配置进应用包契约（`Pack.mcp_servers`），加一个 server 只改应用包：
-
-```python
-Pack(..., mcp_servers=[{'name': 'echo-test', 'command': sys.executable,
-                        'args': ['mcp_server.py'], 'timeout': 20}])
-```
-
-### 16.3 能力表不再需要预先列全
-
-`harness/registry.py` 原来要求 `工具名 ⊆ CAPABILITIES`，MCP 工具名运行时才知道，不可能预先列。改成：
-
-```python
-CAPABILITY_PREFIXES = {'mcp__': 'external'}
-def is_capable(name): ...
-def risk_of(name): ...
-```
-
-`external` 等级既不当只读，也不给本地写盘授权——能做什么由那个 MCP server 自己负责。
-
-### 16.4 接口
-
-| 接口 | 作用 |
-|---|---|
-| `GET /agent/mcp/servers` | 应用包声明了哪些 server、各自能不能连上、有几个工具 |
-| `GET /agent/health` | `mcp_runtime` 不再是写死的 `false`，跟着应用包变 |
-
-### 16.5 测试
-
-`tests/test_mcp.py`（9 条）配 `tests/fixtures/mcp_echo_server.py`（真 stdio 子进程，不是 mock）：握手与发现、探活、调用回环、`isError` 传播而非抛出、事件发布、超长结果落盘、未知工具报错、**静默服务器超时不挂死**。
-
-`tests/test_mcp_runtime.py`（5 条）走完整请求链路：应用包声明的 server 真的进了 `create_agent` 的工具表、`/agent/mcp/servers` 反映实时状态、坏 server 不影响好 server、health 标志跟着变。
-
----
-
-## 17. 子智能体（P1-C 已落地）
-
-### 17.1 缺口
-
-之前一次用户提交 = 一个 run = 一条 agent 线，多件事只能排队。DSH 的 `dsh-subagent` 让子任务成为独立 run，父 run 只留引用。
-
-### 17.2 形态
-
-| 对象 | 归属 |
-|---|---|
-| 子 run 的 receipt（26 字段那套） | 自己的 `run_id`，落 `executions` 表 |
-| 子 run 的事件流 | 自己的 `run_id`，同一个 `run_events` 表 |
-| 父 run 里的记录 | 一条 `subagents[]` 追加事件（`run_id` + `label` + 摘要 + usage + 耗时） |
-| 子 agent 的工具集 | 继承父 run **已经过权限裁剪**的那一份 |
-
-关键点：**父 run 不因为子 run 变大而变大**。子 run 的几百条事件全在自己的 run_id 下，要看细节查 `/agent/executions/{sub_run_id}`，父回执里只有一行引用。这正是 P0-B 事件流收口之后才能做到的事——在此之前，子任务的步骤只能往父 receipt 的 `steps[]` 里塞。
-
-### 17.3 递归与失控防护
-
-| 机制 | 做法 |
-|---|---|
-| 深度 | `MAX_DEPTH = 1`：`build_tools(depth=1)` 返回空列表，子 agent 的工具表里根本没这个工具 |
-| 兜底 | `execute()` 自己再过滤一遍 `spawn_subagent`，不依赖调用方传对参数 |
-| 超时 | `asyncio.wait_for`，默认 600 秒；超时 → 子 run 标 `failed` + 错误原因，父 agent 拿到 `ok:false` 的普通结果 |
-| 异常 | 子 run 内任何异常都收敛成 `{ok:false,error}`，不向父 run 抛 |
-| 空答复 | 子 run 没有产出文本也标 `failed`，不让「成功了但什么都没做」混过去 |
-
-### 17.4 顺带修掉的一个真 bug
-
-`store.save_run()` 原来是纯 `INSERT`。子 run 需要「先落初始回执、跑完更新同一份」，于是 `UNIQUE constraint failed`。改成 `ON CONFLICT(project,id) DO UPDATE`——主 run 的恢复路径本来也会重复保存同一 id，只是之前没撞上。
-
-### 17.5 测试
-
-`tests/test_subagent.py`（8 条）：子 run 独立落库且 `parent_run_id`/`kind` 正确、子 agent 工具表不含 `spawn_subagent`、深度上限隐藏工具、`spawn_subagent` 工具全链路、超时上报不抛、内部异常上报不抛、空答复判失败、父 run 的工具表里真有这个工具。
-
----
-
-## 18. 跨轮目标（P2-1 已落地）
-
-`checkpoint` 是**一轮内**的任务计划，run 结束就停在回执里。用户说「把这本小说做成短剧」这种要跨十几轮的目标，没有地方承载——下一轮模型只看得到历史消息，不知道自己在为哪个目标服务。
-
-`app/goal.py`：
-
-| 项 | 做法 |
-|---|---|
-| 存储 | `goals(project, session_id, payload)`，一会话最多一个 active |
-| 注入 | 每轮 `prompt_block()` 拼进系统提示：目标 + 已推进几轮 + 已登记阶段 + 最近 5 条进展 |
-| 维护 | `set_goal` / `add_goal_progress` / `complete_goal` 三个工具 |
-| 计数 | `bump_turn()` 每轮 +1，用来判断这个目标拖了多少轮 |
-| 换方向 | 同一目标改描述保留 id 与进展，记 `replaced` 旧描述；结束后再开是新目标 |
-| 关闭 | `complete_goal` 后 `active()` 返回 None，提示不再注入，但记录留着 |
-
-刻意不复用 plan：**plan 是「这一轮怎么走」，goal 是「这些轮为了什么」**。
-
-`tests/test_goal.py`（12 条）：无目标不注入、设定后注入、进展记录与展示、无目标时记进展被拒、完成后停止注入、轮次计数只在 active 时递增、改描述保留身份、完成后重开干净、按会话与项目隔离、空目标被拒，外加两条真实请求链路（目标真的进了下一轮的系统提示、回执里的 `goal` 能通过事件重放）。
-
----
-
-## 19. 并行子任务（P2-2 已落地）
-
-`run_parallel_subagents(tasks)` 是 workflow 的最小可用形态：不复用 DSH 那套 JS 编排脚本，而是把「fan-out 后收集」这一件最常用的事做实。
-
-- 一次最多 `PARALLEL_LIMIT = 6` 个，`asyncio.gather(..., return_exceptions=True)`
-- 每个子 run **自己的模型实例**（`model_factory`）：同一个实例被多个协程同时用，请求级状态会互相污染
-- 单项失败只影响自己，`items[]` 里逐项给 `ok / run_id / summary / error / duration_ms`
-- 子 agent 的工具表里同时拿掉 `spawn_subagent` 与 `run_parallel_subagents`；`execute()` 里再兜一遍
-
----
-
-## 20. 能力目录（P2-3 已落地）
-
-DSH 的 `dsh-plugin-market` 是给有社区生态的产品装第三方扩展用的。单机产品没有那个生态，真正缺的是**一眼看清「这个 agent 现在有什么能力、各自来自哪一层」**。
-
-`GET /agent/catalog` 返回：
-
-```
-app_pack         当前应用包、政策段、提示词字数
-layers.framework 框架层能力清单（不随应用变，也不由应用关闭）
-layers.application  identity / policies / skill_topics / tool_groups
-layers.external   MCP server 名
-skills            技能目录（名字 + 简介 + topic）
-tools             工具全集（含 mcp__* 通配）
-commands          命令注册表
-switch_notes      每一层怎么改：应用层换 WMD_APP_PACK、技能进目录、工具写 mcp_servers、框架层不可改
-```
-
-`tests/test_catalog.py`（5 条）：三层都在、本轮新增能力全在里面、切到 `generic` 包时框架能力一个不少而应用层政策清空、每一层都有切换说明、关掉一段政策后 `prompt_chars` 的缩减量精确等于该段字数。
-
-
-
-
-
+真模型跑两轮：一轮 113 个 SSE 事件，`turn.stats` 是真实数字（llm 4281ms / 首字 4044ms / 解码 844ms / 179 tokens / 212.1 tok/s），落库事件重放 `identical=True`、48 事件、`diff=[]`。
