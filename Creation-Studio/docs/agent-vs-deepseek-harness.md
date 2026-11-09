@@ -860,5 +860,43 @@ def risk_of(name): ...
 
 `tests/test_mcp_runtime.py`（5 条）走完整请求链路：应用包声明的 server 真的进了 `create_agent` 的工具表、`/agent/mcp/servers` 反映实时状态、坏 server 不影响好 server、health 标志跟着变。
 
+---
+
+## 17. 子智能体（P1-C 已落地）
+
+### 17.1 缺口
+
+之前一次用户提交 = 一个 run = 一条 agent 线，多件事只能排队。DSH 的 `dsh-subagent` 让子任务成为独立 run，父 run 只留引用。
+
+### 17.2 形态
+
+| 对象 | 归属 |
+|---|---|
+| 子 run 的 receipt（26 字段那套） | 自己的 `run_id`，落 `executions` 表 |
+| 子 run 的事件流 | 自己的 `run_id`，同一个 `run_events` 表 |
+| 父 run 里的记录 | 一条 `subagents[]` 追加事件（`run_id` + `label` + 摘要 + usage + 耗时） |
+| 子 agent 的工具集 | 继承父 run **已经过权限裁剪**的那一份 |
+
+关键点：**父 run 不因为子 run 变大而变大**。子 run 的几百条事件全在自己的 run_id 下，要看细节查 `/agent/executions/{sub_run_id}`，父回执里只有一行引用。这正是 P0-B 事件流收口之后才能做到的事——在此之前，子任务的步骤只能往父 receipt 的 `steps[]` 里塞。
+
+### 17.3 递归与失控防护
+
+| 机制 | 做法 |
+|---|---|
+| 深度 | `MAX_DEPTH = 1`：`build_tools(depth=1)` 返回空列表，子 agent 的工具表里根本没这个工具 |
+| 兜底 | `execute()` 自己再过滤一遍 `spawn_subagent`，不依赖调用方传对参数 |
+| 超时 | `asyncio.wait_for`，默认 600 秒；超时 → 子 run 标 `failed` + 错误原因，父 agent 拿到 `ok:false` 的普通结果 |
+| 异常 | 子 run 内任何异常都收敛成 `{ok:false,error}`，不向父 run 抛 |
+| 空答复 | 子 run 没有产出文本也标 `failed`，不让「成功了但什么都没做」混过去 |
+
+### 17.4 顺带修掉的一个真 bug
+
+`store.save_run()` 原来是纯 `INSERT`。子 run 需要「先落初始回执、跑完更新同一份」，于是 `UNIQUE constraint failed`。改成 `ON CONFLICT(project,id) DO UPDATE`——主 run 的恢复路径本来也会重复保存同一 id，只是之前没撞上。
+
+### 17.5 测试
+
+`tests/test_subagent.py`（8 条）：子 run 独立落库且 `parent_run_id`/`kind` 正确、子 agent 工具表不含 `spawn_subagent`、深度上限隐藏工具、`spawn_subagent` 工具全链路、超时上报不抛、内部异常上报不抛、空答复判失败、父 run 的工具表里真有这个工具。
+
+
 
 

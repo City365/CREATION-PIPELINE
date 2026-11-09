@@ -32,6 +32,9 @@ CAPABILITIES.update({
     'ask_choice': 'interaction',
     # 落盘回读：读 spill 目录里被裁剪的工具输出，只读
     'read_tool_output': 'read_or_plan',
+    # 子智能体：子 run 的工具集继承父 run 已经过权限裁剪的这一份，
+    # 所以它自己不需要额外授权，只按只读/规划等级计。
+    'spawn_subagent': 'read_or_plan',
 })
 
 # 外部 MCP 工具的名字在运行时才知道（mcp__<server>__<tool>），不可能预先列清单。
@@ -57,7 +60,7 @@ TOOL_TIMEOUTS = {'web_search': 40, 'web_fetch': 40, 'generate_image': 310, 'subm
                  'extract_frames': 250, 'describe_image': 190,
                  'read_permission': 20, 'list_dir': 60, 'read_file': 60, 'write_file': 120,
                  'make_dir': 30, 'move_file': 300, 'copy_file': 300, 'delete_file': 120,
-                 'publish_artifact': 120, 'ask_choice': 20, 'read_tool_output': 20}
+                 'publish_artifact': 120, 'ask_choice': 20, 'read_tool_output': 20, 'spawn_subagent': 620}
 
 def tool_timeout(name, args, default):
     if name == 'wait_video_job':

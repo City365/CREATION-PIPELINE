@@ -22,7 +22,7 @@ from app.chat_policy import selected_topic, system_prompt
 from app.app_packs import current as current_app_pack
 # 名字不能叫 run_events：本文件有个同名路由函数会遮蔽它
 from app import run_events as run_event_log
-from app import spill, mcp
+from app import spill, mcp, subagent
 from app.configs.settings import get_active_model_name, get_provider_config
 from app import store
 from app.harness import runtime, run_store, recovery, registry, identity
@@ -375,6 +375,10 @@ async def _chat(req,project,authorization):
                        '权限档位（' + permission['label'] + '）本身不是失败原因。')
     # 上下文分项统计（摘要面板用）：固定环节各自占多少，算一次写进回执。
     skill_text,skill_used=skill_material(project,topic,req.skill,skill_snapshot)
+    # 子智能体：只挂一层。子 run 有自己的 run_id 和事件流，父回执里只留一条引用。
+    if tools_ok:
+        tools += subagent.build_tools(project=project,parent_run_id=run_id,model=model,tools=tools,
+                                      system_prompt=base_prompt,depth=0,create_agent=create_agent)
     receipt['context']={**(receipt.get('context') or {}),'report':context_report.build(
         history,tools,base_prompt,skill_text,_window,
         tool_count=len(tools),skill_count=skill_used,tool_names=[getattr(tool,'name','') for tool in tools])}

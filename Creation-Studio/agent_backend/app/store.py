@@ -29,10 +29,11 @@ def delete(project,sid):
         db.execute('DELETE FROM conversations WHERE project=? AND id=?',(project,sid))
 
 # Immutable per-request receipts are separate from editable conversation messages.
+# 用 upsert：子 run 先落初始回执、跑完再更新同一份；主 run 恢复时也会重复保存同一 id。
 def save_run(project, payload):
     with connect() as db:
         db.execute('CREATE TABLE IF NOT EXISTS executions (project TEXT NOT NULL, id TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(project,id))')
-        db.execute('INSERT INTO executions VALUES (?,?,?)',(project,payload['id'],json.dumps(payload,ensure_ascii=False)))
+        db.execute('INSERT INTO executions VALUES (?,?,?) ON CONFLICT(project,id) DO UPDATE SET payload=excluded.payload',(project,payload['id'],json.dumps(payload,ensure_ascii=False)))
 def get_run(project, run_id):
     with connect() as db:
         db.execute('CREATE TABLE IF NOT EXISTS executions (project TEXT NOT NULL, id TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(project,id))')
