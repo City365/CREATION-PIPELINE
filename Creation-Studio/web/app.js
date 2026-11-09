@@ -7055,11 +7055,23 @@ function askMessagesHtml(chat) {
   return messages.map((m, index) => askMessageHtml(m, index, messages, a)).join('');
 }
 
-// 计速：输出速率与首字延迟都来自 receipt.timing（后端把模型墙钟 / 工具墙钟 / 纯解码分开记）。
+// 计速：一轮的耗时与速率现在是 receipt.turn.stats（turn = 一次用户提交，step = 一次模型调用）。
+// turn 是规范位置；旧回执没有 turn 时回退到 receipt.timing，两处字段同构。
 // 缺字段就少显示一项，不编造数字。
 function askSecs(ms) {
   const v = Number(ms) || 0;
   return v >= 10000 ? (v / 1000).toFixed(0) + 's' : (v / 1000).toFixed(1) + 's';
+}
+
+function askTurnStats(ex) {
+  if (!ex) return null;
+  const turn = ex.turn || null;
+  if (turn && turn.stats && typeof turn.stats === 'object') return turn.stats;
+  return ex.timing || null;
+}
+
+function askTurnOf(ex) {
+  return (ex && ex.turn) || null;
 }
 
 function askSessionStats(chat) {
@@ -7069,7 +7081,7 @@ function askSessionStats(chat) {
     if (m.role !== 'assistant') continue;
     const ex = m.execution || null;
     if (!ex) continue;
-    const t = ex.timing || null;
+    const t = askTurnStats(ex);
     const u = ex.usage || null;
     s.turns += 1;
     if (t) {
@@ -7101,12 +7113,13 @@ function askStatDockHtml() {
   </div>`;
 }
 
-// 每轮用量：timing 与 usage 必须都在，缺一个就整块不显示——不拿部分总量冒充完整。
+// 每轮用量：stats 与 usage 必须都在，缺一个就整块不显示——不拿部分总量冒充完整。
 function askTurnUsageHtml(m) {
   const ex = (m && m.execution) || null;
-  const t = ex && ex.timing;
+  const t = askTurnStats(ex);
   const u = ex && ex.usage;
   if (!t || !u || u.output_tokens == null) return '';
+  const turn = askTurnOf(ex);
   const head = [];
   if (t.tps) head.push(t.tps + ' tok/s');
   if (t.ttft_ms) head.push('首字 ' + askSecs(t.ttft_ms));
@@ -7118,6 +7131,7 @@ function askTurnUsageHtml(m) {
     ['工具调用', (t.tool_calls || 0) + ' 次'],
     ['输入 tokens', u.input_tokens ?? '—'],
     ['输出 tokens', u.output_tokens ?? '—']];
+  if (turn && turn.index) rows.push(['本会话轮次', '第 ' + turn.index + ' 轮']);
   return `<details class="ask-turn-usage">
     <summary>${esc(head.join(' · '))}</summary>
     <div class="ask-turn-usage-body">${rows.map(([k, v]) => `<span><i>${esc(k)}</i><b>${esc(String(v))}</b></span>`).join('')}</div>
@@ -7126,7 +7140,7 @@ function askTurnUsageHtml(m) {
 
 function askSpeedHtml(m) {
   const usage = (m && m.execution && m.execution.usage) || null;
-  const t = (m && m.execution && m.execution.timing) || null;
+  const t = askTurnStats(m && m.execution);
   const parts = [];
   if (usage) parts.push('输入 ' + (usage.input_tokens ?? '?') + ' / 输出 ' + (usage.output_tokens ?? '?'));
   if (t && t.tps) parts.push(t.tps + ' tok/s');

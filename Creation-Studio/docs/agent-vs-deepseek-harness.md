@@ -658,12 +658,109 @@ result: PASS
 
 | 阶段 | 内容 | 验收 |
 |---|---|---|
-| **P0-B** | 事件流收口：receipt 的 26 个平铺字段全部改成从事件 fold 出来，receipt 退化成投影结果 | 同一轮 run，fold 出的 receipt 与现在逐字段相等 |
-| **P0-C** | turn / step 命名：`cycle_trace.cycle` 正名为 step，一次用户提交正名为 turn | 前端统计条显示不变，数据来源换名 |
+| ~~**P0-B**~~ | ~~事件流收口~~ | ✅ 已完成，见 12.9 |
+| ~~**P0-C**~~ | ~~turn / step 命名~~ | ✅ 已完成，见 12.10 |
 | **P1-A** | MCP client：`mcp_servers` 进 `Pack`，工具动态注册 | 接一个本地 MCP server，工具结果落进事件流 |
 | **P1-B** | 输出 spill：大工具输出落盘 + 回读 | >100KB 输出不再被截断丢弃 |
 | **P1-C** | subagent：子 run 作为独立事件子流 | 一个 3 集任务拆成 3 个子 run 并行 |
 | **P2** | workflow / goal / plugin market | 等 P0/P1 长稳 |
 
 为什么 P0-A 先做、P0-B 后做：P0-A 不碰运行时（纯提示词装配），能用「逐字节相同」验收；P0-B 要动 receipt 和前端，风险高一档，而且它需要应用包先声明「这个应用关心哪些投影字段」——那个声明现在才刚有地方放。
+
+---
+
+## 13. 事件流收口（P0-B 已落地）
+
+### 13.1 思路：先不重写，先让写入变成事件
+
+`receipt` 是一个单一 JSON，26 个字段由 `stream()` 里散落的赋值一点点填起来。直接推倒重写风险太高，所以第一步只做一件事：**让每次写入自动变成一条事件**。
+
+`app/run_events.py` 提供 `TracedDict` / `TracedList`——dict 与 list 的写操作代理：
+
+```python
+receipt = run_events.trace({...})     # 返回代理，不是普通 dict
+receipt['status'] = 'running'         # 自动生成 op=set 事件
+receipt['plan']['steps'][0]['status'] = 'running'   # 深层写入也抓得住
+receipt['tools'].append({...})        # list 追加同样落事件
+run_events.project(events_of(receipt))   # 重放成普通 dict
+run_events.verify(receipt)               # 比对重放结果与内存里的值
+```
+
+**关键点：`stream()` 里那 26 处赋值一行都没改。** 只是把 `receipt={...}` 换成 `receipt=run_events.trace({...})`。取到嵌套容器时自动包装，所以 `plan.steps[i].status` 这种深层改动也能捕获。
+
+### 13.2 事件与重放
+
+事件形如 `{seq, at, op, path, value}`，`op` ∈ `set / append / del`。`path` 是键与索引混合的数组，`project()` 按序重放并自动建中间容器。
+
+三层自证：
+
+| 层次 | 手段 | 结果 |
+|---|---|---|
+| 单元 | `verify()` 比对重放与内存值 | 覆盖嵌套 dict / list 追加 / 深层 step 状态 / 删除 |
+| 单元 | `dict.__setitem__` 绕过代理写入 | `verify()` 必须报警（`ok=false` + diff 指明 key） |
+| 集成 | 真实一轮 run 结束后 `receipt.event_stream` | `ok=true`，见下 |
+
+事件缓冲上限 20000 条。**超限时 `verify()` 自曝 `truncated=true` 且 `ok=false`**——不能拿半截事件流说「相等」。
+
+### 13.3 落库与两个接口
+
+`store.py` 新增 `run_events(project, run_id, seq, payload)` 表；一轮 run 结束时 `store.append_run_events(...)` 一次性写入。
+
+| 接口 | 作用 |
+|---|---|
+| `GET /agent/executions/{run_id}/events?after=&limit=` | 事件流本身，加能力只要发新 `op`，不必再改 receipt 的 schema |
+| `GET /agent/executions/{run_id}/projection` | 从**落库的事件**重放整份回执并与落库的回执逐字段比对，`identical` 就是「事件够不够当真相」的答案 |
+
+实测（连续三轮真实 run）：
+
+```
+turn 1   events=39  identical=True  diff=[]   receipt=3041 B  events=5884 B  ratio=1.93x
+turn 2   events=39  identical=True  diff=[]   receipt=3039 B  events=5883 B  ratio=1.94x
+turn 3   events=39  identical=True  diff=[]   receipt=3043 B  events=5887 B  ratio=1.93x
+```
+
+一轮约 39 条事件、存储开销 1.93 倍。这是「加能力不再改 schema」的代价，可接受。
+
+### 13.4 回滚
+
+`WMD_TRACE_RECEIPT=0` 关掉代理，`trace()` 直接返回普通 dict，事件一条不记，其余逻辑全不变。
+
+---
+
+## 14. turn / step 领域模型（P0-C 已落地）
+
+之前 `cycle`（模型调用序号）、`max_rounds`（LangGraph 递归上限）、`plan.steps`（业务步骤）三个概念混用，指标只能往 receipt 平铺。现在显式定义：
+
+- **turn** = 一次用户提交（一次 run）
+- **step** = 一次模型调用（原来的 `cycle`）
+- **plan step** = 业务步骤，保留原样（那是应用层的任务计划）
+
+收据里多一个 `turn` 对象：
+
+```json
+"turn": {
+  "index": 2,               // 本会话第几轮
+  "run_id": "bf6141c0-…",
+  "started_at": …, "ended_at": …,
+  "step_count": 3,          // 本次 turn 有几次模型调用
+  "steps": [],
+  "stats": {"llm_ms": 3094, "tool_ms": 0, "model_calls": 3, "tool_calls": 2,
+            "ttft_ms": 2939, "decode_ms": 828, "decode_tokens": 79, "tps": 95.4}
+}
+```
+
+`receipt.timing` 保留一份**同值快照**，未升级的读法不会坏。前端加了归一化入口：
+
+```js
+function askTurnStats(ex) {          // 优先 turn.stats，回退 timing
+  const turn = ex && ex.turn;
+  if (turn && turn.stats) return turn.stats;
+  return (ex && ex.timing) || null;
+}
+```
+
+统计条、每轮用量页脚、速率提示三处全改成走这个函数；每轮用量面板多一行「本会话轮次 第 N 轮」。
+
+`tests/test_turn_model.py` 钉住三件事：`turn.index` 连续递增、`turn.stats === receipt.timing`（不许漂移）、`turn` 能通过事件重放（`projection.identical` 仍为 true）。
+
 

@@ -179,10 +179,16 @@ test('事件落地与位置：questions 数组进消息，面板挂在输入框�
 });
 
 test('智能体提示词：自带问答机制、多问题与多选都写清楚了', () => {
-  const policy = fs.readFileSync(path.join(__dirname, '../agent_backend/app/chat_policy.py'), 'utf8');
+  // 这段规则属于应用层，住在 app_packs/ 的应用包里；框架层组装器只负责拼接顺序。
+  const dir = path.join(__dirname, '../agent_backend/app/app_packs');
+  const policy = fs.readdirSync(dir).filter((n) => n.endsWith('.py'))
+    .map((n) => fs.readFileSync(path.join(dir, n), 'utf8')).join('\n');
   assert.match(policy, /【智能推荐 · 用面板问用户】/);
   assert.match(policy, /不属于任何技能/);
   assert.match(policy, /1–4 个问题/);
   assert.match(policy, /multi=true/);
   assert.match(policy, /一轮最多 3 次调用/);
+  // 分层硬约束：这段应用层文案不能又跑回框架层组装器里
+  const framework = fs.readFileSync(path.join(__dirname, '../agent_backend/app/chat_policy.py'), 'utf8');
+  assert.ok(!framework.includes('【智能推荐 · 用面板问用户】'), '框架层不能写死应用层的问答机制');
 });

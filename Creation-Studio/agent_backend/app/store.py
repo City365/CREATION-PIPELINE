@@ -77,3 +77,26 @@ def run_trajectory(project,sid,run_id,offset=0,limit=50):
         rows=db.execute('SELECT payload FROM trajectory_events WHERE project=? AND session_id=? AND run_id=? ORDER BY seq LIMIT ? OFFSET ?',(*args,limit,offset)).fetchall()
         items=[{**json.loads(row[0]),'position':offset+i} for i,row in enumerate(rows)]
         return {'items':items,'total':total,'offset':offset,'next_offset':offset+len(items) if offset+len(items)<total else None}
+
+
+# 运行事件流：receipt 的每一次字段变更落一行，receipt 本身退化成这张表的投影。
+# 这样加能力只要发新事件类型，不用再动 executions 的 payload schema。
+def run_event_table(db):
+    db.execute('CREATE TABLE IF NOT EXISTS run_events (project TEXT NOT NULL, run_id TEXT NOT NULL, seq INTEGER NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(project,run_id,seq))')
+    db.execute('CREATE INDEX IF NOT EXISTS ix_run_events_run ON run_events(project,run_id)')
+
+def append_run_events(project, run_id, events):
+    if not events:return 0
+    with connect() as db:
+        run_event_table(db)
+        db.executemany('INSERT OR REPLACE INTO run_events VALUES (?,?,?,?)',
+                       [(project,run_id,int(e.get('seq') or i+1),json.dumps(e,ensure_ascii=False)) for i,e in enumerate(events)])
+    return len(events)
+
+def run_events_of(project, run_id, after=0, limit=20000):
+    with connect() as db:
+        run_event_table(db)
+        total=db.execute('SELECT COUNT(*) FROM run_events WHERE project=? AND run_id=?',(project,run_id)).fetchone()[0]
+        rows=db.execute('SELECT payload FROM run_events WHERE project=? AND run_id=? AND seq>? ORDER BY seq LIMIT ?',
+                        (project,run_id,int(after),int(limit))).fetchall()
+        return {'items':[json.loads(r[0]) for r in rows],'total':total}

@@ -20,6 +20,8 @@ from langchain.agents import create_agent
 from app.models.factory import create_chat_model, model_options, resolve_model, supports_tools, probe_tools_background
 from app.chat_policy import selected_topic, system_prompt
 from app.app_packs import current as current_app_pack
+# 名字不能叫 run_events：本文件有个同名路由函数会遮蔽它
+from app import run_events as run_event_log
 from app.configs.settings import get_active_model_name, get_provider_config
 from app import store
 from app.harness import runtime, run_store, recovery, registry, identity
@@ -287,12 +289,21 @@ async def _chat(req,project,authorization):
     # 补充说明通道：本次运行独占，直发只并入这条运行，不另起任务。
     supplement_channel=supplements.open_run(project,run_id,req.session_id)
     supplement_middleware=None
-    receipt={'schema_version':'agent-run/2.0','id':run_id,'session_id':req.session_id,'status':'running','started_at':tick(),'model':cfg.get('model'),'provider':provider,'reasoning_effort':req.reasoning_effort or 'default','skill':req.skill,'history_count':len(history)-1,'context_window':_window,'tool_count':0,'workspace_tool_count':0,'evidence_scope':'用户输入、会话历史、已读取的指导文档、工作空间文件与本地工具执行结果','input_hash':hashlib.sha256(json.dumps(history,ensure_ascii=False,sort_keys=True).encode()).hexdigest(),'steps':[],'tools':[],'summary':'','plan':None,'artifacts':[]}
+    # receipt 从「唯一真相」退化成「事件投影的缓存」：trace() 返回的是 dict 代理，
+    # 下面所有 receipt['x']=y 与 tools/steps 的 append 都会自动落成一条事件，
+    # 现有赋值代码一行不用改。run_event_log.verify() 负责证明重放结果与它相等。
+    receipt=run_event_log.trace({'schema_version':'agent-run/2.0','id':run_id,'session_id':req.session_id,'status':'running','started_at':tick(),'model':cfg.get('model'),'provider':provider,'reasoning_effort':req.reasoning_effort or 'default','skill':req.skill,'history_count':len(history)-1,'context_window':_window,'tool_count':0,'workspace_tool_count':0,'evidence_scope':'用户输入、会话历史、已读取的指导文档、工作空间文件与本地工具执行结果','input_hash':hashlib.sha256(json.dumps(history,ensure_ascii=False,sort_keys=True).encode()).hexdigest(),'steps':[],'tools':[],'summary':'','plan':None,'artifacts':[]})
     if ctx:
         ctx.receipt=receipt
         receipt['started_at']=ctx.payload['started_at']
         receipt['context_manifest']=ctx.context_manifest
         ctx.budget.publish()
+    # 轮次领域模型：turn = 一次用户提交（一次 run），step = 一次模型调用。
+    # 之前这两个概念混在 cycle / max_rounds / plan.steps 里，加了指标只能往 receipt 平铺。
+    # 现在 turn 是一个显式对象，前端统计条读 turn.stats，不再逐个字段拼。
+    receipt['turn']={'index':1+sum(1 for m in history if m.get('role')=='assistant'),
+                     'run_id':run_id,'started_at':receipt['started_at'],'ended_at':None,
+                     'step_count':0,'steps':[],'stats':{}}
     receipt['resource_context']=summary
     receipt['resource_snapshot']=snapshot
     receipt['context']=context_meta
@@ -556,12 +567,16 @@ async def _chat(req,project,authorization):
             if text_first_at and text_last_at and text_last_at>text_first_at:
                 decode_total+=(text_last_at-text_first_at)*1000
             output_tokens=(receipt.get('usage') or {}).get('output_tokens')
-            receipt['timing']={'llm_ms':round(cycle_trace.llm_ms),'tool_ms':round(cycle_trace.tool_ms),
-                               'model_calls':cycle_trace.cycle,'tool_calls':cycle_trace.tool_calls,
-                               'ttft_ms':receipt.get('first_token_ms'),
-                               'decode_ms':round(decode_total) or None,
-                               'decode_tokens':output_tokens,
-                               'tps':round(output_tokens/(decode_total/1000),1) if output_tokens and decode_total>0 else None}
+            stats={'llm_ms':round(cycle_trace.llm_ms),'tool_ms':round(cycle_trace.tool_ms),
+                   'model_calls':cycle_trace.cycle,'tool_calls':cycle_trace.tool_calls,
+                   'ttft_ms':receipt.get('first_token_ms'),
+                   'decode_ms':round(decode_total) or None,
+                   'decode_tokens':output_tokens,
+                   'tps':round(output_tokens/(decode_total/1000),1) if output_tokens and decode_total>0 else None}
+            receipt['timing']=dict(stats)
+            # turn 是这些指标的规范位置；timing 保留一份同值快照，未升级的读法不会坏。
+            receipt['turn']={**receipt['turn'],'ended_at':receipt['finished_at'],
+                             'step_count':cycle_trace.cycle,'stats':stats}
             if guard:receipt['tool_guard']=guard.summary()
             if completed:receipt['status']='completed' if not ctx or receipt.get('outcome')=='succeeded' else receipt['outcome']
             elif receipt['status']=='running':receipt['status']='cancelled'
@@ -571,8 +586,13 @@ async def _chat(req,project,authorization):
             if ctx:ctx.receipt_status(receipt)
             c['messages'].append({'id':str(uuid.uuid4()),'role':'assistant','media':media_files,'text':answer+('\n\n[生成已中断]' if answer and not completed else '') or ('[回复失败] '+failure if failure else '[生成已停止]'),'time':receipt['finished_at'],'skill':req.skill,'execution':receipt})
             c['updated']=receipt['finished_at']
+            # 事件流自检：重放出来的结构与内存里的 receipt 必须逐字段相等。
+            # 这一步是 P0-B 的验收依据——相等才说明事件流已经能表达整个 run，
+            # 之后才能把 receipt 从真相降级成缓存。不等时 diff 进回执，不阻断请求。
+            receipt['event_stream']=run_event_log.verify(receipt)
             try:
                 store.save_run(project,receipt)
+                store.append_run_events(project,run_id,run_event_log.events_of(receipt))
                 store.save(project,c)
             finally:locks.discard(key)
         if completed:yield event({'type':'done','execution':receipt,'time':receipt['finished_at']})
@@ -662,6 +682,38 @@ def execution(run_id:str, project=Depends(project_id)):
     run=(durable or {}).get('execution') or store.get_run(project,run_id)
     if not run:raise HTTPException(404,'执行记录不存在')
     return run
+
+@app.get('/agent/executions/{run_id}/events')
+def execution_events(run_id:str,after:int=0,limit:int=2000,project=Depends(project_id)):
+    """运行事件流：回执的真相在这里，`/executions/{id}` 返回的只是它的投影。
+
+    加新能力只要发新的事件类型，不必再往 executions 的 payload 里塞字段。
+    """
+    if after<0 or not 1<=limit<=20000:raise HTTPException(400,'分页参数不正确')
+    data=store.run_events_of(project,run_id,after,limit)
+    if not data['total']:
+        durable=run_store.get(project,run_id)
+        if not ((durable or {}).get('execution') or store.get_run(project,run_id)):
+            raise HTTPException(404,'执行记录不存在')
+    return {**data,'run_id':run_id,'after':after}
+
+@app.get('/agent/executions/{run_id}/projection')
+def execution_projection(run_id:str,project=Depends(project_id)):
+    """从落库事件重放整份回执，与存下来的回执逐字段比对。
+
+    这是「事件是真相」的自证接口：identical 为 true 才说明事件流已经完整，
+    回执才可以安全地当成缓存。
+    """
+    durable=run_store.get(project,run_id)
+    saved=(durable or {}).get('execution') or store.get_run(project,run_id)
+    if not saved:raise HTTPException(404,'执行记录不存在')
+    events=store.run_events_of(project,run_id)['items']
+    if not events:
+        return {'run_id':run_id,'events':0,'tracked':False,'identical':None,'diff':[]}
+    replayed=run_event_log.project(events)
+    diff=sorted(k for k in set(replayed)|set(saved) if replayed.get(k)!=saved.get(k))
+    return {'run_id':run_id,'events':len(events),'tracked':True,'identical':not diff,
+            'diff':diff,'projection':replayed}
 
 @app.get('/agent/sessions/{sid}/trajectory')
 def trajectory(sid:str,offset:int|None=None,limit:int=50,run_id:str|None=None,project=Depends(project_id)):
