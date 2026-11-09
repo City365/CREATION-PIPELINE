@@ -261,7 +261,7 @@ ctx.commands.register({
 | 总耗时 | 有，只进「用时」文案 | 有，但**故意不显示在完成页脚** | — | 两边一致，都不显示 |
 | LLM / 工具分解 | 无 | `llmMs` / `toolMs` | ✅ | `cycle_trace` 累加，`turn.stats.llm_ms/tool_ms` |
 | 输出速率 | 无 | `decodeTokens/decodeMs` | ✅ | `tps = decode_tokens / (decode_ms/1000)` |
-| 缓存命中 | 无 | `cacheRead` / `cacheWrite` + 命中率 | ❌ | 未做，渠道侧也没回传 |
+| 缓存命中 | 无 | `cacheRead` / `cacheWrite` + 命中率 | ✅ | `BudgetLedger` 提取 `input_token_details.{cache_read,cache_creation}` 并累积；命中率 = cache_read / input_tokens，**任一次调用没报就整项不显示**。实测 96.4%（25856/26810） |
 | 不完整时 | 拿到什么显示什么 | 整块隐藏 | ✅ | `askTurnUsageHtml` 缺 stats 或 usage 就整块不渲染 |
 
 ---
@@ -495,7 +495,8 @@ If the user names a skill, or the task clearly matches a skill's description, ca
 **现状（2026-11-10）**：
 
 - ✅ **turn/step 领域模型落了**，但只在数据层：`receipt.turn = {index, run_id, started_at, ended_at, step_count, steps, stats}`，`step` 对应原来含糊的 `cycle`。事件流按 turn 聚合，子 run 靠 `parent_run_id` 挂回 turn。
-- ✅ **两处「轮次」都撤了**，但它们是两个不同的东西：
+- ⚠️ **上一轮的判断需要修正**：我把「输入框里的轮次 120」和「dock 里的轮次统计」一起删了。前者该删（引擎参数），**后者不该删**——DSH 的状态条明明白白显示「374 轮 10137 步」，一个会话累计跑了多少轮多少步是有信息量的规模指标。现在已恢复为累计统计，只放在 dock 里。
+- ✅ **两处「轮次」是两个不同的东西**：
   - **dock 里的「轮次 2 · 步骤 1」**：自我证明式数字——用户自己数得出发了几条消息，模型内部调了几次也不关他事。dock 只留速率、首字、模型/工具墙钟。
   - **输入框里的「轮次 120」**：那是 `recursion_limit`，LangGraph 的图递归步数上限。更糟的是**它从来没生效过**——真正的成本闸是 harness 的 `BudgetLedger`（chat 政策 `model_calls=8` / `tool_calls=16`），一次模型调用约 2–3 个图节点，预算闸在约 24 步就先炸。用户把 120 调到 400 只是假的掌控感。
   - `ask_rounds()` 现在不再采信请求里的 `max_rounds`，只用 `WMD_RECURSION_LIMIT`（默认 120）做异常兜底；`ChatRequest.max_rounds` 字段保留只为兼容旧客户端。
@@ -541,6 +542,8 @@ If the user names a skill, or the task clearly matches a skill's description, ca
 | P2 | **能力目录（plugin market 的实际形态）** | `dsh-plugin-market` | `GET /agent/catalog` 三层视图 |
 | P1 | **工具调用语义单一来源** | （DSH 工具网关） | `tool_policy.py`：两引擎共用一套缓存/循环判定 |
 | P1 | **测试不依赖本机服务** | — | `conftest` 在 urllib 层阻断真实网络；三端口全关时 329 passed |
+| P1 | **缓存命中分桶** | `dsh-token-meter` | 活动/用量/上下文三段状态条，缓存命中率只在全量上报时出现 |
+| P1 | **composer dock 三段式** | `dsh-client-ui-chat` | 图标 + 竖线分组 + 圆环并排，照 DSH 的结构 |
 | P1 | **占用口径改 projectedTokens** | `dsh-context-meter` | 优先 `context.report.used` + 压缩卡片 `shadowed_chars` 当场扣减 |
 
 ### 7.2 仍缺 —— 按该不该做排序
@@ -555,7 +558,6 @@ If the user names a skill, or the task clearly matches a skill's description, ca
 | **P2** | 技能多选叠加 | `dsh-skill` | 仍单选 | 要先定冲突优先序 |
 | **P2** | `/name` 直接键入技能 | `dsh-client-ui-skill` | 仍走 `@` | 少一次挑选 |
 | **P2** | `Instructions` 卡片 | `dsh-client-ui-skill` | 只有工具行 | 用户不知道技能正文长什么样 |
-| **P2** | 缓存命中分桶 | `dsh-token-meter` | 无 | 要先确认渠道回传 `cacheRead` |
 | **P3** | 完整 workflow 编排 | `dsh-workflow` | 只有并行 fan-out | 阶段性依赖 + 结果传递，等有真实多阶段需求 |
 | **P3** | 多 source `@` 注册表 + drill | `dsh-client-ui-input-trigger` | 单 source、目录拍平 | 现有三类混排够用 |
 | **P3** | 原子 chip 引用 | `dsh-client-ui-reference` | 纯文本回写 | 改输入框数据结构，收益中等 |
@@ -626,6 +628,7 @@ If the user names a skill, or the task clearly matches a skill's description, ca
 | 15 | 测试不依赖本机服务 | 假通过；三端口全关跑 329 passed | `03c50ec` |
 | 16 | 删掉输入框的「轮次」 | 那是 recursion_limit，且被预算闸抢先，用户调它没有效果 | 本轮 |
 | 17 | 删掉 `@` `/` 入口按钮 | 键盘字符做成按钮 = 鼠标模拟打字，挤占真控件位置 | 本轮 |
+| 18 | 状态条改三段式 + 缓存命中 | 照 DSH 的 activity/usage/context 结构；缓存是真实数据，实测 96.4% | `14cfd82` |
 
 ### 9.3 下一轮该做什么
 
