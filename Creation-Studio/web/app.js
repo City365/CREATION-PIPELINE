@@ -9600,15 +9600,24 @@ async function askChooseCommand(id) {
   if (a.generating) { toast('请等待当前回复完成', true); return; }
   if (a.command.mode === 'model') { a.modelId = id; askSyncEffort(); a.draft = ''; askClosePopups(); askRenderAll(); return; }
   if (a.command.mode === 'think') { a.effort = id; a.draft = ''; askClosePopups(); askRenderAll(); return; }
-  a.draft = '';
-  a.command = { mode: null, query: null, index: 0 };
   const cmd = askCommandList().find((c) => c.name === id);
   const kind = cmd ? cmd.kind : 'action';
   const arg = cmd ? cmd.arg : id;
-  if (kind === 'popup') { a.command = { mode: arg, query: null, index: 0 }; askRenderAll(); return; }
+  if (kind === 'popup') {
+    // 换弹层：直接切到模型/强度选择，输入框和面板之间不闪一下
+    a.draft = '';
+    a.command = { mode: arg, query: null, index: 0 };
+    askRenderAll();
+    return;
+  }
+  // action 类：先清干净输入框和命令面板再干活。压缩要几秒到几十秒，
+  // 这期间面板还开着、"/com" 还留在输入框里，用户不知道命令有没有被执行。
+  a.draft = '';
+  a.command = { mode: null, query: null, index: 0 };
+  askRenderAll();
   if (arg === 'help') { a.draft = '/'; a.command = { mode: null, query: '', index: 0 }; askRenderAll(); return; }
-  if (arg !== 'compact') { toast('命令 /' + id + ' 还没有实现', true); return; }
-  if (!a.activeId) return;
+  if (arg !== 'compact') { toast('命令 /' + id + ' 还没有实现', true); askRenderAll(); return; }
+  if (!a.activeId) { toast('先选一个对话，再压缩上下文', true); askRenderAll(); return; }
   // 不弹确认：压缩是可恢复的（历史原文仍在，只多一张摘要卡片），而且结果立刻可见。
   // 浏览器原生 confirm 只留给删任务/删项目这类不可恢复操作。
   try {
@@ -9629,7 +9638,11 @@ async function askChooseCommand(id) {
     toast('压缩失败，原上下文保留', true);
   } finally {
     a.generating = false;
-    askRenderMessages();
+    // 必须是 askRenderAll：askRenderMessages 只重绘消息列表，输入框里的 "/com"
+    // 和命令面板会留在原地，用户看不出命令到底执行了没有。
+    askRenderAll();
+    const el = $('#ask-input');
+    if (el) el.focus();
   }
 }
 
