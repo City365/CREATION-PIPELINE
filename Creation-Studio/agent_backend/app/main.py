@@ -316,7 +316,8 @@ async def _chat(req,project,authorization,picks=None):
         history=await harness_context.prepare(project,req.session_id,c,req.text,model,ctx,req.model_id,req.reasoning_effort)
         context_meta=ctx.context_manifest or {}
     else:
-        # legacy 引擎（产品实际在跑的一条）：折叠过长回复 → 统一压缩格式 → 超预算裁剪并留痕，绝不静默丢历史。
+        # legacy 引擎：只有 HARNESS_RUNTIME_ENABLED=0（应急回退）时才走这条。
+        # 做的事：折叠过长回复 → 统一压缩格式 → 超预算裁剪并留痕，绝不静默丢历史。
         items=harness_context.messages(c)
         saved=store.get_compaction(project,req.session_id)
         history=harness_context.assemble(items,saved)
