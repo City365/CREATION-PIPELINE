@@ -1,0 +1,59 @@
+{
+  "case": "2026-11-10-001",
+  "engine": "concat",
+  "version": "0.2.10 (local build)",
+  "goal": "一句话说清这条片子要达到什么效果",
+  "material": {
+    "source": "D:/path/to/footage",
+    "resolution": "1080x1920",
+    "fps": 30,
+    "note": "中文路径要照写；素材规格固定一种，先别混"
+  },
+  "ai": {
+    "plan": "AI 声称要做的剪辑单，原文照贴，不要美化",
+    "commands": ["clips_add_sequence", "clips_split", "clips_remove", "captions_add"],
+    "project": "cases/2026-11-10-001/project",
+    "export": "cases/2026-11-10-001/export.mp4",
+    "self_check": {
+      "duration_sec": 15.0,
+      "clips": 6,
+      "captions": 3,
+      "decode_errors": 0
+    }
+  },
+  "human": [
+    {
+      "id": "h1",
+      "at_sec": 12.4,
+      "clip": "C3",
+      "kind": "trim",
+      "ai_did": "删掉对白后的 0.6 秒停顿",
+      "human_did": "恢复 0.6 秒停顿，保留反应镜头",
+      "why": "停顿承担情绪表达，不能按普通静音删除",
+      "tags": ["得知消息", "节奏", "情绪停顿"],
+      "cost_sec": 20
+    },
+    {
+      "id": "h2",
+      "at_sec": 3.2,
+      "clip": "A1",
+      "kind": "gain",
+      "ai_did": "BGM 音量 0.25",
+      "human_did": "降到 0.18，并在 0-1.5s 加淡入",
+      "why": "开场人声弱，BGM 压过对白",
+      "tags": ["开场", "混音"],
+      "cost_sec": 15
+    }
+  ],
+  "outcome": {
+    "exported": true,
+    "watched_whole": true,
+    "accepted": false,
+    "notes": "整体可用，但节奏偏快；第 2、4 段转场生硬"
+  },
+  "rule_candidates": [
+    "人物反应镜头前的静音超过 0.4 秒时，默认保留，除非明确要求压缩时长",
+    "开场 2 秒内 BGM 上限 0.2，并加 1 秒以上淡入"
+  ],
+  "next_time": "下一次同类任务，AI 应该自动遵守上面两条；记录是否遵守"
+}

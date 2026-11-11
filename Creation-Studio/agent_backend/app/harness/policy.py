@@ -2,7 +2,7 @@
 import os
 
 def profile(request):
-    skill=bool(getattr(request,'skill_id',None) or getattr(request,'skill',None))
+    skill=bool(getattr(request,'skill_id',None) or getattr(request,'skill',None) or getattr(request,'skills',None))
     if skill:
         seconds=max(30,min(1800,int(os.getenv('WMD_SKILL_RUN_TIMEOUT','600'))))
         timeout=max(5,min(seconds,float(os.getenv('WMD_SKILL_MODEL_TIMEOUT',os.getenv('WMD_MODEL_TIMEOUT','300')))))

@@ -457,13 +457,13 @@ If the user names a skill, or the task clearly matches a skill's description, ca
 
 | 项 | 我们原来 | DSH | 状态 | 现在 |
 |---|---|---|---|---|
-| 数量 | 单选 1 个 | 多选叠加 | ❌ | 仍单选。多选要先定「多个技能冲突谁优先」 |
+| 数量 | 单选 1 个 | 多选叠加 | ✅ | `skillIds` 有序清单；`@` 追加、正文点名也认、队列逐条带快照。多选按写入顺序「前一个产出是后一个输入」，单选提示词逐字节不变 |
 | 目录可见性 | 系统提示只写选中的那一个；自定义技能名不进工具描述 | 持久目录列出全部（名 + 截断描述，默认 500 字符） | ✅ | `skills.catalog()` + 【可用技能目录】，实测 18 条 |
 | 加载 | `read_analysis_guidance(topic)` 按需取正文 | `skill` 工具按需取正文 | ✅ | 两边同构，本来就有 |
 | 正文体积 | `compose()` 全量拼接 references，60k 硬上限 | 正文无上限（列为已知限制），资源只给指引 | ◐ | 仍全量拼接 |
 | 目录更新 | 每轮重拼 | 追加式替换 + digest 差分 + 空目录作废 | ❌ | 每轮重拼，18 条目录约 1.2k 字，暂时可接受 |
 | 调用策略 | 启用 / 停用 | `modelInvocable` × `userInvocable` 四组合 | ❌ | 仍两态 |
-| 用户路径 | 只能在 `@` 里挑 | `/name` 直接键入，注入到步骤最后 | ❌ | 仍走 `@` |
+| 用户路径 | 只能在 `@` 里挑 | `/name` 直接键入，注入到步骤最后 | ◐ | `@` 之外，正文里写技能名也会被 `skills.detect()` 认出来；缺 `/` 补全 |
 | 可见性 | 只有工具行「正在读取指导文档」 | `Instructions` 卡片 + 可展开正文 + 右侧栏看 SKILL.md | ❌ | 仍只有工具行 |
 
 ---
@@ -545,6 +545,7 @@ If the user names a skill, or the task clearly matches a skill's description, ca
 | P1 | **缓存命中分桶** | `dsh-token-meter` | 活动/用量/上下文三段状态条，缓存命中率只在全量上报时出现 |
 | P1 | **composer dock 三段式** | `dsh-client-ui-chat` | 图标 + 竖线分组 + 圆环并排，照 DSH 的结构 |
 | P1 | **占用口径改 projectedTokens** | `dsh-context-meter` | 优先 `context.report.used` + 压缩卡片 `shadowed_chars` 当场扣减 |
+| P0 | **技能多选叠加 + 正文点名** | `dsh-skill` | `skills.request()` 归一到 `picks`：`@` 追加、队列带快照、正文写名字也认；多选按写入顺序逐个读指导 |
 
 ### 7.2 仍缺 —— 按该不该做排序
 
@@ -555,8 +556,7 @@ If the user names a skill, or the task clearly matches a skill's description, ca
 | **P1** | 摘要 8 段 schema | `dsh-compaction-basic` | 自由中文，合并无锚点 | 多次压缩后摘要会漂，结构化才能合并 |
 | **P2** | 压缩事务 | `dsh-compaction-basic` | 直接写库 | 压缩中途失败会留下半状态 |
 | **P2** | 溢出兜底强制压缩重试 | `dsh-compaction*` | 仍 422 | 用户撞上就断线，DSH 会自己救一次 |
-| **P2** | 技能多选叠加 | `dsh-skill` | 仍单选 | 要先定冲突优先序 |
-| **P2** | `/name` 直接键入技能 | `dsh-client-ui-skill` | 仍走 `@` | 少一次挑选 |
+| **P2** | `/name` 直接键入技能 | `dsh-client-ui-skill` | 正文写名字已认，但没有 `/` 补全 | 少一次挑选 |
 | **P2** | `Instructions` 卡片 | `dsh-client-ui-skill` | 只有工具行 | 用户不知道技能正文长什么样 |
 | **P3** | 完整 workflow 编排 | `dsh-workflow` | 只有并行 fan-out | 阶段性依赖 + 结果传递，等有真实多阶段需求 |
 | **P3** | 多 source `@` 注册表 + drill | `dsh-client-ui-input-trigger` | 单 source、目录拍平 | 现有三类混排够用 |
@@ -638,7 +638,7 @@ If the user names a skill, or the task clearly matches a skill's description, ca
 2. **Trajectory 时间概览 + 调用检查器**（P1）——排查用，和 dock 的统计是两回事。
 3. **摘要 8 段 schema**（P1）——现在自由中文，多次压缩后摘要会漂，结构化才能合并。
 
-再往后是 P2：压缩事务、溢出兜底强制压缩重试、技能多选叠加、`/name` 键入技能、`Instructions` 卡片、缓存命中分桶。
+再往后是 P2：压缩事务、溢出兜底强制压缩重试、`/name` 键入技能、`Instructions` 卡片、缓存命中分桶。
 
 > DSH 的结论均来自 `_tmp/dsh-src/<包名>/README.zh.md`（各包自带中文设计文档）。我们的行号对应本次提交时的 `web/app.js`、`agent_backend/app/*.py`、`src/server.js`，已随提交推移，看代码时以符号名为准。
 

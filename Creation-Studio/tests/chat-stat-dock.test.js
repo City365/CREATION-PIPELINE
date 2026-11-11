@@ -48,12 +48,14 @@ test('活动段显示轮次、步数、速率', () => {
   const html = api.askStatDockHtml();
   assert.match(html, /1 轮/);
   assert.match(html, /3 步/);
-  assert.match(html, /88\.5 tok\/s/);
+  assert.match(html, /88\.5 token\/s/, '单位写全，不缩成 tok/s');
 });
 
-test('用量段显示累计 token 总量', () => {
+test('用量段显示累计 token 总量，不缩成 k', () => {
   const api = load({ messages: [turn({ model_calls: 1 }, { input_tokens: 12000, output_tokens: 800 })] }, STATE);
-  assert.match(api.askStatDockHtml(), /13k tok/);
+  const html = api.askStatDockHtml();
+  assert.match(html, /12,800 token/, '位置够，直接给全量数字');
+  assert.doesNotMatch(html, /\d+k (tok|token)/, '不再出现 k 缩写');
 });
 
 test('有完整缓存上报才显示命中率', () => {
@@ -80,9 +82,32 @@ test('多轮缓存按 input 加权平均，不是简单平均', () => {
   assert.equal(stats.cacheRate, 10);
 });
 
-test('没有任何轮次时整条不渲染', () => {
+test('没有数据不凑数：没轮次整条不渲染', () => {
   const api = load({ messages: [] }, STATE);
   assert.equal(api.askStatDockHtml(), '');
+});
+
+// 圆环后只看比例：10k/1m 这种绝对量移到 title 里，正文不再挤数字。
+test('上下文环后面跟百分比，不跟 k / m 的绝对量', () => {
+  const start = source.indexOf('function askContextMeterHtml(');
+  const end = source.indexOf('// 就地刷新圆圈');
+  assert.ok(start > 0 && end > start, '找不到上下文环渲染');
+  const box = {};
+  new Function('module', 'exports', `
+const ASK_CTX_R = 5.5;
+const ASK_CTX_C = 34.56;
+const esc = (v) => String(v == null ? '' : v);
+function askContextStats() { return { used: 10400, total: 1000000, ratio: 0.0104, exact: true }; }
+function askCtxTone() { return ''; }
+function askFullTokens(v) { return Math.max(0, Math.round(Number(v) || 0)).toLocaleString('en-US'); }
+function askPct(r) { return (Math.max(0, Math.min(1, Number(r) || 0)) * 100).toFixed(1).replace(/\\.0$/, '') + '%'; }
+${source.slice(start, end)}
+module.exports = { askContextMeterHtml };
+`)(box, box.exports);
+  const html = box.exports.askContextMeterHtml();
+  assert.match(html, /<span class="ask-ctx-text">1%<\/span>/, '圆环后就是比例');
+  assert.doesNotMatch(html, /<span class="ask-ctx-text">[^<]*[km]/, '正文不再出现 10k / 1m');
+  assert.match(html, /10,400 \/ 1,000,000 token/, '绝对量留在 title 里，还是全量数字');
 });
 
 test('只有一轮没缓存时，另一轮有缓存也算 —— 缺的那轮不进分母', () => {

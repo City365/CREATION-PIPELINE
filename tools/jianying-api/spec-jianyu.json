@@ -1,0 +1,27 @@
+{
+  "name": "剑与樱-剪辑样片",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30,
+  "clips": [
+    { "path": "D:/notebook/AIGC/CREATION-PIPELINE/Creation-Studio/data-backup-20261026-133249/uploads/17ae0cc6ca32-剑与樱-背景音乐1.mp4", "in": 5.0,   "duration": 3.0, "speed": 0.9,  "transition": "叠化", "transition_duration": "0.3s" },
+    { "path": "D:/notebook/AIGC/CREATION-PIPELINE/Creation-Studio/data-backup-20261026-133249/uploads/17ae0cc6ca32-剑与樱-背景音乐1.mp4", "in": 20.0,  "duration": 2.0, "transition": "叠化", "transition_duration": "0.3s" },
+    { "path": "D:/notebook/AIGC/CREATION-PIPELINE/Creation-Studio/web/skins/real-cafe.mp4", "in": 0.5, "duration": 1.5, "speed": 1.3, "transition": "叠化", "transition_duration": "0.3s" },
+    { "path": "D:/notebook/AIGC/CREATION-PIPELINE/Creation-Studio/data-backup-20261026-133249/uploads/17ae0cc6ca32-剑与樱-背景音乐1.mp4", "in": 45.0,  "duration": 2.5, "transition": "叠化", "transition_duration": "0.3s" },
+    { "path": "D:/notebook/AIGC/CREATION-PIPELINE/Creation-Studio/web/skins/real-reading.mp4", "in": 1.0, "duration": 1.5, "speed": 1.2, "transition": "叠化", "transition_duration": "0.3s" },
+    { "path": "D:/notebook/AIGC/CREATION-PIPELINE/Creation-Studio/data-backup-20261026-133249/uploads/17ae0cc6ca32-剑与樱-背景音乐1.mp4", "in": 75.0,  "duration": 3.0, "transition": "叠化", "transition_duration": "0.3s" },
+    { "path": "D:/notebook/AIGC/CREATION-PIPELINE/Creation-Studio/data-backup-20261026-133249/uploads/17ae0cc6ca32-剑与樱-背景音乐1.mp4", "in": 110.0, "duration": 2.5 }
+  ],
+  "audio": {
+    "path": "D:/notebook/AIGC/CREATION-PIPELINE/Creation-Studio/background-music/DJ-AYU - I Stay In Love纯音乐 (DJ-AYU remix).mp3",
+    "volume": 0.45,
+    "fade_in": 1.5,
+    "fade_out": 2.5
+  },
+  "texts": [
+    { "text": "剑与樱", "start": 0.5, "end": 3.4, "size": 12.0, "color": [1, 1, 1], "y": 0.10 },
+    { "text": "她握住的不是刀，是最后一句话", "start": 4.0, "end": 7.6, "size": 7.0, "color": [1.0, 0.82, 0.4], "y": -0.55 },
+    { "text": "樱落之时，剑出鞘", "start": 9.0, "end": 12.4, "size": 7.5, "color": [1, 1, 1], "y": -0.55 },
+    { "text": "CREATION-PIPELINE", "start": 0.3, "end": 16.0, "size": 3.5, "color": [1, 1, 1], "track": "watermark", "y": -0.92 }
+  ]
+}

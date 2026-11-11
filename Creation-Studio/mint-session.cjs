@@ -1,0 +1,10 @@
+﻿const crypto = require('node:crypto');
+const db = require('./src/db');
+const conn = db.open();
+const users = conn.prepare('SELECT id, username, role FROM users').all();
+console.log('users:', JSON.stringify(users));
+const token = crypto.randomBytes(24).toString('hex');
+const uid = users[0].id;
+const now = Date.now();
+conn.prepare('INSERT INTO sessions(token, user_id, created_at, expires_at) VALUES (?,?,?,?)').run(token, uid, now, now + 30*24*3600*1000);
+console.log('TOKEN=' + token);

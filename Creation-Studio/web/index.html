@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="zh-CN" data-theme="studio-light">
 <head>
 <meta charset="utf-8" />
@@ -16,6 +16,8 @@
 </style>
 <link rel="stylesheet" href="/agent-workspace.css?v=7" />
 <link rel="stylesheet" href="/shell-spec.css?v=1" />
+<link rel="stylesheet" href="/concat-editor.css?v=16" />
+<link rel="stylesheet" href="/smartcut.css?v=5" />
 </head>
 <body>
 <a class="wmd-skip" href="#view">跳到主内容</a>
@@ -60,16 +62,28 @@
         <button type="button" class="wmd-maintab" data-route="script" title="剧本创作台 (Ctrl+3)" style="--i:2">
           <svg class="wmd-rail-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h5"/></svg><span>剧本创作</span>
         </button>
-        <button type="button" class="wmd-maintab" data-route="assets" title="素材库 (Ctrl+4)" style="--i:3">
+        <button type="button" class="wmd-maintab" data-route="oneclick" title="一键成片 (Ctrl+4)" style="--i:3">
+          <svg class="wmd-rail-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="m19 15 .9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9z"/></svg><span>一键成片</span>
+        </button>
+        <button type="button" class="wmd-maintab" data-route="concat" title="剪辑台 (Ctrl+5)" style="--i:4">
+          <svg class="wmd-rail-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M2 9h20"/><path d="M9 20V9"/></svg><span>剪辑台</span>
+        </button>
+        <button type="button" class="wmd-maintab" data-route="smartcut" title="智能剪辑 (Ctrl+6)" style="--i:5">
+          <svg class="wmd-rail-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4 8.12 15.88"/><path d="M14.47 14.48 20 20"/><path d="M8.12 8.12 12 12"/></svg><span>智能剪辑</span>
+        </button>
+        <button type="button" class="wmd-maintab" data-route="smartrelease" title="智能上剧 (Ctrl+6)" style="--i:5">
+          <svg class="wmd-rail-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 2 9 5-9 5-9-5 9-5z"/><path d="m3 12 9 5 9-5"/><path d="m3 17 9 5 9-5"/></svg><span>智能上剧</span>
+        </button>
+        <button type="button" class="wmd-maintab" data-route="assets" title="素材库 (Ctrl+7)" style="--i:6">
           <svg class="wmd-rail-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg><span>素材库</span>
         </button>
-        <button type="button" class="wmd-maintab" data-route="tasks" title="任务管理 (Ctrl+5)" style="--i:4">
+        <button type="button" class="wmd-maintab" data-route="tasks" title="任务管理 (Ctrl+8)" style="--i:7">
           <svg class="wmd-rail-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg><span>任务管理</span><span class="wmd-maintab-count" id="job-count"></span>
         </button>
-        <button type="button" class="wmd-maintab" data-route="media" title="媒体库 (Ctrl+6)" style="--i:5">
+        <button type="button" class="wmd-maintab" data-route="media" title="媒体库 (Ctrl+9)" style="--i:8">
           <svg class="wmd-rail-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></svg><span>媒体库</span>
         </button>
-        <button type="button" class="wmd-maintab" data-route="compare" title="对比 (Ctrl+7)" style="--i:6">
+        <button type="button" class="wmd-maintab" data-route="compare" title="对比 (Ctrl+0)" style="--i:9">
           <svg class="wmd-rail-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="18" rx="1"/><rect x="14" y="3" width="7" height="18" rx="1"/></svg><span>对比</span>
         </button>
       <div class="wmd-rail-foot">
@@ -110,7 +124,15 @@
 <script src="/image-tasks.js?v=1"></script>
 <script src="/events.js?v=progress1"></script>
 <script src="/agent-workspace.js?v=2"></script>
-<script src="/app.js?v=proj42"></script>
-<script src="/shell-nav.js?v=1"></script>
+<script src="/vendor/vue.global.prod.js?v=1"></script>
+<script src="/dock-host.js?v=3"></script>
+<script src="/concat/rpc.js?v=1"></script>
+<script src="/concat/placing.js?v=1"></script>
+<script src="/concat-editor.js?v=16"></script>
+<script src="/smartcut.js?v=6"></script>
+<script src="/app.js?v=proj52"></script>
+<script src="/shell-nav.js?v=3"></script>
 </body>
 </html>
+
+

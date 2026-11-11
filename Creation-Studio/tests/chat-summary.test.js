@@ -18,6 +18,9 @@ const askProjectId = () => 'proj-b1a9643a02';
 let CURRENT = { toolsSupported: true, skillId: '' };
 const askState = () => CURRENT;
 const askSkill = () => ({ name: '小说创作' });
+// 技能是多选的：skillId 只是第一个的镜像，标签读 askSkillNames()
+const askSkills = () => (CURRENT.skillId ? [CURRENT.skillId] : []);
+const askSkillNames = (ids) => (ids || askSkills()).map((id) => askSkill(id).name);
 const askFmtTokens = (value) => {
   const n = Math.max(0, Math.round(Number(value) || 0));
   if (n >= 1000000) return (n / 1000000).toFixed(n % 1000000 ? 1 : 0) + 'm';
@@ -120,8 +123,7 @@ test('折叠箭头在文字后面（简单 ›），不用系统自带的黑色�
   assert.match(css, /\.ask-summary details\[open\] > summary::after \{ transform: rotate\(90deg\); \}/);
 });
 
-test('Connectors 用 T / S / C 小徽标，没有的显示 null', () => {
-  setConn({ toolsSupported: true, skillId: '' });
+test('Connectors 用 T / S / C 小徽标，没有的显示 null', () => {  setConn({ toolsSupported: true, skillId: '' });
   const html = askConnectorsHtml();
   assert.equal((html.match(/ask-conn-badge/g) || []).length, 3);
   assert.match(html, />T</);
@@ -164,4 +166,24 @@ test('Changes 固定一个小图标 + null，不再摆 +0 −0', () => {
   assert.match(html, /Create PR/);
   assert.match(html, /disabled/);
   assert.equal(html.includes('+0'), false);
+});
+
+// Summary 是浮在对话上的卡片：点它外面任何地方都该收起，不该逼用户去够右上角的 ×。
+test('Summary 点组件外面就收起，组件内部点击和那个开关按钮不算外面', () => {
+  const at = source.indexOf('// Header popovers close independently');
+  assert.ok(at > 0, '找不到浮层的 pointerdown 监听');
+  const block = source.slice(at, source.indexOf("document.addEventListener('keydown'", at));
+  assert.match(block, /a\.summaryOpen/, '浮层监听要管到 Summary');
+  assert.match(block, /!event\.target\.closest\('\.ask-summary'\)/, '点组件内部不关');
+  assert.match(block, /!event\.target\.closest\('\[data-act="ask-summary"\]'\)/, '点开关按钮交给 click 自己 toggle，否则关了又开');
+  assert.match(block, /askDismissSummary\(\)/, '组件外面点击要收起');
+});
+
+test('收起 Summary 不整页重渲染，否则会吃掉紧接着的 click', () => {
+  const start = source.indexOf('function askDismissSummary(');
+  assert.ok(start > 0, '找不到 askDismissSummary');
+  const fn = source.slice(start, source.indexOf('// Header popovers close independently', start));
+  assert.match(fn, /a\.summaryOpen = false/);
+  assert.match(fn, /querySelector\('\.ask-summary'\)\?\.remove\(\)/, '只摘掉浮层自己');
+  assert.doesNotMatch(fn, /askRenderAll\(\)/, 'pointerdown 里重渲染会把点击目标换掉');
 });

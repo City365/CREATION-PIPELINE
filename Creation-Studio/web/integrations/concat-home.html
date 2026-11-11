@@ -1,0 +1,69 @@
+﻿<!doctype html>
+<html lang="zh-CN" data-theme="studio-light">
+<head>
+<meta charset="utf-8" />
+<title>剪辑台自检</title>
+<link rel="stylesheet" href="/wmd.css" />
+<link rel="stylesheet" href="/skins.css?v=daylight-2" />
+<link rel="stylesheet" href="/shell-spec.css?v=1" />
+<link rel="stylesheet" href="/concat-editor.css?v=1" />
+<style>
+  html, body { margin: 0; height: 100%; background: #f4f4f2; overflow: hidden; }
+  #ce-host { position: fixed; inset: 0; display: flex; }
+  #result { position: fixed; left: 10px; bottom: 10px; z-index: 99; margin: 0; padding: 6px 10px;
+    border-radius: 10px; max-width: 46vw; max-height: 34vh; overflow: auto;
+    background: rgba(16,22,30,.84); color: #cfe8cf; font: 11px/1.5 Consolas, monospace; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<!-- 剪辑台自检页：走 /integrations/ 静态路由（免登录），把真页面挂起来，
+     检查素材条、预览帧、时间线片段、右侧对话是否都到位。 -->
+<div id="ce-host"></div>
+<pre id="result" hidden>running…</pre>
+<script src="/vendor/vue.global.prod.js?v=1"></script>
+<script src="/concat-editor.js?v=1"></script>
+<script>
+(function () {
+  var lines = [];
+  function ok(name, pass, detail) {
+    lines.push((pass ? 'PASS ' : 'FAIL ') + name + (detail ? ' · ' + detail : ''));
+  }
+  function done() {
+    if (location.search.indexOf('clean') >= 0) { document.getElementById('result').hidden = true; document.title = 'CONCAT OK'; return; }
+    var fails = lines.filter(function (l) { return l.indexOf('FAIL') === 0; }).length;
+    document.getElementById('result').innerHTML =
+      '<b>' + (fails ? fails + ' 项没过' : '全部通过') + '</b>\n' + lines.join('\n');
+    document.title = fails ? 'CONCAT FAIL' : 'CONCAT OK';
+  }
+  window.addEventListener('load', function () {
+    setTimeout(function () {
+      try {
+        window.CONCAT_EDITOR.mount(document.getElementById('ce-host'), { projectId: 'concat-selftest', projectName: '自检', toast: function () {} });
+      } catch (error) { ok('挂载剪辑台', false, error.message); done(); return; }
+      setTimeout(check, 7000);
+    }, 120);
+  });
+  function check() {
+    var top = document.querySelector('.ce-top');
+    var bins = document.querySelectorAll('.ce-bin');
+    var rows = document.querySelectorAll('.ce-row');
+    var clips = document.querySelectorAll('.ce-clip');
+    var frame = document.querySelector('.ce-frame');
+    var chat = document.querySelector('.ce-chat');
+    ok('顶条在', Boolean(top), top ? top.textContent.trim().slice(0, 40) : '没有 .ce-top');
+    ok('素材条读到素材', bins.length > 0, bins.length + ' 个');
+    ok('时间线有轨', rows.length > 0, rows.length + ' 条轨');
+    ok('时间线有片段', clips.length > 0, clips.length + ' 个片段');
+    ok('预览帧加载出来了', Boolean(frame) && frame.naturalWidth > 0,
+      frame ? (frame.naturalWidth + '×' + frame.naturalHeight + ' ' + (frame.currentSrc || '').slice(0, 60)) : '没有 .ce-frame');
+    ok('右侧对话在', Boolean(chat), chat ? '宽 ' + Math.round(chat.getBoundingClientRect().width) + 'px' : '没有 .ce-chat');
+    var stage = document.querySelector('.ce-stage');
+    ok('预览区是主区域', Boolean(stage) && stage.getBoundingClientRect().width > 400,
+      stage ? Math.round(stage.getBoundingClientRect().width) + '×' + Math.round(stage.getBoundingClientRect().height) : '无');
+    done();
+  }
+})();
+</script>
+</body>
+</html>
+

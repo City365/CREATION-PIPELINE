@@ -150,7 +150,7 @@ test('翻页与发送：记住当前页手写答案，合并成一条可执行�
   assert.match(send, /p\.custom\[currentQ\.id\] = currentText/);
   assert.match(send, /【智能推荐 · 用户已确认】/);
   assert.match(send, /按以上选择继续，不要再重复确认。/);
-  assert.match(send, /if \(summary\.skills\.length\) a\.skillId = summary\.skills\[0\]/);
+  assert.match(send, /if \(summary\.skills\.length\) askSetSkills\(\[\.\.\.askSkills\(\), \.\.\.summary\.skills\]\)/);
   assert.match(send, /return askSend\(message\)/);
 
   const summary = source.slice(source.indexOf('function askChoiceSummary('), source.indexOf('function askChoiceSend('));

@@ -2,6 +2,8 @@
 
 前端「右侧组件里的技能」和「插件管理」都读 /agent/skills，避免两边各维护一套。
 """
+import re
+
 from app.chat_policy import skill_topics
 from app.skill_library import LIMIT as SKILL_CONTENT_LIMIT
 
@@ -101,3 +103,105 @@ def catalog(project):
         out.append({'name': name, 'description': desc, 'topic': topic,
                     'source': item.get('source') or 'builtin'})
     return out
+
+
+# --------------------------- 技能选择归一 ---------------------------
+# @ 只是输入框里的快捷方式，绑定的落点统一在 request()：
+# 用户点没点 @、@ 了几个、点完又取消、直接写技能名，最后都收敛成同一份 picks。
+
+
+def _flat(text):
+    """比对用的归一：去掉所有空白并转小写，「小说 创作」和「小说创作」算同一个。"""
+    return ''.join(str(text or '').split()).lower()
+
+
+def index(project):
+    """名字 / 技能 id / 插件 id → 技能条目。"""
+    table = {}
+    for item in all_skills(project):
+        if item.get('enabled') is False:
+            continue
+        name = str(item.get('name') or '').strip()
+        if not name:
+            continue
+        topic = item.get('topic') or ('skill:' + item['plugin_id'] if item.get('plugin_id') else '')
+        if not topic:
+            continue
+        entry = {'id': item.get('id') or '', 'plugin_id': item.get('plugin_id') or '',
+                 'name': name, 'topic': topic, 'source': item.get('source') or 'builtin'}
+        for key in (name, item.get('id') or '', item.get('plugin_id') or ''):
+            flat = _flat(key)
+            if flat:
+                table.setdefault(flat, entry)
+    return table
+
+
+def look(project, key):
+    """按名字或 id 取一条技能条目，取不到返回 None。"""
+    return index(project).get(_flat(key))
+
+
+def detect(project, text, table=None):
+    """正文里点到技能名就认出来，长名优先：「小说转剧本」不会被「小说创作」抢走。
+
+    返回按正文出现位置排列的条目。只有真的写了名字才算，别的话不猜。
+    """
+    table = table if table is not None else index(project)
+    flat = _flat(text)
+    if not flat:
+        return []
+    hits, seen = [], set()
+    for entry in sorted(table.values(), key=lambda e: len(_flat(e['name'])), reverse=True):
+        key = _flat(entry['name'])
+        if len(key) < 2 or key not in flat or entry['topic'] in seen:
+            continue
+        if any(key in _flat(other['name']) for other in hits):
+            continue  # 已经被更长的技能名覆盖
+        seen.add(entry['topic'])
+        hits.append(entry)
+    return sorted(hits, key=lambda e: flat.find(_flat(e['name'])))
+
+
+def strip_tokens(project, text, table=None):
+    """把界面里的 @技能名 从正文剥掉：绑定已经落在 picks 上，不该再当字面量喂给模型。
+
+    只剥目录里确实存在的技能名，用户写的 @某人 / @file 一律原样留着。
+    """
+    table = table if table is not None else index(project)
+    raw = str(text or '')
+    for entry in sorted(table.values(), key=lambda e: len(e['name']), reverse=True):
+        name = str(entry['name']).strip()
+        if name and ('@' + name) in raw:
+            raw = raw.replace('@' + name, ' ')
+    raw = re.sub(r'[ \t]{2,}', ' ', raw)
+    raw = re.sub(r'(?m)^[ \t]+', '', raw)
+    return raw.strip()
+
+
+def request(project, names=(), skill_id='', text='', table=None):
+    """一次请求的技能归一，返回 (picks, clean_text)。
+
+    picks 顺序 = 显式选择（按传入顺序）→ 正文点名（按出现顺序），同名只留一次。
+    clean_text 是剥掉 @token 之后的正文，其余一个字不改。
+    """
+    table = table if table is not None else index(project)
+    picks = []
+
+    def push(entry):
+        if entry and not any(p['topic'] == entry['topic'] for p in picks):
+            picks.append({'name': entry['name'], 'topic': entry['topic'], 'source': entry['source']})
+
+    for name in list(names or []):
+        push(table.get(_flat(name)))
+    if skill_id:
+        push(table.get(_flat(skill_id)))
+    # 认名字要在剥 token 之前：@小说创作 本身就是一次点名，剥完就没了。
+    for entry in detect(project, text, table):
+        push(entry)
+    clean = strip_tokens(project, text, table)
+    if not picks and names:
+        # 名字不在目录里但应用包认得（旧客户端传的 pack 内部名），退回老路径映射。
+        fallback = skill_topics().get(str(names[0]), '')
+        if fallback:
+            picks.append({'name': str(names[0]), 'topic': fallback, 'source': 'builtin'})
+    return picks, clean

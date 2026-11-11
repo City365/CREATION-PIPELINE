@@ -1,0 +1,13 @@
+const {spawnSync}=require('node:child_process');
+const fs=require('node:fs'),path=require('node:path');
+const root=path.resolve(__dirname,'../..'),out=path.join(root,'outputs/concat-validation');
+const binary=path.join(root,'Concat/src/target/debug/concat.exe');
+if(!fs.existsSync(binary))throw Error('Source GUI binary has not been built');
+const appdata=path.join(out,'source-smoke-runtime/roaming'),localdata=path.join(out,'source-smoke-runtime/local');
+fs.mkdirSync(appdata,{recursive:true});fs.mkdirSync(localdata,{recursive:true});
+const env={...process.env,APPDATA:appdata,LOCALAPPDATA:localdata,PATH:[path.join(out,'deps/ffmpeg/ffmpeg-n8.1.3-9-g29e619e767-win64-lgpl-shared-8.1/bin'),process.env.PATH].join(path.delimiter)};
+const r=spawnSync(binary,['--smoke'],{env,shell:false,windowsHide:true,encoding:'utf8',timeout:60000,maxBuffer:8e6});
+fs.writeFileSync(path.join(out,'source-gui-smoke.log'),(r.stdout||'')+(r.stderr||''));
+fs.writeFileSync(path.join(out,'source-gui-smoke-result.json'),JSON.stringify({binary,status:r.status,signal:r.signal,error:r.error?.message},null,2));
+if(r.error)throw r.error;if(r.status!==0)throw Error('Source GUI smoke failed: '+r.status);
+console.log('Source GUI smoke passed');

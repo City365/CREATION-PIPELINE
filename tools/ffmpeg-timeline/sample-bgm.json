@@ -1,0 +1,39 @@
+{
+  "width": 1080,
+  "height": 1920,
+  "fps": 30,
+  "fit": "cover",
+  "clips": [
+    {
+      "path": "Creation-Studio/web/skins/real-cafe.mp4",
+      "in": 0.8,
+      "duration": 3,
+      "grade": { "contrast": 1.09, "saturation": 1.14, "gamma": 1.02, "warmth": 0.045, "sharpen": 0.55 }
+    },
+    {
+      "path": "Creation-Studio/web/skins/real-reading.mp4",
+      "in": 1.2,
+      "duration": 3,
+      "grade": { "contrast": 1.12, "saturation": 1.08, "gamma": 1.0, "warmth": 0.03, "sharpen": 0.55 }
+    },
+    {
+      "path": "Creation-Studio/web/skins/real-cafe.mp4",
+      "in": 3.0,
+      "duration": 3,
+      "grade": { "contrast": 1.1, "saturation": 1.2, "gamma": 1.03, "warmth": 0.06, "sharpen": 0.6 }
+    }
+  ],
+  "transition": { "type": "fade", "duration": 0.5 },
+  "texts": [
+    { "text": "她等了 99 天", "start": 0.5, "end": 3.4, "size": 92, "color": "white", "y": "h*0.34", "anim": "fade-up", "outline": 4 },
+    { "text": "只为一句「我回来了」", "start": 3.7, "end": 6.4, "size": 72, "color": "#FFD166", "y": "h*0.36", "anim": "fade-up", "outline": 4 },
+    { "text": "—— 第 99 天，门开了", "start": 6.7, "end": 9.0, "size": 58, "color": "white", "y": "h*0.42", "anim": "fade", "outline": 3 }
+  ],
+  "audio": {
+    "path": "C:/Users/Mr.luo/AppData/Local/JianyingPro/User Data/Cache/music/51ed14ea0c651529bcdc9d2c7a3c7a82.mp3",
+    "volume": 0.62,
+    "fade_in": 1.2,
+    "fade_out": 2.0
+  },
+  "out": "output/ffmpeg-timeline/bgm-demo.mp4"
+}

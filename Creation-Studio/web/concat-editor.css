@@ -1,0 +1,2594 @@
+/* 剪辑台 V1 —— 照 Slint 前端重排
+ *
+ * 颜色全部取自 Concat 的 dark 调色板（src/crates/concat/ui/theme/dark.slint）：
+ *   panel #212123 / raised #2b2b2e / well #19191b / field #323235
+ *   强调 lime #cbf53f，播放头同色；lane #1a1a1c、lane-alt #1e1e20、ruler #171719
+ *   五种素材色：video #3373d1 / audio #34c46f / image #9f63d6 / text #cf5a99
+ */
+.ce-page-host {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* 整站开了壁纸数据属性（html[data-wallpaper]），那条规则会给所有 input/select/textarea
+   强灌浅色背景，剪辑台的深色输入框和下拉会变成两块白板 —— 这里按更高优先级扳回来 */
+html[data-wallpaper="true"] .ce-shell :is(input, select, textarea):not([type="range"]) {
+  background-color: var(--field) !important;
+  color: var(--fg) !important;
+}
+
+html[data-wallpaper="true"] .ce-shell :is(input, textarea)::placeholder {
+  color: var(--fg-dim) !important;
+}
+
+.ce-shell {
+  --page: #151517;
+  --panel: #212123;
+  --raised: #2b2b2e;
+  --well: #19191b;
+  --field: #323235;
+  --field-hover: #3b3b3e;
+  --field-active: #46464a;
+  --line: #ffffff1a;
+  --line-strong: #ffffff33;
+  --fg: #f5f5f7;
+  --fg-muted: #a1a1a6;
+  --fg-dim: #6e6e73;
+  --accent: #cbf53f;
+  --accent-hover: #d9ff63;
+  --accent-soft: #cbf53f33;
+  --on-accent: #15220a;
+  --lane: #1a1a1c;
+  --lane-alt: #1e1e20;
+  --ruler: #171719;
+  --grid: #ffffff24;
+  --playhead: #cbf53f;
+  --wave: #a7f0c2b3;
+  --kind-video: #3373d1;
+  --kind-video-well: #142238;
+  --kind-audio: #34c46f;
+  --kind-audio-well: #12301c;
+  --kind-image: #9f63d6;
+  --kind-image-well: #2a1e34;
+  --kind-text: #cf5a99;
+  --kind-text-well: #321c29;
+
+  /* 字号：4 档。剪映一个面板里也不会更多；说明/辅助 10、标签 11、正文 12、标题 14 */
+  --ce-fs-1: 10px;
+  --ce-fs-2: 11px;
+  --ce-fs-3: 12px;
+  --ce-fs-4: 14px;
+  /* 圆角：3 档。小控件 4、容器 6、面板 10；胶囊另算 */
+  --ce-r-1: 4px;
+  --ce-r-2: 6px;
+  --ce-r-3: 10px;
+  --ce-r-pill: 999px;
+  /* 控件高度：4 档。贴身小按钮 22、输入/按钮 26、工具条 30、页签 44 */
+  --ce-h-1: 22px;
+  --ce-h-2: 26px;
+  --ce-h-3: 30px;
+  --ce-h-4: 44px;
+
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 0 8px;
+  background: var(--page);
+  color: var(--fg);
+  font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  font-size: var(--ce-fs-3);
+  line-height: 1.4;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+  color-scheme: dark; /* 原生 select / 滚动条跟着走深色，不然是两块白板 */
+}
+
+/* ------------------------------------------------------------ 标题栏 */
+.ce-titlebar {
+  height: 38px;
+  flex: 0 0 38px;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  padding: 0 10px;
+  gap: 8px;
+}
+
+.ce-menu {
+  display: flex;
+  gap: 2px;
+}
+
+.ce-menu-item {
+  position: relative;
+}
+
+.ce-menu button.on {
+  background: var(--raised);
+  color: var(--fg);
+}
+
+.ce-dropdown {
+  position: absolute;
+  top: 28px;
+  left: 0;
+  min-width: 200px;
+  padding: 5px;
+  border-radius: var(--ce-r-2);
+  background: var(--raised);
+  box-shadow: 0 14px 34px #00000099;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.ce-dropdown button {
+  text-align: left;
+  height: 26px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--ce-r-1);
+  background: transparent;
+  color: var(--fg);
+  font-size: var(--ce-fs-3);
+  cursor: pointer;
+}
+
+.ce-dropdown button:hover:not(:disabled) {
+  background: var(--field-hover);
+}
+
+.ce-dropdown button:disabled {
+  color: var(--fg-dim);
+  cursor: default;
+}
+
+.ce-dd-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--line);
+}
+
+.ce-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 6px;
+}
+
+.ce-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: var(--ce-r-1);
+  color: var(--fg);
+  font-size: var(--ce-fs-2);
+  cursor: pointer;
+}
+
+.ce-list li:hover {
+  background: var(--raised);
+}
+
+.ce-list em {
+  font-style: normal;
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.ce-catalog {
+  list-style: none;
+  margin: 0;
+  padding: 0 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ce-catalog li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--ce-r-2);
+  background: var(--field);
+  color: var(--fg);
+  font-size: var(--ce-fs-2);
+  cursor: pointer;
+}
+
+.ce-catalog li:hover {
+  background: var(--field-hover);
+}
+
+.ce-catalog strong {
+  font-weight: 500;
+}
+
+.ce-catalog em {
+  font-style: normal;
+  color: var(--fg-dim);
+  font-size: var(--ce-fs-1);
+}
+
+/* 「已用」：这个包已经挂在选中片段的画面链上 */
+.ce-applied {
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  border-radius: var(--ce-r-1);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: var(--ce-fs-1);
+  font-weight: 500;
+}
+
+/* 贴纸：基础图形格子 */
+.ce-shapes {
+  list-style: none;
+  margin: 0;
+  padding: 4px 8px 8px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(62px, 1fr));
+  gap: 8px;
+}
+
+.ce-shapes li {
+  height: 74px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: var(--ce-r-2);
+  background: var(--field);
+  color: var(--fg-muted);
+  font-size: var(--ce-fs-1);
+  cursor: pointer;
+}
+
+.ce-shapes li:hover {
+  background: var(--field-hover);
+  color: var(--fg);
+}
+
+.ce-shape-art {
+  width: 32px;
+  height: 32px;
+  display: block;
+  border-radius: var(--ce-r-1);
+}
+
+.ce-shapes li em {
+  font-style: normal;
+}
+
+/* 调节：一根参数一行，滑杆走主题强调色 */
+.ce-slider-row {
+  display: grid;
+  grid-template-columns: 56px 1fr 52px;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 12px;
+  font-size: var(--ce-fs-2);
+}
+
+.ce-slider-row label {
+  color: var(--fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 滑杆自己画：Chrome 默认那条太粗，和剪映的细轨 + 小圆点差得远 */
+.ce-slider-row input[type="range"] {
+  width: 100%;
+  height: 14px;
+  margin: 0;
+  padding: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.ce-slider-row input[type="range"]::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: var(--ce-r-pill);
+  background: var(--field-hover);
+}
+
+.ce-slider-row input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 11px;
+  height: 11px;
+  margin-top: -4px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--fg);
+}
+
+.ce-slider-row input[type="range"]:hover::-webkit-slider-thumb {
+  background: var(--accent);
+}
+
+.ce-slider-row input[type="range"]::-moz-range-track {
+  height: 3px;
+  border-radius: var(--ce-r-pill);
+  background: var(--field-hover);
+}
+
+.ce-slider-row input[type="range"]::-moz-range-thumb {
+  width: 11px;
+  height: 11px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--fg);
+}
+
+.ce-slider-row em {
+  font-style: normal;
+  text-align: right;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--ce-fs-1);
+}
+
+.ce-block-btn {
+  display: block;
+  width: calc(100% - 24px);
+  margin: 10px 12px 2px;
+  height: var(--ce-h-2);
+  border: 1px solid var(--line);
+  border-radius: var(--ce-r-2);
+  background: var(--field);
+  color: var(--fg);
+  font-size: var(--ce-fs-2);
+  cursor: pointer;
+}
+
+.ce-block-btn:hover {
+  background: var(--field-hover);
+}
+
+.ce-menu button {
+  height: 24px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: var(--ce-r-1);
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: var(--ce-fs-3);
+  cursor: pointer;
+}
+
+.ce-menu button:hover {
+  background: var(--raised);
+  color: var(--fg);
+}
+
+.ce-titlebar-center {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  justify-self: center;
+  min-width: 0;
+}
+
+.ce-docname {
+  font-size: var(--ce-fs-3);
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 42vw;
+}
+
+.ce-saved {
+  font-size: var(--ce-fs-1);
+  color: var(--fg-dim);
+}
+
+.ce-titlebar-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-self: end;
+}
+
+.ce-plain {
+  width: 26px;
+  height: var(--ce-h-2);
+  border: 0;
+  border-radius: var(--ce-r-1);
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: var(--ce-fs-3);
+  cursor: pointer;
+}
+
+.ce-plain:hover {
+  background: var(--raised);
+  color: var(--fg);
+}
+
+.ce-export {
+  height: var(--ce-h-2);
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--ce-r-2);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: var(--ce-fs-3);
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ce-export:hover {
+  background: var(--accent-hover);
+}
+
+.ce-export b {
+  font-size: var(--ce-fs-2);
+}
+
+
+
+
+/* ------------------------------------------------------------ 三栏 */
+.ce-work {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 8px;
+  padding: 0 8px;
+}
+
+.ce-pane {
+  background: var(--panel);
+  border-radius: var(--ce-r-3);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* 三栏宽度照剪映的比例配：左素材栏给够（页签要能排满一行），
+   中间监视器让它自己变宽没关系——画面按 object-fit 撑满，不再是一小块图飘在中间 */
+.ce-pane-left {
+  /* 400px：9 个页签按 40px 一格排得下一整行（剪映也是这么排的） */
+  width: 400px;
+  flex: 0 0 400px;
+}
+
+/* » 展开：素材面板变宽，素材卡多排一列（剪映那个 「»」 干的就是这个） */
+.ce-pane-left.is-wide {
+  width: 468px;
+  flex-basis: 468px;
+}
+
+.ce-pane-center {
+  flex: 1 1 auto;
+  min-width: 360px;
+}
+
+.ce-pane-right {
+  width: 316px;
+  flex: 0 0 316px;
+}
+
+@media (max-width: 1500px) {
+  .ce-pane-left {
+    width: 348px;
+    flex-basis: 348px;
+  }
+
+  .ce-pane-right {
+    width: 288px;
+    flex-basis: 288px;
+  }
+}
+
+@media (max-width: 1200px) {
+  .ce-pane-left {
+    width: 300px;
+    flex-basis: 300px;
+  }
+
+  .ce-pane-right {
+    width: 260px;
+    flex-basis: 260px;
+  }
+}
+
+.ce-pane-head {
+  height: 38px;
+  flex: 0 0 38px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px 0 12px;
+}
+
+.ce-pane-title {
+  font-size: var(--ce-fs-3);
+  font-weight: 500;
+  color: var(--fg);
+}
+
+.ce-pane-right .ce-pane-title {
+  font-size: var(--ce-fs-2);
+  letter-spacing: 0.08em;
+  color: var(--fg-muted);
+}
+
+.ce-pane-meta {
+  margin-left: auto;
+  margin-right: auto;
+  font-size: var(--ce-fs-2);
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.ce-btn-sq {
+  width: 26px;
+  height: var(--ce-h-2);
+  border: 0;
+  border-radius: var(--ce-r-1);
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: var(--ce-fs-3);
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.ce-btn-sq:hover {
+  background: var(--raised);
+  color: var(--fg);
+}
+
+/* 左：面板页签 —— 照剪映那条：一行等宽小格子，图标在上、文字在下，
+   选中只靠「图标变强调色 + 文字变亮 + 一点浅底」，不做成网页标签页那种鼓包；
+   最右一个 » 把素材面板撑宽（剪映就是这么展开的） */
+.ce-tabstrip {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 6px 4px;
+  /* 页签永远不裁：放不下就横向滚 */
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.ce-tabstrip::-webkit-scrollbar {
+  height: 0;
+}
+
+.ce-tab {
+  /* 剪映的页签是固定宽格子（40~56px），挤不下就横向滚，不压缩文字。
+     以前写的是 flex:1 1 0 加一个封顶宽度，在窄栏里每格被压到 32px，
+     两个字也要省略号，图标和字一起挤成一条。 */
+  flex: 0 0 auto;
+  min-width: 40px;
+  height: var(--ce-h-4);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 2px;
+  border: 0;
+  border-radius: var(--ce-r-2);
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: var(--ce-fs-2);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.ce-tab span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ce-tab i {
+  font-style: normal;
+  font-size: var(--ce-fs-4);
+  line-height: 1;
+  opacity: 0.9;
+}
+
+.ce-tab:hover {
+  background: var(--raised);
+  color: var(--fg);
+}
+
+.ce-tab.is-active {
+  background: #ffffff12;
+  color: var(--fg);
+}
+
+.ce-tab.is-active i {
+  color: var(--accent);
+  opacity: 1;
+}
+
+/* 收/展素材面板：钉在页签条右端，页签多了横向滚它也不会滚走 */
+.ce-tab-more {
+  flex: 0 0 auto;
+  width: 22px;
+  height: var(--ce-h-4);
+  margin-left: auto;
+  position: sticky;
+  right: 0;
+  border: 0;
+  border-left: 1px solid var(--line);
+  border-radius: 0 var(--ce-r-2) var(--ce-r-2) 0;
+  background: var(--panel);
+  color: var(--fg-dim);
+  font-size: var(--ce-fs-3);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.ce-tab-more:hover {
+  background: var(--raised);
+  color: var(--fg);
+}
+
+.ce-tab-add {
+  min-width: 24px;
+  font-size: var(--ce-fs-4);
+}
+
+
+/* 页签下面：左边一条二级竖菜单 + 右边内容区，和剪映素材面板一个结构 */
+.ce-left-split {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 6px;
+  margin: 0 8px 8px;
+}
+
+.ce-subnav {
+  flex: 0 0 104px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.ce-subnav::-webkit-scrollbar {
+  width: 0;
+}
+
+.ce-subnav-head {
+  height: var(--ce-h-2);
+  flex: 0 0 var(--ce-h-2);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 9px;
+  margin-bottom: 4px;
+  border: 0;
+  border-radius: var(--ce-r-2);
+  background: var(--raised);
+  color: var(--fg);
+  font-size: var(--ce-fs-2);
+  cursor: pointer;
+}
+
+.ce-subnav-head em {
+  margin-left: auto;
+  font-style: normal;
+  color: var(--fg-dim);
+  font-size: var(--ce-fs-1);
+}
+
+.ce-subnav-head:hover {
+  background: var(--field-hover);
+}
+
+.ce-subnav-row {
+  height: var(--ce-h-2);
+  flex: 0 0 var(--ce-h-2);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: var(--ce-r-2);
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: var(--ce-fs-2);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ce-subnav-row span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ce-subnav-row em {
+  font-style: normal;
+  font-size: var(--ce-fs-1);
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.ce-subnav-row:hover {
+  background: var(--raised);
+  color: var(--fg);
+}
+
+.ce-subnav-row.on {
+  background: var(--raised);
+  color: var(--fg);
+}
+
+.ce-subnav-row.on em {
+  color: var(--fg-muted);
+}
+
+.ce-left-body {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  /* 同上：只竖滚。素材面板里横向滚动条一出现就会吃掉一行高度 */
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: var(--well);
+  margin: 0;
+  border-radius: var(--ce-r-2);
+  padding: 8px 0 10px;
+}
+
+/* 面板里的一句说明 */
+.ce-note {
+  margin: 0;
+  padding: 6px 12px 8px;
+  color: var(--fg-dim);
+  font-size: var(--ce-fs-1);
+  line-height: 1.55;
+}
+
+/* 内容区顶栏：检索 / 布局 / 排序 */
+.ce-panel-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px 6px;
+}
+
+.ce-panel-search {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  border-radius: var(--ce-r-pill);
+  background: var(--field);
+}
+
+.ce-panel-search input {
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  border: 0;
+  background: transparent;
+  color: var(--fg);
+  font-size: var(--ce-fs-2);
+  outline: none;
+}
+
+.ce-panel-search input::placeholder {
+  color: var(--fg-dim);
+}
+
+.ce-panel-search button {
+  border: 0;
+  background: transparent;
+  color: var(--fg-dim);
+  font-size: var(--ce-fs-1);
+  cursor: pointer;
+}
+
+.ce-bar-btn {
+  flex: 0 0 auto;
+  height: var(--ce-h-2);
+  min-width: 24px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--ce-r-2);
+  background: var(--field);
+  color: var(--fg-muted);
+  font-size: var(--ce-fs-2);
+  cursor: pointer;
+}
+
+.ce-bar-btn.wide {
+  padding: 0 9px;
+  color: var(--fg);
+}
+
+.ce-bar-btn:hover {
+  background: var(--field-hover);
+  color: var(--fg);
+}
+
+.ce-bar-select {
+  flex: 0 0 auto;
+  height: var(--ce-h-2);
+  max-width: 76px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: var(--ce-r-2);
+  background: var(--field);
+  color: var(--fg);
+  font-size: var(--ce-fs-2);
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+/* 卡片列表：网格 / 列表两种布局 */
+.ce-cards {
+  list-style: none;
+  margin: 0;
+  padding: 4px 8px 8px;
+  display: grid;
+  gap: 6px;
+}
+
+.ce-cards.grid {
+  grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
+}
+
+.ce-cards.list {
+  grid-template-columns: 1fr;
+}
+
+.ce-cards li {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px;
+  border-radius: var(--ce-r-2);
+  background: var(--field);
+  color: var(--fg);
+  font-size: var(--ce-fs-2);
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.ce-cards.list li {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+}
+
+.ce-cards li:hover {
+  background: var(--field-hover);
+}
+
+.ce-cards li.is-tall {
+  height: 72px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
+.ce-cards strong {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ce-cards em {
+  font-style: normal;
+  color: var(--fg-dim);
+  font-size: var(--ce-fs-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ce-cards.grid li em {
+  order: 3;
+}
+
+.ce-cards .ce-applied {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+}
+
+.ce-card-art {
+  width: 26px;
+  height: 26px;
+  display: block;
+}
+
+.ce-sect {
+  padding: 2px 0 6px;
+}
+
+.ce-sect-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: var(--ce-fs-2);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.ce-sect-head i {
+  font-style: normal;
+  font-size: var(--ce-fs-1);
+  transition: transform 0.12s;
+}
+
+.ce-sect-head i.closed {
+  transform: rotate(-90deg);
+}
+
+.ce-sect-count {
+  margin-left: auto;
+  font-size: var(--ce-fs-1);
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.ce-sect-head:hover {
+  color: var(--fg);
+}
+
+.ce-filters {
+  list-style: none;
+  margin: 0;
+  padding: 0 6px;
+}
+
+.ce-filters li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: var(--ce-r-1);
+  color: var(--fg-muted);
+  font-size: var(--ce-fs-2);
+  cursor: pointer;
+}
+
+.ce-filters li:hover {
+  background: var(--raised);
+  color: var(--fg);
+}
+
+.ce-filters li.on {
+  background: var(--field);
+  color: var(--fg);
+}
+
+.ce-filters em {
+  font-style: normal;
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.ce-bin-tools {
+  display: flex;
+  gap: 6px;
+  padding: 6px 10px 8px;
+}
+
+.ce-btn-ghost {
+  height: var(--ce-h-2);
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--ce-r-2);
+  background: var(--field);
+  color: var(--fg);
+  font-size: var(--ce-fs-2);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ce-btn-ghost:hover {
+  background: var(--field-hover);
+}
+
+.ce-btn-ghost b {
+  font-size: var(--ce-fs-1);
+}
+
+.ce-btn-sq.ce-btn-ghost,
+.ce-btn-ghost.ce-btn-sq {
+  width: 30px;
+  padding: 0;
+  justify-content: center;
+}
+
+.ce-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 8px;
+  padding: 2px 10px 4px;
+}
+
+.ce-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px 8px;
+}
+
+.ce-search-field {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}
+
+.ce-search input {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 24px 0 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--ce-r-2);
+  background: var(--field);
+  color: var(--fg);
+  font-size: var(--ce-fs-2);
+}
+
+.ce-search input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.ce-search input::placeholder {
+  color: var(--fg-dim);
+}
+
+.ce-search-clear {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: var(--ce-r-1);
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: var(--ce-fs-1);
+  cursor: pointer;
+}
+
+.ce-search-clear:hover {
+  background: var(--field-hover);
+  color: var(--fg);
+}
+
+.ce-search-count {
+  font-size: var(--ce-fs-1);
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+  min-width: 34px;
+  text-align: right;
+}
+
+/* ---------------------------------------------------- 音频源：工程素材 / 剪映曲库 */
+.ce-source {
+  display: flex;
+  gap: 6px;
+  padding: 0 10px 8px;
+}
+
+.ce-source button {
+  flex: 1;
+  height: 26px;
+  border: 1px solid var(--line);
+  border-radius: var(--ce-r-2);
+  background: var(--well);
+  color: var(--fg-muted);
+  font-size: var(--ce-fs-2);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+
+.ce-source button em {
+  font-style: normal;
+  font-size: var(--ce-fs-1);
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.ce-source button:hover {
+  background: var(--field);
+  color: var(--fg);
+}
+
+.ce-source button.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.ce-source button.on em {
+  color: var(--accent);
+}
+
+.ce-chips {
+  display: flex;
+  gap: 5px;
+  padding: 0 10px 8px;
+}
+
+.ce-chips button {
+  height: 22px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--ce-r-3);
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: var(--ce-fs-1);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ce-chips button em {
+  font-style: normal;
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.ce-chips button:hover {
+  border-color: var(--line-strong);
+  color: var(--fg);
+}
+
+.ce-chips button.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.ce-chips button.on em {
+  color: var(--accent);
+}
+
+.ce-music-note {
+  margin: 0 10px 6px;
+  font-size: var(--ce-fs-1);
+  line-height: 1.45;
+  color: var(--fg-dim);
+}
+
+.ce-music-note.is-err {
+  color: #e0736f;
+}
+
+.ce-music-retry {
+  margin-left: 6px;
+  padding: 0 6px;
+  height: 16px;
+  border: 1px solid #e0736f66;
+  border-radius: var(--ce-r-1);
+  background: transparent;
+  color: #e0736f;
+  font-size: var(--ce-fs-1);
+  cursor: pointer;
+}
+
+.ce-music-retry:hover {
+  background: #e0736f22;
+}
+
+.ce-music-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 6px 8px;
+}
+
+.ce-music-list li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px;
+  border-radius: var(--ce-r-2);
+}
+
+.ce-music-list li:hover {
+  background: var(--well);
+}
+
+.ce-music-list li.playing {
+  background: var(--accent-soft);
+}
+
+.ce-music-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.ce-music-main strong {
+  font-size: var(--ce-fs-2);
+  font-weight: 500;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ce-music-main em {
+  font-style: normal;
+  font-size: var(--ce-fs-1);
+  color: var(--fg-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ce-music-badge {
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  border-radius: var(--ce-r-1);
+  background: var(--field);
+  color: var(--fg-muted);
+  font-size: var(--ce-fs-1);
+}
+
+.ce-music-badge.paid {
+  background: #cf5a9933;
+  color: #cf5a99;
+}
+
+.ce-music-act {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--line);
+  border-radius: var(--ce-r-1);
+  background: var(--field);
+  color: var(--fg-muted);
+  font-size: var(--ce-fs-1);
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ce-music-act:hover:enabled {
+  background: var(--field-hover);
+  color: var(--fg);
+}
+
+.ce-music-act.add:hover:enabled {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.ce-music-act:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.ce-audio-sink {
+  display: none;
+}
+
+.ce-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  cursor: grab;
+}
+
+.ce-tile-art {
+  position: relative;
+  height: 64px;
+  border-radius: var(--ce-r-2);
+  overflow: hidden;
+  background: var(--field);
+  border: 1px solid var(--line);
+}
+
+.ce-tile-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.ce-tile.kind-audio .ce-tile-art {
+  background: var(--kind-audio-well);
+  border-color: #34c46f66;
+}
+
+.ce-tile-wave {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.ce-tile-wave path {
+  fill: var(--wave);
+}
+
+.ce-tile-dur {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  padding: 0 4px;
+  border-radius: var(--ce-r-1);
+  background: #0000008c;
+  color: #fff;
+  font-size: var(--ce-fs-1);
+  font-variant-numeric: tabular-nums;
+}
+
+.ce-tile-name {
+  font-size: var(--ce-fs-1);
+  color: var(--fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ce-tiles-empty {
+  grid-column: 1 / -1;
+  font-size: var(--ce-fs-2);
+  padding: 6px 0;
+}
+
+/* 中：监视器 */
+.ce-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  padding: 4px 14px;
+  background: var(--panel);
+  position: relative;
+  touch-action: none;
+}
+
+/* 画笔开着的时候，预览区变成画布：光标换十字，别的人别误拖 */
+.ce-stage.is-brush {
+  cursor: crosshair;
+}
+
+/* 引擎给的预览帧只有画布那么大（比如 640×360），别让它按原始像素缩在中间：
+   撑满整个监视器高度，按画布比例留边，跟剪映的播放器一个观感 */
+.ce-stage img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center;
+  display: block;
+  background: #000;
+  border-radius: var(--ce-r-1);
+}
+
+.ce-stage-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  color: var(--fg-dim);
+  font-size: var(--ce-fs-2);
+}
+
+.ce-stage-empty span {
+  font-size: var(--ce-fs-4);
+  opacity: 0.6;
+}
+
+.ce-stage-empty p {
+  margin: 0;
+}
+
+.ce-transport {
+  height: 44px;
+  flex: 0 0 44px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+}
+
+.ce-tc {
+  height: 26px;
+  min-width: 96px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 8px;
+  border-radius: var(--ce-r-1);
+  background: var(--field);
+  color: var(--fg);
+  font-size: var(--ce-fs-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.ce-tc-total {
+  color: var(--fg-dim);
+  font-size: var(--ce-fs-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.ce-transport-mid {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin: 0 auto;
+}
+
+.ce-transport-mid button {
+  width: 30px;
+  height: 26px;
+  border: 0;
+  border-radius: var(--ce-r-1);
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: var(--ce-fs-2);
+  cursor: pointer;
+}
+
+.ce-transport-mid button:hover {
+  background: var(--raised);
+  color: var(--fg);
+}
+
+.ce-transport-mid .ce-play {
+  width: 34px;
+  color: var(--accent);
+  font-size: var(--ce-fs-3);
+}
+
+.ce-select {
+  height: var(--ce-h-2);
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--ce-r-1);
+  background: var(--field);
+  color: var(--fg);
+  font-size: var(--ce-fs-2);
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 14px;
+  background-image: linear-gradient(45deg, transparent 50%, var(--fg-muted) 50%),
+    linear-gradient(135deg, var(--fg-muted) 50%, transparent 50%);
+  background-position: calc(100% - 9px) 11px, calc(100% - 5px) 11px;
+  background-size: 4px 4px, 4px 4px;
+  background-repeat: no-repeat;
+}
+
+.ce-select option {
+  background: var(--raised);
+  color: var(--fg);
+}
+
+/* 右：DETAILS */
+.ce-details {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  /* 竖向滚，横向永远不滚：一条极长的路径会把整栏顶出横向滚动条 */
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 2px 12px 8px;
+}
+
+.ce-dgroup {
+  padding: 8px 0 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.ce-dgroup:last-child {
+  border-bottom: 0;
+}
+
+.ce-dgroup-title {
+  display: block;
+  font-size: var(--ce-fs-1);
+  letter-spacing: 0.08em;
+  color: var(--fg-dim);
+  margin-bottom: 6px;
+}
+
+.ce-drow {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 3px 0;
+  font-size: var(--ce-fs-2);
+}
+
+.ce-drow label {
+  flex: 0 0 84px;
+  color: var(--fg-muted);
+}
+
+.ce-drow span {
+  flex: 1;
+  min-width: 0;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ce-drow .ce-wrap {
+  text-align: right;
+  word-break: break-all;
+  font-size: var(--ce-fs-1);
+  line-height: 1.45;
+}
+
+.ce-drow input {
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--ce-r-1);
+  background: var(--field);
+  color: var(--fg);
+  font-size: var(--ce-fs-2);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.ce-drow input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.ce-pane-foot {
+  flex: 0 0 auto;
+  padding: 8px 12px 10px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* ------------------------------------------------------------ 时间线 */
+.ce-tl {
+  flex: 0 0 auto;
+  margin: 0 8px;
+  background: var(--panel);
+  border-radius: var(--ce-r-3);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* 时间线与上面三栏之间那条可拖的分割条 */
+.ce-splitter {
+  flex: 0 0 8px;
+  margin: 2px 8px 0;
+  border-radius: var(--ce-r-1);
+  cursor: row-resize;
+  background: transparent;
+  position: relative;
+}
+
+.ce-splitter::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 3px;
+  width: 44px;
+  height: 2px;
+  margin-left: -22px;
+  border-radius: var(--ce-r-1);
+  background: var(--line-strong);
+}
+
+.ce-splitter:hover::after {
+  background: var(--accent);
+}
+
+.ce-tl-tabs {
+  height: 32px;
+  flex: 0 0 32px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 10px;
+}
+
+.ce-tl-tab {
+  height: 24px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--ce-r-2);
+  background: var(--field);
+  color: var(--fg);
+  font-size: var(--ce-fs-2);
+  cursor: pointer;
+}
+
+.ce-tl-tab-add {
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: var(--ce-r-2);
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: var(--ce-fs-4);
+  cursor: pointer;
+}
+
+.ce-tl-tab-add:hover {
+  background: var(--raised);
+  color: var(--fg);
+}
+
+
+.ce-tl-tools {
+  height: 34px;
+  flex: 0 0 34px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.ce-tool {
+  width: 26px;
+  height: var(--ce-h-2);
+  border: 0;
+  border-radius: var(--ce-r-1);
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: var(--ce-fs-2);
+  cursor: pointer;
+}
+
+.ce-tool:hover:not(:disabled) {
+  background: var(--raised);
+  color: var(--fg);
+}
+
+.ce-tool:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.ce-tool.on {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.ce-tool-sep {
+  width: 1px;
+  height: 16px;
+  margin: 0 5px;
+  background: var(--line);
+}
+
+.ce-tools-right {
+  margin-left: auto;
+  display: flex;
+  gap: 2px;
+}
+
+.ce-tl-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.ce-tl-heads {
+  width: 148px;
+  flex: 0 0 148px;
+  background: var(--panel);
+  overflow: hidden;
+}
+
+.ce-ruler-corner {
+  height: 26px;
+  border-bottom: 1px solid var(--line);
+}
+
+.ce-lane-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px;
+  border-bottom: 1px solid var(--line);
+  color: var(--fg-muted);
+  font-size: var(--ce-fs-1);
+}
+
+
+.ce-fl {
+  width: 18px;
+  height: var(--ce-h-1);
+  border: 0;
+  border-radius: var(--ce-r-1);
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: var(--ce-fs-1);
+  cursor: pointer;
+  padding: 0;
+}
+
+.ce-fl:hover {
+  background: var(--raised);
+}
+
+.ce-fl.off {
+  opacity: 0.35;
+}
+
+.ce-lane-tag {
+  flex: 1;
+  text-align: center;
+  font-size: var(--ce-fs-1);
+  letter-spacing: 0.04em;
+  color: var(--fg-dim);
+}
+
+
+.ce-tl-scroll {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  position: relative;
+  background: var(--ruler);
+}
+
+.ce-ruler {
+  height: 26px;
+  position: relative;
+  background: var(--ruler);
+  border-bottom: 1px solid var(--line);
+  min-width: 100%;
+  cursor: ew-resize;
+}
+
+.ce-tick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--grid);
+}
+
+.ce-tick em {
+  position: absolute;
+  left: 4px;
+  top: 5px;
+  font-style: normal;
+  font-size: var(--ce-fs-1);
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.ce-lane {
+  position: relative;
+  background: var(--lane);
+  border-bottom: 1px solid var(--line);
+  min-width: 100%;
+}
+
+.ce-lane.alt {
+  background-color: var(--lane-alt);
+}
+
+.ce-lane.lane-audio {
+  background-color: #1b1f1d;
+}
+
+.ce-lane.lane-text {
+  background-color: #1e1b1d;
+}
+
+.ce-clip {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  border-radius: var(--ce-r-1);
+  overflow: hidden;
+  cursor: grab;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  background: var(--kind-video-well);
+}
+
+.ce-clip.kind-audio { background: var(--kind-audio-well); }
+.ce-clip.kind-text { background: var(--kind-text-well); }
+.ce-clip.kind-image { background: var(--kind-image-well); }
+
+.ce-clip-head {
+  flex: 0 0 15px;
+  display: flex;
+  align-items: center;
+  padding: 0 6px;
+  background: var(--kind-video);
+  color: #fff;
+  font-size: var(--ce-fs-1);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ce-clip.kind-audio .ce-clip-head { background: var(--kind-audio); color: #04220f; }
+.ce-clip.kind-text .ce-clip-head { background: var(--kind-text); }
+.ce-clip.kind-image .ce-clip-head { background: var(--kind-image); }
+
+.ce-clip-head span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ce-clip-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+  align-items: stretch;
+}
+
+.ce-clip-body img {
+  height: 100%;
+  width: auto;
+  object-fit: cover;
+  flex: 0 0 auto;
+  opacity: 0.92;
+}
+
+.ce-wave {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.ce-wave path {
+  fill: var(--wave);
+}
+
+.ce-clip-text {
+  align-self: center;
+  padding: 0 7px;
+  color: #ffe4b2;
+  font-size: var(--ce-fs-1);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ce-clip.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+  z-index: 2;
+}
+
+.ce-clip.ghost {
+  opacity: 0.7;
+  cursor: grabbing;
+}
+
+.ce-edge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 7px;
+  cursor: ew-resize;
+  background: transparent;
+}
+
+.ce-edge.left { left: 0; }
+.ce-edge.right { right: 0; }
+
+.ce-edge:hover {
+  background: var(--accent-soft);
+}
+
+.ce-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--playhead);
+  pointer-events: none;
+  z-index: 3;
+}
+
+.ce-playhead::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -5px;
+  width: 11px;
+  height: 8px;
+  background: var(--playhead);
+  clip-path: polygon(0 0, 100% 0, 50% 100%);
+}
+
+/* 电平表 */
+.ce-meters {
+  width: 42px;
+  flex: 0 0 42px;
+  display: flex;
+  flex-direction: column;
+  padding: 0 6px 4px;
+  background: var(--panel);
+}
+
+.ce-meter-scale {
+  height: 26px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  font-size: var(--ce-fs-1);
+  color: var(--fg-dim);
+  text-align: right;
+  padding-top: 2px;
+}
+
+.ce-meter-pair {
+  flex: 1;
+  display: flex;
+  gap: 3px;
+  align-items: stretch;
+  position: relative;
+  padding: 4px 0 12px;
+}
+
+.ce-meter-pair i {
+  flex: 1;
+  border-radius: var(--ce-r-1);
+  background: linear-gradient(180deg, #ff453a 0%, #ffd60a 18%, #34c759 46%, #12301c 100%);
+  opacity: 0.25;
+}
+
+.ce-meter-pair em {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-style: normal;
+  font-size: var(--ce-fs-1);
+  color: var(--fg-dim);
+}
+
+/* ------------------------------------------------------------ 状态栏 */
+.ce-status {
+  height: 20px;
+  flex: 0 0 20px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  font-size: var(--ce-fs-1);
+  color: var(--fg-dim);
+}
+
+.ce-status-right {
+  margin-left: auto;
+}
+
+.ce-dim,
+.ce-status .ce-dim {
+  color: var(--fg-dim);
+}
+
+.ce-err {
+  color: #ff453a;
+}
+
+/* ------------------------------------------------------------ 工程选择 */
+.ce-picker {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  overflow: auto;
+}
+
+.ce-picker-card {
+  width: min(620px, 100%);
+  background: var(--panel);
+  border-radius: var(--ce-r-3);
+  padding: 18px 20px;
+}
+
+.ce-picker-card h3 {
+  margin: 0 0 12px;
+  font-size: var(--ce-fs-4);
+  font-weight: 500;
+}
+
+.ce-projects {
+  list-style: none;
+  margin: 0 0 14px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 46vh;
+  overflow: auto;
+}
+
+.ce-projects button {
+  width: 100%;
+  text-align: left;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 10px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: var(--ce-r-2);
+  background: var(--field);
+  color: var(--fg);
+  cursor: pointer;
+}
+
+.ce-projects button:hover {
+  background: var(--field-hover);
+}
+
+.ce-projects strong {
+  font-size: var(--ce-fs-3);
+  font-weight: 500;
+}
+
+.ce-projects span {
+  font-size: var(--ce-fs-1);
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.ce-projects em {
+  grid-column: 1 / -1;
+  font-style: normal;
+  font-size: var(--ce-fs-1);
+  color: var(--fg-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ce-path-open {
+  display: flex;
+  gap: 8px;
+}
+
+.ce-path-open input {
+  flex: 1;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--ce-r-2);
+  background: var(--well);
+  color: var(--fg);
+  font-size: var(--ce-fs-2);
+}
+
+.ce-path-open input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.ce-btn-accent {
+  height: var(--ce-h-3);
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--ce-r-2);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: var(--ce-fs-2);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* ------------------------------------------------------------ 导入 / 导出 / 文本 / 模板 */
+/* 内容区顶上那条「打字就落一条」的输入条（文本、字幕页签） */
+.ce-compose {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  padding: 4px 8px 6px;
+}
+
+.ce-compose textarea,
+.ce-compose input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--ce-r-2);
+  background: var(--field);
+  color: var(--fg);
+  font-size: var(--ce-fs-2);
+  line-height: 1.5;
+  font-family: inherit;
+  resize: none;
+}
+
+.ce-compose textarea:focus,
+.ce-compose input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.ce-compose textarea::placeholder,
+.ce-compose input::placeholder {
+  color: var(--fg-dim);
+}
+
+.ce-compose .ce-btn-accent {
+  height: auto;
+  padding: 0 10px;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.ce-btn-accent:disabled,
+.ce-export:disabled,
+.ce-bar-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* 详情栏：文字片段直接改字 */
+.ce-dtext {
+  width: calc(100% - 24px);
+  margin: 2px 12px 4px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--ce-r-2);
+  background: var(--field);
+  color: var(--fg);
+  font-size: var(--ce-fs-2);
+  line-height: 1.5;
+  font-family: inherit;
+  resize: vertical;
+}
+
+.ce-dtext:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.ce-dhint {
+  margin: 0 12px 8px;
+  color: var(--fg-dim);
+  font-size: var(--ce-fs-1);
+  line-height: 1.5;
+}
+
+/* 详情栏：已挂上的画面链 */
+.ce-dchain {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 12px 4px;
+  padding: 4px 6px 4px 8px;
+  border-radius: var(--ce-r-2);
+  background: var(--field);
+  font-size: var(--ce-fs-2);
+  color: var(--fg);
+}
+
+.ce-dchain span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ce-chain-x {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: var(--ce-r-1);
+  background: transparent;
+  color: var(--fg-dim);
+  font-size: var(--ce-fs-1);
+  cursor: pointer;
+}
+
+.ce-chain-x:hover {
+  background: var(--field-hover);
+  color: #ff453a;
+}
+
+/* 状态栏：导出进度 */
+.ce-export-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--fg);
+}
+
+.ce-export-bar b {
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.ce-export-bar button {
+  height: 16px;
+  padding: 0 7px;
+  border: 1px solid var(--line);
+  border-radius: var(--ce-r-1);
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: var(--ce-fs-1);
+  cursor: pointer;
+}
+
+.ce-export-bar button:hover {
+  border-color: #ff453a;
+  color: #ff453a;
+}
+
+.ce-btn-sq.on {
+  color: var(--accent);
+}
+
+/* 电平表：真的跟着声音动（高度由 AnalyserNode 的 RMS 给） */
+.ce-meter-pair {
+  align-items: flex-end;
+}
+
+.ce-meter-pair i {
+  transition: height 70ms linear;
+  background: linear-gradient(0deg, #34c759 0%, #3ddc84 45%, #ffd60a 78%, #ff453a 100%);
+  opacity: 1;
+}
+
+/* 全屏预览 */
+.ce-stage:fullscreen {
+  background: #000;
+  padding: 0;
+}
+
+.ce-stage:fullscreen img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+/* ---------------------------------------------------------------- 调节面板二期
+ * 20 个参数一个不落：13 根滑杆之外，3 个色轮（圆盘 + 明度滑杆）与 4 条曲线。
+ * 色轮的 <key>.x/.y 是单位圆里的偏色，<key>.m 是明度；曲线是 <key>.<n>.x/.y。 */
+.ce-adj-sec {
+  margin: 10px 12px 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.ce-adj-sec > .ce-dgroup-title {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--fg-muted);
+  font-size: var(--ce-fs-2);
+}
+
+.ce-wheel-row,
+.ce-curve-row {
+  display: grid;
+  grid-template-columns: 46px 54px 1fr 16px;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: var(--ce-fs-2);
+}
+
+.ce-wheel-name {
+  color: var(--fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 色轮：底色是色相环，中心是灰 */
+.ce-wheel {
+  position: relative;
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background:
+    radial-gradient(circle at 50% 50%, #808080 0%, #80808033 46%, #0000 70%),
+    conic-gradient(from 90deg,
+      #ff3b30, #ff9500, #ffcc00, #34c759, #32ade6, #5856d6, #ff2d55, #ff3b30);
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.ce-wheel-dot {
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  margin: -4.5px 0 0 -4.5px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  background: #0000;
+  box-shadow: 0 1px 3px #000a;
+  pointer-events: none;
+}
+
+.ce-wheel-master {
+  display: grid;
+  grid-template-columns: 1fr 26px;
+  align-items: center;
+  gap: 4px;
+}
+
+.ce-wheel-master em,
+.ce-curve-meta {
+  color: var(--fg-dim);
+  font-style: normal;
+  font-size: var(--ce-fs-1);
+  text-align: right;
+}
+
+.ce-curve-row {
+  grid-template-columns: 46px 54px 1fr 16px;
+}
+
+.ce-curve {
+  width: 54px;
+  height: 54px;
+  border: 1px solid var(--line);
+  border-radius: var(--ce-r-1);
+  background: var(--well);
+  cursor: crosshair;
+  touch-action: none;
+  overflow: visible;
+}
+
+.ce-curve-grid {
+  fill: none;
+  stroke: #ffffff1f;
+  stroke-width: 0.6;
+}
+
+.ce-curve-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.6;
+}
+
+.ce-curve-dot {
+  fill: var(--accent);
+  stroke: #101012;
+  stroke-width: 0.8;
+  cursor: grab;
+}
+
+.ce-curve-dot:hover {
+  fill: #fff;
+}
+
+/* ------------------------------------------------------- 画面链展开 / 关键帧 / 遮罩
+ * 画面链原来只能看和摘；现在点一条展开它自己的参数（滑杆来自引擎目录），
+ * 引擎标记 animate 的参数旁边多一颗 ◆ —— 那是 setEffectKey。
+ * 片段属性的 ◆ 同理，走 setClipKey。 */
+.ce-chain {
+  padding: 0 12px;
+}
+
+.ce-chain-params {
+  padding: 2px 0 6px 6px;
+  border-left: 2px solid var(--line);
+  margin: 0 0 4px 4px;
+}
+
+.ce-slider-row.has-kf,
+.ce-drow.has-kf {
+  grid-template-columns: 52px 1fr 52px 18px;
+}
+
+.ce-drow.has-kf {
+  grid-template-columns: 62px 1fr 18px;
+}
+
+.ce-drow.has-kf > input {
+  min-width: 0;
+}
+
+.ce-kf {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: var(--ce-r-1);
+  background: #0000;
+  color: var(--fg-dim);
+  font-size: var(--ce-fs-1);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.ce-kf:hover {
+  color: var(--fg);
+  background: var(--field-hover);
+}
+
+.ce-kf.on {
+  color: var(--accent);
+}
+
+.ce-dval {
+  color: var(--fg-dim);
+  font-style: normal;
+  font-size: var(--ce-fs-1);
+  text-align: right;
+}
+
+.ce-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  color: var(--fg-muted);
+  font-size: var(--ce-fs-2);
+}
+
+.ce-check input {
+  width: 12px;
+  height: 12px;
+  accent-color: var(--accent);
+}
+
+/* ------------------------------------------------------------- 框选 / 模板填槽 / 曲库二期
+ * 时间线空白处拖出来的选框、模板占位的逐槽选文件、曲库的收藏与最近。 */
+.ce-marquee {
+  position: absolute;
+  z-index: 6;
+  border: 1px solid var(--accent);
+  background: #cbf53f1f;
+  pointer-events: none;
+}
+
+.ce-slotbox {
+  margin: 8px 10px 6px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--ce-r-2);
+  background: var(--well);
+  display: grid;
+  gap: 6px;
+}
+
+.ce-slot-row {
+  display: grid;
+  grid-template-columns: 1fr auto 84px;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--ce-fs-2);
+  color: var(--fg);
+}
+
+.ce-slot-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ce-slot-name em {
+  color: var(--fg-dim);
+  font-style: normal;
+}
+
+.ce-slot-file {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--ce-fs-1);
+  text-align: right;
+}
+
+.ce-compose-wrap {
+  flex-wrap: wrap;
+}
+
+.ce-inline-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--fg-muted);
+  font-size: var(--ce-fs-2);
+  white-space: nowrap;
+}
+
+.ce-inline-field input {
+  width: 44px;
+  flex: none;
+  text-align: center;
+}
+
+.ce-music-act.starred {
+  color: #ffd60a;
+}
+
+/* 曲库分类那一排：比主芯片小一号，不抢「音乐/音效/本机/收藏/最近」的位置 */
+.ce-chips-topics {
+  padding-top: 0;
+}
+
+.ce-chips-topics button {
+  font-size: var(--ce-fs-1);
+  padding: 2px 7px;
+  opacity: 0.85;
+}
+
+.ce-chips-topics button:hover {
+  opacity: 1;
+}
+
+/* 芯片排：五个主芯片 + 一排题材词，窄栏里必须横向排开、放不下就换行，
+   不许把「音乐」两个字竖着摞起来（336px 宽时就是这个毛病） */
+.ce-chips {
+  flex-wrap: wrap;
+  row-gap: 5px;
+}
+
+.ce-chips button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.ce-chips-topics {
+  padding-bottom: 6px;
+}

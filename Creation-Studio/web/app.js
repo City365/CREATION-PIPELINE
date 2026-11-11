@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 
 /* ------------------------------------------------------------------ utils */
 
@@ -101,6 +101,14 @@ window.addEventListener('unhandledrejection', (event) => {
   if (message) showFatal('异步请求失败：' + message);
 });
 
+// 一键成片：三种模式，只有入参不同（小说正文 / 剧本 / 一句话灵感），后面是同一条成片管线。
+// 二级菜单、页面标题、hash 里的 ?mode= 都读这一份，加模式只改这里。
+const ONECLICK_MODES = [
+  { id: 'novel', name: '小说模式', input: '一段小说正文' },
+  { id: 'script', name: '剧本模式', input: '剧本（分场 + 台词）' },
+  { id: 'idea', name: '灵感模式', input: '一句话或几个关键词' },
+];
+
 const state = {
   config: null,
   workflows: [],
@@ -112,6 +120,8 @@ const state = {
   route: 'studio',
   volume: { level: 60, muted: false },
   compare: { left: '', right: '', sync: true },
+  // 一键成片：三种模式的入参不同，模式记在这里，刷新和二级菜单都读它
+  oneclick: { mode: 'novel' },
   script: null,
   scriptChats: null,
   scriptChat: null,
@@ -717,12 +727,16 @@ function setRoute() {
     try { history.replaceState(null, '', '#tasks' + location.search); } catch { /* ignore */ }
     route = 'tasks';
   }
-  state.route = ['image', 'studio', 'script', 'assets', 'batch', 'jobs', 'tasks', 'media', 'compare', 'logs', 'projects'].includes(route) ? route : 'image';
+  state.route = ['image', 'studio', 'script', 'oneclick', 'concat', 'smartcut', 'smartrelease', 'assets', 'batch', 'jobs', 'tasks', 'media', 'compare', 'logs', 'projects'].includes(route) ? route : 'image';
   // 从地址栏恢复二级菜单状态
   const tabParam = parsed.params.get('tab');
   const dirParam = parsed.params.get('dir');
   const vendorParam = parsed.params.get('vendor');
   const taskParam = parsed.params.get('task');
+  const modeParam = parsed.params.get('mode');
+  if (state.route === 'oneclick' && modeParam && ONECLICK_MODES.some((m) => m.id === modeParam)) {
+    state.oneclick.mode = modeParam;
+  }
   if (state.route === 'image' && tabParam && ['edit', 'generate', 'reverse', 'scene'].includes(tabParam)) {
     state.image.tab = tabParam;
   }
@@ -760,6 +774,10 @@ function render() {
   if (state.route === 'studio') html = renderStudio();
   else if (state.route === 'image') html = IJ.panel() + renderImage();
   else if (state.route === 'script') html = renderScript();
+  else if (state.route === 'oneclick') html = '<div class="page-scroll">' + renderOneClick() + '</div>';
+  else if (state.route === 'concat') html = renderConcat();
+else if (state.route === 'smartcut') html = renderSmartCut();
+  else if (state.route === 'smartrelease') html = '<div class="page-scroll">' + renderSmartRelease() + '</div>';
   else if (state.route === 'batch') html = '<div class="page-scroll">' + renderBatch() + '</div>';
   else if (state.route === 'jobs') html = '<div class="page-scroll">' + renderJobs() + '</div>';
   else if (state.route === 'tasks') html = '<div class="page-scroll tasks-page">' + renderTasks() + '</div>';
@@ -777,7 +795,21 @@ function render() {
   host.innerHTML = html;
   view.replaceChildren(host);
   bindRoute(host);
-  if(state.route === "studio" || state.route === "image") WB.bind(host,state.route === "studio" ? "video" : "image");
+  if (state.route === 'concat' && window.CONCAT_EDITOR) {
+    window.CONCAT_EDITOR.mount(host.querySelector('#ce-host'), {
+      projectId: askProjectId(),
+      projectName: (state.project && state.project.name) || '',
+      toast,
+    });
+  }
+  if (state.route === 'smartcut' && window.SMARTCUT && window.SMARTCUT.mount) {
+    window.SMARTCUT.mount(host.querySelector('.sc-page'), {
+      projectId: askProjectId(),
+      projectName: (state.project && state.project.name) || '',
+      markdown: askMarkdown,
+      toast,
+    });
+  }  if(state.route === "studio" || state.route === "image") WB.bind(host,state.route === "studio" ? "video" : "image");
   // 整页重画之后把结构签名对齐，避免下一条进度事件又触发一次整页重画
   if (state.route === 'studio') { try { studioSignatureCache = studioStageSignature(); } catch { /* ignore */ } }
   applyVolume();
@@ -802,13 +834,14 @@ function goRoute(route) {
 
 $$('#nav .wmd-maintab').forEach((btn, index) => {
   btn.onclick = () => goRoute(btn.dataset.route);
-  btn.title = `Ctrl+${index + 1}`;
+  // 第十个落在 0 上：Ctrl+10 按不出来
+  btn.title = `Ctrl+${index < 9 ? index + 1 : '0'}`;
 });
 
 document.addEventListener('keydown', (event) => {
   if (!(event.ctrlKey || event.metaKey) || event.shiftKey || event.altKey) return;
-  const index = Number(event.key) - 1;
   const tabs = $$('#nav .wmd-maintab');
+  const index = event.key === '0' ? 9 : Number(event.key) - 1;
   if (!Number.isInteger(index) || index < 0 || index >= tabs.length) return;
   event.preventDefault();
   goRoute(tabs[index].dataset.route);
@@ -5494,6 +5527,72 @@ function markdownLite(text) {
   return out;
 }
 
+/* -------------------------------------------------- 一键成片 */
+
+// 三个模式只有入参不同，成片管线是同一套。表单按模式分开做，先把菜单和壳子立起来。
+window.__oneclickSetMode = (mode) => {
+  const next = ONECLICK_MODES.find((m) => m.id === mode);
+  if (!next) return false;
+  state.oneclick.mode = next.id;
+  if (state.route !== 'oneclick') {
+    location.hash = '#oneclick?mode=' + next.id;
+    return true;
+  }
+  syncHash('oneclick', { mode: next.id });
+  render();
+  return true;
+};
+
+function renderOneClick() {
+  const mode = ONECLICK_MODES.find((m) => m.id === state.oneclick.mode) || ONECLICK_MODES[0];
+  return `
+  <div class="page-head">
+    <div>
+      <h1>一键成片</h1>
+      <p class="hint">${esc(mode.name)} · 入参：${esc(mode.input)}</p>
+    </div>
+    <div class="page-actions"><span class="chip">待接入</span></div>
+  </div>
+  <div class="card">
+    <div class="empty">
+      <strong>${esc(mode.name)}的输入区还没做</strong>
+      <p>三个模式只是入参不同（小说正文 / 剧本 / 一句话灵感），后面的成片管线是同一套。输入区按模式分别做，先留空。</p>
+    </div>
+  </div>`;
+}
+
+/* -------------------------------------------------- 智能剪辑 / 智能上剧 */
+
+// 智能剪辑是对话页：用户说人话 → 智能体出剪辑单 → 执行引擎 → 回成片地址。
+// 二级菜单的两个引擎（剪映草稿 / Concat）是执行后端，页面本身在 web/smartcut.js。
+// 这里只留一个宿主节点，避免和 page-scroll 的滚动容器打架。
+
+// 剪辑台：系统里的一个页面。左边剪、右边说，引擎在后台 headless 跑。
+function renderConcat() {
+  return '<div class="ce-page-host" id="ce-host"></div>';
+}
+
+function renderSmartCut() {
+  return '<div class="sc-page" id="sc-page"></div>';
+}
+
+function renderSmartRelease() {
+  return `
+  <div class="page-head">
+    <div>
+      <h1>智能上剧</h1>
+      <p class="hint">把剪好的成片按集号组织成剧集，管排期和上线状态。</p>
+    </div>
+    <div class="page-actions"><span class="chip">待接入</span></div>
+  </div>
+  <div class="card">
+    <div class="empty">
+      <strong>成剧管线还没接</strong>
+      <p>成片一集一集躺在媒体库里，现在还没有一个地方把它们按集组织成剧、记录哪一集剪到哪一步、什么时候上线。</p>
+    </div>
+  </div>`;
+}
+
 /* ------------------------------------------------------------------ ask 页复刻（剧本创作台） */
 
 function askProjectId() { return state.projectId || 'wenyun-m-desktop'; }
@@ -5582,6 +5681,7 @@ function askState() {
       capTab: 'tools',
       pluginTab: 'skill',
       skillId: '',
+      skillIds: [],
       enabledTools: [],
       removed: null,
       rename: { open: false, id: '', text: '' },
@@ -5629,6 +5729,70 @@ function askSkill(id) {
 
 function askSkillName(id) {
   return id ? askSkill(id).name : '';
+}
+
+/* 技能可以多选：skillIds 是唯一真相，skillId 只是第一个的镜像，老代码照旧能读。
+   顺序 = 用户写入顺序，后端按这个顺序注指导、判「前一个的产出是后一个的输入」。 */
+function askSkills() {
+  const a = askState();
+  if (!Array.isArray(a.skillIds)) a.skillIds = a.skillId ? [a.skillId] : [];
+  const out = [];
+  for (const id of a.skillIds) {
+    if (id && askSkill(id).id === id && !out.includes(id)) out.push(id);
+  }
+  return out;
+}
+
+function askSetSkills(ids) {
+  const a = askState();
+  const out = [];
+  for (const id of ids || []) {
+    if (id && askSkill(id).id === id && !out.includes(id)) out.push(id);
+  }
+  a.skillIds = out;
+  a.skillId = out[0] || '';
+  return out;
+}
+
+function askSkillNames(ids) {
+  // 认不出的 id 直接丢掉：排队的快照可能是几天前的，技能已经被删了
+  return (ids || askSkills())
+    .filter((id) => askSkill(id).id === id)
+    .map((id) => askSkillName(id))
+    .filter(Boolean);
+}
+
+// 正文里的 @技能名 也是点名：点完 @ 又把技能取消掉时，token 还在正文里，
+// 不认它就变成模型看不懂的一串 @。认得出来就顺手剥掉，绑定落在 skillIds 上。
+function askParseSkillMentions(text) {
+  const raw = String(text || '');
+  const names = askSkillList()
+    .filter((s) => s.id && s.name)
+    .sort((x, y) => y.name.length - x.name.length);
+  const hits = [];
+  let clean = raw;
+  for (const s of names) {
+    const token = '@' + s.name;
+    const at = clean.indexOf(token);
+    if (at < 0) continue;
+    hits.push({ id: s.id, at });
+    clean = clean.split(token).join(' ');
+  }
+  hits.sort((x, y) => x.at - y.at);
+  clean = clean.replace(/[ \t]{2,}/g, ' ').replace(/^[ \t]+/gm, '').trim();
+  return { text: clean, ids: hits.map((h) => h.id) };
+}
+
+// 这一轮用哪几个技能、哪个模型、什么权限：排队时必须当场存下来，
+// 出队时用户可能已经改成别的技能了，读实时状态会把上一轮的技能配到下一句话上。
+function askTurnSnapshot() {
+  const a = askState();
+  return {
+    skillIds: askSkills().slice(),
+    modelId: a.modelId || '',
+    effort: a.effort || '',
+    permission: a.permission || ASK_PERM_DEFAULT,
+  };
 }
 
 // 技能统一来源：内置技能 + 自定义技能都来自 /agent/skills，右侧组件与插件管理共用
@@ -5743,7 +5907,7 @@ async function askRestore() {
     const existing = remembered ? a.conversations.find((c) => c.id === remembered) : null;
     if (existing) {
       a.activeId = existing.id;
-      a.skillId = '';
+      askSetSkills([]);
       a.workspacePage = 'console';
       askSyncRunState();
     } else {
@@ -5876,7 +6040,7 @@ function askNewConversation() {
   const a = askState();
   a.moreMenu = null;
   a.workspacePage = 'console';
-  a.skillId = '';
+  askSetSkills([]);
   a.previewFile = null;
   a.mention = null;
   a.command = { mode: null, query: null, index: 0 };
@@ -5912,7 +6076,7 @@ function askResetForProject() {
 
 function askSelect(id) {
   const a = askState();
-  a.skillId = '';
+  askSetSkills([]);
   a.previewFile = null;
   a.workspacePage = 'console';
   a.mention = null;
@@ -7102,13 +7266,23 @@ function askSessionStats(chat) {
 const ASK_ICO_CLOCK = '<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><circle cx="8" cy="8" r="5.7" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M8 4.7V8.2l2.3 1.4" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>';
 const ASK_ICO_DB = '<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><ellipse cx="8" cy="4.4" rx="5.2" ry="2.2" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M2.8 4.4v7.2c0 1.2 2.3 2.2 5.2 2.2s5.2-1 5.2-2.2V4.4" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>';
 
+// 状态条不缩写：位置够用，27,506 比 28k 多不了几个像素，省这一眼不值当。
+function askFullTokens(value) {
+  return Math.max(0, Math.round(Number(value) || 0)).toLocaleString('en-US');
+}
+
+// 占用比例统一一位小数，整数就省掉 .0：1% / 10.4% / 96.4%
+function askPct(ratio) {
+  return (Math.max(0, Math.min(1, Number(ratio) || 0)) * 100).toFixed(1).replace(/\.0$/, '') + '%';
+}
+
 function askStatDockHtml() {
   const s = askSessionStats(askActive());
   if (!s.turns) return '';
   // 活动：本会话多少轮、累计多少次模型调用、当前输出速率
-  const activity = [s.turns + ' 轮', s.steps + ' 步', s.tps ? s.tps + ' tok/s' : ''].filter(Boolean);
+  const activity = [s.turns + ' 轮', s.steps + ' 步', s.tps ? s.tps + ' token/s' : ''].filter(Boolean);
   // 用量：累计 token 总量 + 缓存命中率（拿不到就不显示，不凑数字）
-  const usage = [askFmtTokens(s.input + s.output) + ' tok',
+  const usage = [askFullTokens(s.input + s.output) + ' token',
     s.cacheRate != null ? '缓存命中 ' + s.cacheRate + '%' : ''].filter(Boolean);
   const tipActivity = '本会话已跑 ' + s.turns + ' 轮 / ' + s.steps + ' 次模型调用'
     + (s.llm ? ' · 模型 ' + askSecs(s.llm) : '') + (s.tool ? ' · 工具 ' + askSecs(s.tool) : '')
@@ -7131,7 +7305,7 @@ function askTurnUsageHtml(m) {
   const u = ex && ex.usage;
   if (!t || !u || u.output_tokens == null) return '';
   const head = [];
-  if (t.tps) head.push(t.tps + ' tok/s');
+  if (t.tps) head.push(t.tps + ' token/s');
   if (t.ttft_ms) head.push('首字 ' + askSecs(t.ttft_ms));
   head.push('输出 ' + u.output_tokens + ' tokens');
   const rows = [['模型耗时', t.llm_ms != null ? askSecs(t.llm_ms) : '—'],
@@ -7152,7 +7326,7 @@ function askSpeedHtml(m) {
   const t = askTurnStats(m && m.execution);
   const parts = [];
   if (usage) parts.push('输入 ' + (usage.input_tokens ?? '?') + ' / 输出 ' + (usage.output_tokens ?? '?'));
-  if (t && t.tps) parts.push(t.tps + ' tok/s');
+  if (t && t.tps) parts.push(t.tps + ' token/s');
   if (t && t.ttft_ms) parts.push('首字 ' + (t.ttft_ms / 1000).toFixed(1) + 's');
   if (!parts.length) return '';
   const tip = t ? ['模型 ' + ((t.llm_ms || 0) / 1000).toFixed(2) + 's',
@@ -7461,7 +7635,7 @@ function askChoiceSend() {
     }
     if (answers.length) msg.choiceAnswers = { ...(msg.choiceAnswers || {}), [card.id]: answers };
   }
-  if (summary.skills.length) a.skillId = summary.skills[0];
+  if (summary.skills.length) askSetSkills([...askSkills(), ...summary.skills]);
   p.closed = true;
   askRenderAll();
   askPersist();
@@ -7597,7 +7771,8 @@ function askSessionFilesHtml(chat) {
 
 function askComposerHtml() {
   const a = askState();
-  const skill = askSkill(a.skillId);
+  const picked = askSkills();
+  const names = askSkillNames(picked);
   const models = a.models || [];
   const efforts = askEfforts();
   return `<div class="ask-composer-area">
@@ -7606,7 +7781,7 @@ function askComposerHtml() {
     <div class="ask-composer-context">
       <button type="button" class="ask-project-trigger" data-act="ask-project-picker" aria-label="选择项目"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7V5a1 1 0 0 1 1-1h5l2 3h9a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7Z"/></svg><span class="ask-project-name">${esc(state.project?.name || '选择项目')}</span><svg class="ask-project-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></button><span>▰ 此计算机</span>
       ${state.styleDetail ? `<span>🎨 ${esc(state.styleDetail.name)}</span>` : ''}
-      <span class="ask-skill-context">✧ ${esc(skill.name)}${a.skillId ? ' <button type="button" data-act="ask-clear-skill" title="移除技能，返回普通聊天">×</button>' : ''}</span>
+      <span class="ask-skill-context">✧ ${esc(names.length ? names.join(' + ') : '普通聊天')}${picked.length ? ' <button type="button" data-act="ask-clear-skill" title="移除技能，返回普通聊天">×</button>' : ''}</span>
       ${(a.attachments || []).map((f) => `<span class="ask-attach" data-act="ask-preview" data-id="${esc(f.id)}" title="点击预览">📎 ${esc(f.name)}<small>${askAttachStatusText(f)}</small><button type="button" data-act="ask-detach" data-id="${esc(f.id)}">×</button></span>`).join('')}
     </div>
     <div class="ask-composer">
@@ -7713,13 +7888,13 @@ function askCtxTone(ratio) {
 function askContextMeterHtml() {
   const s = askContextStats();
   const len = (ASK_CTX_C * s.ratio).toFixed(1);
-  const title = `上下文占用：${askFmtTokens(s.used)} / ${askFmtTokens(s.total)}（${(s.ratio * 100).toFixed(1)}%）${s.exact ? '' : ' · 估算'}`;
+  const title = `上下文占用：${askFullTokens(s.used)} / ${askFullTokens(s.total)} token（${askPct(s.ratio)}）${s.exact ? '' : ' · 估算'}`;
   return `<span class="ask-ctx ${askCtxTone(s.ratio)}" title="${esc(title)}">
       <svg class="ask-ctx-ring" viewBox="0 0 18 18" width="16" height="16" aria-hidden="true">
         <circle class="ask-ctx-track" cx="9" cy="9" r="${ASK_CTX_R}" />
         <circle class="ask-ctx-fill" cx="9" cy="9" r="${ASK_CTX_R}" stroke-dasharray="${len} ${ASK_CTX_C.toFixed(1)}" transform="rotate(-90 9 9)" />
       </svg>
-      <span class="ask-ctx-text">${askFmtTokens(s.used)}/${askFmtTokens(s.total)}</span>
+      <span class="ask-ctx-text">${askPct(s.ratio)}</span>
     </span>`;
 }
 
@@ -7731,10 +7906,10 @@ function askUpdateContextMeter() {
   const fill = host.querySelector('.ask-ctx-fill');
   if (fill) fill.setAttribute('stroke-dasharray', (ASK_CTX_C * s.ratio).toFixed(1) + ' ' + ASK_CTX_C.toFixed(1));
   const text = host.querySelector('.ask-ctx-text');
-  if (text) text.textContent = askFmtTokens(s.used) + '/' + askFmtTokens(s.total);
+  if (text) text.textContent = askPct(s.ratio);
   host.classList.toggle('is-warn', s.ratio >= 0.8 && s.ratio < 0.95);
   host.classList.toggle('is-danger', s.ratio >= 0.95);
-  host.title = `上下文占用：${askFmtTokens(s.used)} / ${askFmtTokens(s.total)}（${(s.ratio * 100).toFixed(1)}%）${s.exact ? '' : ' · 估算'}`;
+  host.title = `上下文占用：${askFullTokens(s.used)} / ${askFullTokens(s.total)} token（${askPct(s.ratio)}）${s.exact ? '' : ' · 估算'}`;
 }
 
 /** 斜杠命令目录来自后端 /agent/commands：加命令只改后端一处，前端不再写死三个。 */
@@ -7861,7 +8036,7 @@ function askMentionPopup() {
     ${groups.map((g) => `<div class="ask-popup-group"><div class="ask-popup-group-title">${g.name}</div>
       ${g.items.map((it) => {
         const i = items.indexOf(it);
-        const mark = it.kind === 'skill' && it.id === a.skillId ? '<span class="ask-check">✓</span>' : '<span class="ask-enter">↵</span>';
+        const mark = it.kind === 'skill' && askSkills().includes(it.id) ? '<span class="ask-check">✓</span>' : '<span class="ask-enter">↵</span>';
         return `<button type="button" class="${i === a.mention.index ? 'is-hl' : ''}" data-act="ask-mention" data-kind="${it.kind}" data-id="${esc(it.id)}">
           <span class="ask-mention-ico">${it.icon}</span>
           <span><b>${esc(it.name)}</b><small>${esc(it.desc || '')}</small></span>
@@ -7914,10 +8089,24 @@ function askWorkspaceContext() {
     previewHtml:()=>askFilePaneHtml(true),trajectoryHtml:askTrajectoryHtml,loadTrajectory:askLoadTrajectory};
 }
 
+// 浮层统一「点外面就收」。不能整页重渲染：pointerdown 里换掉 DOM 会把紧接着的 click
+// 一起吃掉，用户点「新建对话」只会感觉点了没反应。所以只摘掉浮层本身、把按钮状态改回去。
+function askDismissSummary() {
+  const a = state.ask;
+  if (!a || !a.summaryOpen) return false;
+  a.summaryOpen = false;
+  document.querySelector('.ask-summary')?.remove();
+  const btn = document.querySelector('[data-act="ask-summary"]');
+  if (btn) { btn.classList.remove('is-on'); btn.setAttribute('aria-expanded', 'false'); }
+  return true;
+}
+
 // Header popovers close independently, without rebuilding the chat under the pointer.
 document.addEventListener('pointerdown',event=>{
   const a=state.ask;if(!a)return;
   if(a.headerMenu&&!event.target.closest('.ask-head-actions')){a.headerMenu=false;document.querySelector('.ask-head-menu')?.remove();document.querySelector('[data-act="ask-head-menu"]')?.setAttribute('aria-expanded','false');}
+  // Summary 是浮在对话上的卡片，点它以外任何地方都收起来，不用专门去够右上角的 ×
+  if(a.summaryOpen&&!event.target.closest('.ask-summary')&&!event.target.closest('[data-act="ask-summary"]'))askDismissSummary();
 });
 document.addEventListener('keydown',event=>{
   if(event.key!=='Escape'||!state.ask)return;
@@ -8040,7 +8229,7 @@ function askFileIcon(name, kind) {
 function askConnectorsHtml() {
   const a = askState();
   const toolsOk = a.toolsSupported !== false;
-  const skill = a.skillId ? askSkill(a.skillId).name : '';
+  const skill = askSkillNames().join(' + ');
   const row = (badge, text, muted) => `<div class="ask-env-row"><span class="ask-conn-badge">${badge}</span><span class="ask-env-text${muted ? ' is-muted' : ''}">${esc(text)}</span></div>`;
   return row('T', 'Tools · ' + (toolsOk ? 'available' : 'unavailable'), !toolsOk)
     + row('S', 'Skill · ' + (skill || 'null'), !skill)
@@ -8466,13 +8655,15 @@ function askSaveQueue(chatId) {
   try { localStorage.setItem(askQueueKey(id), JSON.stringify((a.queues && a.queues[id]) || [])); } catch { /* ignore */ }
 }
 
-function askEnqueue(raw, chatId, webSearch = !!askState().webSearch) {
+function askEnqueue(raw, chatId, webSearch = !!askState().webSearch, turn = null) {
   const a = askState();
   const id = chatId || a.activeId;
   const text = String(raw || '').trim();
   if (!id || !text) return;
   const list = askLoadQueue(id);
-  list.push({ id: askId(), text, time: Date.now(), webSearch: !!webSearch });
+  // 技能 / 模型 / 权限跟着这一条一起存：出队时用户可能已经换成别的了，
+  // 读实时状态会把上一句话的配置配到这一句上。
+  list.push({ id: askId(), text, time: Date.now(), webSearch: !!webSearch, turn: turn || askTurnSnapshot() });
   askSaveQueue(id);
   if (id === a.activeId) {
     a.draft = '';
@@ -8589,7 +8780,7 @@ function askDrainQueue(chatId) {
   const next = list.shift();
   askSaveQueue(id);
   if (a.activeId === id) askRenderAll();
-  setTimeout(() => { askSend(next.text, id, !!next.webSearch).catch(() => {}); }, 150);
+  setTimeout(() => { askSend(next.text, id, !!next.webSearch, next.turn || null).catch(() => {}); }, 150);
 }
 
 function askQueueHtml() {
@@ -9344,17 +9535,20 @@ function askApplyEvent(msg, data, chatId) {
   }
 }
 
-async function askQueueReply(chat, question, insertAt, fileIds = [], resumeId = '', webSearch = !!askState().webSearch) {
+async function askQueueReply(chat, question, insertAt, fileIds = [], resumeId = '', webSearch = !!askState().webSearch, turn = null) {
   const a = askState();
   const controller = new AbortController();
   const requestId = askId();
+  const picked = (turn && Array.isArray(turn.skillIds)) ? turn.skillIds.filter(Boolean) : askSkills();
+  const pickedNames = askSkillNames(picked);
+  const single = picked.length === 1 && askSkill(picked[0]).id === picked[0] ? askSkill(picked[0]) : null;
   const run = { chatId: chat.id, requestId, controller, startedAt: Date.now(), msg: null };
   askRuns(a).set(chat.id, run);
   askSyncRunState();
   askRefreshHistoryFlags();
   if (a.activeId === chat.id) askRenderAll();   // 让输入区切到“排队 / 停止”状态
   const history = chat.messages.slice(0, insertAt === undefined ? chat.messages.length - 1 : insertAt).filter((m) => m.text);
-  const msg = { id: askId(), role: 'assistant', text: '', time: Date.now(), skill: askSkillName(a.skillId), _streaming: true };
+  const msg = { id: askId(), role: 'assistant', text: '', time: Date.now(), skill: pickedNames.join('、'), _streaming: true };
   run.msg = msg;
   if (insertAt === undefined) chat.messages.push(msg);
   else chat.messages.splice(insertAt, 0, msg);
@@ -9387,16 +9581,17 @@ async function askQueueReply(chat, question, insertAt, fileIds = [], resumeId = 
         client_request_id: requestId,
         session_id: chat.id,
         text: question,
-        skill: askSkillName(a.skillId),
-        skill_id: askSkill(a.skillId).id.startsWith('plugin:') ? askSkill(a.skillId).id.slice(7) : undefined,
-        style_prompt: a.skillId ? (state.styleDetail && state.styleDetail.video) || '' : '',
+        skill: pickedNames.join('、'),
+        skills: pickedNames,
+        skill_id: single && single.id.startsWith('plugin:') ? single.id.slice(7) : undefined,
+        style_prompt: picked.length ? (state.styleDetail && state.styleDetail.video) || '' : '',
         project_name: (state.project && state.project.name) || '',
         file_ids: fileIds,
-        model_id: a.modelId || undefined,
-        reasoning_effort: a.effort || undefined,
+        model_id: (turn && turn.modelId) || a.modelId || undefined,
+        reasoning_effort: (turn && turn.effort) || a.effort || undefined,
         web_search: !!webSearch,
 
-        permission: a.permission || ASK_PERM_DEFAULT,
+        permission: (turn && turn.permission) || a.permission || ASK_PERM_DEFAULT,
       }),
     });
     if (!res.ok) {
@@ -9492,11 +9687,20 @@ async function askQueueReply(chat, question, insertAt, fileIds = [], resumeId = 
   }
 }
 
-async function askSend(text, chatId, webSearch = !!askState().webSearch) {
+async function askSend(text, chatId, webSearch = !!askState().webSearch, turn = null) {
   const a = askState();
   const target = (chatId && (a.conversations || []).find((c) => c.id === chatId)) || askActive();
   let raw = String(text === undefined ? a.draft : text).trim();
   const originalRaw = raw;
+  // 正文里的 @技能名 也算点名（点完 @ 再把技能取消掉时 token 还留在正文里），
+  // 认出来就绑定到本轮技能上，并把 token 剥掉——不要留一串模型看不懂的 @。
+  const mentioned = askParseSkillMentions(raw);
+  if (mentioned.ids.length) {
+    askSetSkills([...askSkills(), ...mentioned.ids]);
+    raw = mentioned.text || '按所选技能执行。';
+  }
+  // 排队出队时沿用入队那一刻快照，实时状态只给现打现发的这一轮用
+  const snap = turn || askTurnSnapshot();
   const cmd = raw.match(/^\/(model|think|compact)$/);
   if (cmd) { askChooseCommand(cmd[1]); return; }
   if (!raw) return;
@@ -9511,7 +9715,7 @@ async function askSend(text, chatId, webSearch = !!askState().webSearch) {
   }
   // 这一轮还在生成：先排队，结束后依次发送，不会丢
   if (askRunOf(chat.id)) {
-    askEnqueue(raw, chat.id, webSearch);
+    askEnqueue(raw, chat.id, webSearch, snap);
     return;
   }
   if (raw.length > 1024) {
@@ -9538,7 +9742,7 @@ async function askSend(text, chatId, webSearch = !!askState().webSearch) {
   const attached = [...(a.attachments || [])];
   chat.messages.push({ id: askId(), role: 'user', text: raw, files: attached, time: Date.now() });
   if (chat.messages.length === 1) {
-    chat.title = ASK_SKILLS.reduce((title, s) => title.split('@' + s.name).join(''), originalRaw).trim().slice(0, 24) || '新的创作对话';
+    chat.title = askParseSkillMentions(originalRaw).text.slice(0, 24) || '新的创作对话';
     const headTitle = $('.ask-chat-heading h1');
     if (headTitle) headTitle.textContent = chat.title;
     const activeItem = $('.ask-history-item.is-on b');
@@ -9554,16 +9758,20 @@ async function askSend(text, chatId, webSearch = !!askState().webSearch) {
   askRenderPopups();
   askPersist();
   askRenderAll();
-  askQueueReply(chat, raw, undefined, attached.map((f) => f.id), '', webSearch);
+  askQueueReply(chat, raw, undefined, attached.map((f) => f.id), '', webSearch, snap);
 }
 
 // 输入框「直发」：有任务在跑就作为补充说明并进当前任务；没有任务时照旧开新一轮
 async function askSendDirect() {
   const a = askState();
   const chatId = a.activeId;
-  const text = String(a.draft || '').trim();
+  let text = String(a.draft || '').trim();
   if (!chatId || !text) return;
   if (!askRunOf(chatId)) { await askSend(text, chatId); return; }
+  // 直发是并进正在跑的这一轮，技能已经定了不会中途换；
+  // 但正文里的 @技能名 得剥掉，否则模型收到一个没绑定的 token，又变成「不认识」。
+  const mentioned = askParseSkillMentions(text);
+  if (mentioned.ids.length) text = mentioned.text || '继续按当前技能推进。';
   const res = await askSupplementSend(text, chatId);
   if (!res.ok) {
     if (res.code === 'no_active_run') { await askSend(text, chatId); return; }
@@ -9710,7 +9918,8 @@ function askChooseMention(id) {
   const range = a.mention;
   const skill = askSkill(id);
   if (!range) return;
-  a.skillId = id;
+  // 追加而不是覆盖：@ 两个技能就是两个一起用，后端按写入顺序依次生效
+  askSetSkills([...askSkills(), id]);
   const token = '@' + skill.name + ' ';
   const input = $('#ask-input');
   const value = input ? input.value : a.draft;
@@ -9719,7 +9928,7 @@ function askChooseMention(id) {
   a.mentionClosed = null;
   askRenderPopups();
   const chip = document.querySelector('.ask-skill-context');
-  if (chip) chip.textContent = '✧ ' + skill.name;
+  if (chip) chip.textContent = '✧ ' + askSkillNames().join(' + ');
   const el = $('#ask-input');
   if (el) {
     el.value = a.draft;
@@ -10177,7 +10386,20 @@ function bindAsk(root) {
         toast('已复制对话文本');return askRenderAll();
       }
       if (act === 'ask-new') return askNewConversation();
-      if (act === 'ask-clear-skill') { a.skillId = ''; return askRenderAll(); }
+      if (act === 'ask-clear-skill') {
+        // 取消 @ 要连正文里的 @技能名 一起清掉，否则下次发送又会被认回同一个技能
+        askSetSkills([]);
+        const box = $('#ask-input');
+        const value = box ? box.value : a.draft;
+        const stripped = askParseSkillMentions(value).text;
+        a.draft = stripped;
+        if (box) {
+          box.value = stripped;
+          const c = $('.ask-draft-count'); if (c) c.textContent = stripped.length + '/3000';
+          const send = $('[data-act="ask-send"]'); if (send) send.disabled = !stripped.trim();
+        }
+        return askRenderAll();
+      }
       if (act === 'ask-folder-toggle') {
         a.collapsedFolders = { ...(a.collapsedFolders || {}), [btn.dataset.id]: !a.collapsedFolders?.[btn.dataset.id] };
         return askRenderAll();
@@ -10299,7 +10521,7 @@ function bindAsk(root) {
         return askRenderAll();
       }
       if (act === 'ask-captab') { a.capTab = btn.dataset.tab; return askRenderAll(); }
-      if (act === 'ask-skill') { a.skillId = btn.dataset.id; return askRenderAll(); }
+      if (act === 'ask-skill') { askSetSkills([btn.dataset.id]); return askRenderAll(); }
       if (act === 'ask-new-skill') {
         a.workspacePage = 'plugins';
         a.pluginTab = 'skill';
@@ -10307,7 +10529,7 @@ function bindAsk(root) {
         await askLoadManage();
         return askManageDialog('skill');
       }
-      if (act === 'ask-use-skill') { a.skillId = btn.dataset.skill; return askSend(btn.dataset.prompt); }
+      if (act === 'ask-use-skill') { askSetSkills([btn.dataset.skill]); return askSend(btn.dataset.prompt); }
       if (act === 'ask-fill') { a.draft = btn.dataset.text; askRenderAll(); const el = $('#ask-input'); if (el) el.focus(); return; }
       if (act === 'ask-cmd') return askChooseCommand(btn.dataset.id);
       if (act === 'ask-mention') return btn.dataset.kind === 'file' ? askChooseFile(btn.dataset.id) : askChooseMention(btn.dataset.id || btn.dataset.skill);
@@ -10339,7 +10561,7 @@ function bindAsk(root) {
         const msg = (chat.messages || [])[Number(btn.dataset.index)];
         if (!msg) return;
         const next = btn.dataset.skill;
-        a.skillId = next;
+        askSetSkills([next]);
         const arts = (msg.execution && msg.execution.artifacts) || [];
         const files = arts.map((f) => ({ id: f.id, name: f.name, size: f.size }));
         const text = arts.length
@@ -13387,6 +13609,7 @@ async function openRasterEditor() {
   };
   refresh();
 }
+
 
 
 

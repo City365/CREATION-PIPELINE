@@ -18,7 +18,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from langchain.agents import create_agent
 from app.models.factory import create_chat_model, model_options, resolve_model, supports_tools, probe_tools_background
-from app.chat_policy import selected_topic, system_prompt, segments as prompt_segments
+from app.chat_policy import system_prompt, segments as prompt_segments
 from app.app_packs import current as current_app_pack, load as load_app_pack
 # 名字不能叫 run_events：本文件有个同名路由函数会遮蔽它
 from app import run_events as run_event_log
@@ -141,6 +141,37 @@ def skill_material(project, topic, skill_name='', snapshot=None, plugins_fn=None
         return '',0
     return '',0
 
+def skill_materials(project, picks, snapshot=None, plugins_fn=None):
+    """多技能：每个被选中的技能各自取材料，拼成一份；计数按份数累加。"""
+    texts=[];count=0
+    for pick in picks or []:
+        text,used=skill_material(project,pick.get('topic'),pick.get('name') or '',snapshot,plugins_fn)
+        if text:
+            texts.append(text);count+=used
+    return '\n'.join(texts),count
+
+def normalize_skill_request(req,project):
+    """把一次请求的技能选择归一，必须在 runtime.execute 之前跑。
+
+    - @技能名 这类界面 token 从正文剥掉，绑定关系落到 skill / skills 字段上；
+    - 正文里点名的技能也认：用户不点 @、直接写「用剧本转分镜」，同样按技能执行；
+    - 单选时 skill 就是那个名字，多选用「、」按写入顺序连起来，
+      系统提示、上下文统计、执行档位（超时与调用数）都读这一份。
+    """
+    names=([req.skill] if req.skill else [])+list(req.skills or [])
+    picks,clean=skills.request(project,names=names,skill_id=req.skill_id,text=req.text)
+    update={}
+    if clean!=req.text:
+        # 整句就是 @技能名 时正文会被剥空，留一句占位，别把空用户消息写进历史。
+        update['text']=clean or '按所选技能执行。'
+    if picks:
+        picked=[p['name'] for p in picks]
+        joined='、'.join(picked)
+        if req.skill!=joined:update['skill']=joined
+        if list(req.skills or [])!=picked:update['skills']=picked
+    if not update:return req,picks
+    return req.model_copy(update=update),picks
+
 async def _empty_stream():
     if False:
         yield None
@@ -164,6 +195,8 @@ class ChatRequest(BaseModel):
     text:str=Field(min_length=1,max_length=10000)
     skill:str=Field(default='',max_length=100)
     skill_id:str=Field(default='',max_length=80)
+    # 多技能：用户 @ 了几个就传几个（按写入顺序）。skill 仍保留，单技能时就是那一个名字。
+    skills:list[str]=Field(default_factory=list,max_length=8)
     style_prompt:str=Field(default='',max_length=8000)
     project_name:str=Field(default='',max_length=100)
     model_id:str|None=Field(default=None,max_length=200)
@@ -227,19 +260,24 @@ def delete(sid:str,project=Depends(project_id)):
     store.delete(project,sid);return {'ok':True}
 @app.post('/agent/chat')
 async def chat(req:ChatRequest,project=Depends(project_id),authorization:str|None=Header(default=None)):
+    req,picks=normalize_skill_request(req,project)
     if runtime.enabled(project):
         if not store.get_session(project,req.session_id):raise HTTPException(404,'会话不存在，请重新创建')
-        try:return await runtime.execute(req,project,lambda: _chat(req,project,authorization))
+        try:return await runtime.execute(req,project,lambda: _chat(req,project,authorization,picks))
         except BaseException:
             locks.discard((project,req.session_id));raise
     if run_store.busy(project,req.session_id):raise HTTPException(409,'会话仍有运行中的任务')
-    return await _chat(req,project,authorization)
+    return await _chat(req,project,authorization,picks)
 
-async def _chat(req,project,authorization):
+async def _chat(req,project,authorization,picks=None):
     from app import project_files
     file_root=project_files.project_root(project)
     ctx=runtime.current.get()
-    topic=selected_topic(req.skill,req.skill_id)
+    if picks is None:
+        _,picks=normalize_skill_request(req,project)
+    topics=[p['topic'] for p in picks]
+    topic=topics[0] if topics else ''
+    skill_names='、'.join(p['name'] for p in picks)
     key=(project,req.session_id)
     if key in locks:raise HTTPException(409,'当前会话正在生成回复')
     c=store.get_session(project,req.session_id)
@@ -297,7 +335,7 @@ async def _chat(req,project,authorization):
     # receipt 从「唯一真相」退化成「事件投影的缓存」：trace() 返回的是 dict 代理，
     # 下面所有 receipt['x']=y 与 tools/steps 的 append 都会自动落成一条事件，
     # 现有赋值代码一行不用改。run_event_log.verify() 负责证明重放结果与它相等。
-    receipt=run_event_log.trace({'schema_version':'agent-run/2.0','id':run_id,'session_id':req.session_id,'status':'running','started_at':tick(),'model':cfg.get('model'),'provider':provider,'reasoning_effort':req.reasoning_effort or 'default','skill':req.skill,'history_count':len(history)-1,'context_window':_window,'tool_count':0,'workspace_tool_count':0,'evidence_scope':'用户输入、会话历史、已读取的指导文档、工作空间文件与本地工具执行结果','input_hash':hashlib.sha256(json.dumps(history,ensure_ascii=False,sort_keys=True).encode()).hexdigest(),'steps':[],'tools':[],'summary':'','plan':None,'artifacts':[]})
+    receipt=run_event_log.trace({'schema_version':'agent-run/2.0','id':run_id,'session_id':req.session_id,'status':'running','started_at':tick(),'model':cfg.get('model'),'provider':provider,'reasoning_effort':req.reasoning_effort or 'default','skill':skill_names,'skills':[p['name'] for p in picks],'topics':topics,'history_count':len(history)-1,'context_window':_window,'tool_count':0,'workspace_tool_count':0,'evidence_scope':'用户输入、会话历史、已读取的指导文档、工作空间文件与本地工具执行结果','input_hash':hashlib.sha256(json.dumps(history,ensure_ascii=False,sort_keys=True).encode()).hexdigest(),'steps':[],'tools':[],'summary':'','plan':None,'artifacts':[]})
     if ctx:
         ctx.receipt=receipt
         receipt['started_at']=ctx.payload['started_at']
@@ -335,18 +373,18 @@ async def _chat(req,project,authorization):
             receipt['plan']=deepcopy(checkpoint['plan']);receipt['artifacts']=deepcopy(checkpoint.get('artifacts',[]))
             sources.update(deepcopy(checkpoint.get('sources',{})))
             receipt['parent_run_id']=req.parent_run_id
-    receipt['plan_required']=bool(topic or checkpoint)
+    receipt['plan_required']=bool(picks or checkpoint)
     # 技能目录：模型常驻可见「本会话有哪些技能」，正文仍按需用 read_analysis_guidance 读。
     # 之前只有用户先选技能，模型才看得见那一个；自定义技能名甚至不进工具描述。
     from app.skills import catalog as skill_catalog_of
     skill_list=skill_catalog_of(project)
     allowed={item['topic'] for item in skill_list}
-    if topic:allowed.add(topic)
+    allowed.update(topics)
     # 跨轮目标：先记一轮，再把目标注进系统提示。没有目标时全程为空。
     goal_state=goal_store.bump_turn(project,req.session_id)
     if goal_state:receipt['goal']=goal_state
     tools=build_task_tools(receipt,req.text,pending.append,sources,project=project,session_id=req.session_id,skill_snapshot=skill_snapshot,allowed_topics=allowed)
-    if not topic and not checkpoint:
+    if not picks and not checkpoint:
         # 未选技能时仍保留 read_analysis_guidance（模型可以按目录自己去读），
         # 但摘掉计划工具：闲聊不该被塞进流程。
         tools=[tool for tool in tools if tool.name not in ('create_task_plan','record_step_result')]
@@ -375,7 +413,7 @@ async def _chat(req,project,authorization):
     if mode=='readonly':
         # 仅查看档不落盘：生成图片/视频、抽帧、交付文件都会写盘，一律不挂给模型。
         tools=[tool for tool in tools if tool.name not in ('create_workspace_artifact','publish_artifact','generate_image','submit_video_job','extract_frames')]
-    base_prompt=system_prompt(topic,req.skill,project_hint,summary_prompt,[{k:a[k] for k in ('id','name','status','suffix')}|{'excerpt':(a.get('text') or '')[:600]} for a in attachments],bool(checkpoint),permission=permission,skill_catalog=skill_list)
+    base_prompt=system_prompt(topic,skill_names,project_hint,summary_prompt,[{k:a[k] for k in ('id','name','status','suffix')}|{'excerpt':(a.get('text') or '')[:600]} for a in attachments],bool(checkpoint),permission=permission,skill_catalog=skill_list,selection=picks)
     if any(t.name == 'web_search' for t in tools): base_prompt += WEB_PROMPT
     else: base_prompt += '\n【联网检索关闭】本轮未启用联网检索，不可声称已搜索或读取网络网页，也不要通过命令工具绕过联网开关。需要实时资料时提示用户开启输入框旁的联网检索。'
     base_prompt += goal_store.prompt_block(goal_state)
@@ -384,7 +422,7 @@ async def _chat(req,project,authorization):
                        '禁止声称已经调用工具或已经写盘；需要落盘/移动文件时，如实说明是渠道限制，并提示用户把模型切到支持工具调用的渠道（deepseek-flash、gemini-3.8-flash），'
                        '权限档位（' + permission['label'] + '）本身不是失败原因。')
     # 上下文分项统计（摘要面板用）：固定环节各自占多少，算一次写进回执。
-    skill_text,skill_used=skill_material(project,topic,req.skill,skill_snapshot)
+    skill_text,skill_used=skill_materials(project,picks,skill_snapshot)
     # 子智能体：只挂一层。子 run 有自己的 run_id 和事件流，父回执里只留一条引用。
     if tools_ok:
         tools += subagent.build_tools(project=project,parent_run_id=run_id,model=model,tools=tools,
@@ -608,7 +646,7 @@ async def _chat(req,project,authorization):
                 if s['status']=='running':s['status']='blocked';s['output']=s.get('output') or ('执行失败，未取得本步产出' if failure else '执行中断，未取得本步产出')
             if receipt['status']=='cancelled':trajectory('assistant','用户停止生成，任务未继续执行',kind='cancelled',tool_calls=[])
             if ctx:ctx.receipt_status(receipt)
-            c['messages'].append({'id':str(uuid.uuid4()),'role':'assistant','media':media_files,'text':answer+('\n\n[生成已中断]' if answer and not completed else '') or ('[回复失败] '+failure if failure else '[生成已停止]'),'time':receipt['finished_at'],'skill':req.skill,'execution':receipt})
+            c['messages'].append({'id':str(uuid.uuid4()),'role':'assistant','media':media_files,'text':answer+('\n\n[生成已中断]' if answer and not completed else '') or ('[回复失败] '+failure if failure else '[生成已停止]'),'time':receipt['finished_at'],'skill':skill_names,'execution':receipt})
             c['updated']=receipt['finished_at']
             # 事件流自检：重放出来的结构与内存里的 receipt 必须逐字段相等。
             # 这一步是 P0-B 的验收依据——相等才说明事件流已经能表达整个 run，

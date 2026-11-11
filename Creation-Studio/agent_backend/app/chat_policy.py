@@ -30,11 +30,15 @@ def selected_topic(skill='', skill_id='', pack=None):
 
 
 def segments(pack, topic='', skill='', project_hint='', resource_hint='',
-             attachments=None, checkpoint=False, permission=None, skill_catalog=None):
+             attachments=None, checkpoint=False, permission=None, skill_catalog=None,
+             selection=None):
     """把系统提示拆成有序的段：每段带 id、所属层、正文。
 
     layer = framework 表示不随应用变；application 表示换应用就换掉。
     拼起来必须与 build() 逐字节相同——tests/test_app_packs.py 会验。
+
+    selection 是归一份数后的技能清单 [{'name','topic'}]：单选时与老行为逐字节相同，
+    多选时明确「按顺序全部生效」，避免模型只挑最后一个。
     """
     out = []
 
@@ -53,13 +57,27 @@ def segments(pack, topic='', skill='', project_hint='', resource_hint='',
     # ③ 执行中追加：通用机制
     add('framework.supplement', FRAMEWORK, FW_SUPPLEMENT)
 
-    # ④ 技能选择
-    if topic:
+    # ④ 技能选择：单选沿用原文，多选明确「按写入顺序全部生效」
+    skill_rules = ('为技能任务调用 create_task_plan 建立计划，逐步使用 record_step_result 记录实际产出与来源，完成后总结；不输出内部思维链。'
+                   '交付文件按所选技能规定逐份生成，每次 create_workspace_artifact 只写一份文件，成功保存后再生成下一份；不要在回复里重复整份交付正文。技能允许短篇合并时可合并，但必须保留所有规定分节。进度摘要不能替代实际交付文件。')
+    picks = [p for p in (selection or []) if str(p.get('topic') or '')]
+    if picks:
+        if len(picks) == 1:
+            head = ('本轮用户明确选择的技能：' + str(skill or picks[0].get('name') or '')
+                    + '。先通过 read_analysis_guidance 读取 topic=' + str(picks[0]['topic'])
+                    + ' 的指导，只按所选技能执行，不自动串入其他阶段。')
+        else:
+            head = ('本轮用户明确选择的技能（共 ' + str(len(picks)) + ' 个，按写入顺序全部生效）：'
+                    + '、'.join(str(p.get('name') or p['topic']) for p in picks) + '。'
+                    + '先通过 read_analysis_guidance 逐个读取 '
+                    + '、'.join('topic=' + str(p['topic']) for p in picks) + ' 的指导，'
+                    + '全部读完再动手：前一个技能的产出是后一个技能的输入，按顺序交付，'
+                    + '不要只做最后一个，也不要跳读或漏读。')
+        add('framework.skill.selected', FRAMEWORK, head + skill_rules + project_hint)
+    elif topic:
         add('framework.skill.selected', FRAMEWORK,
             '本轮用户明确选择的技能：' + skill + '。先通过 read_analysis_guidance 读取 topic=' + topic + ' 的指导，只按所选技能执行，不自动串入其他阶段。'
-            '为技能任务调用 create_task_plan 建立计划，逐步使用 record_step_result 记录实际产出与来源，完成后总结；不输出内部思维链。'
-            '交付文件按所选技能规定逐份生成，每次 create_workspace_artifact 只写一份文件，成功保存后再生成下一份；不要在回复里重复整份交付正文。技能允许短篇合并时可合并，但必须保留所有规定分节。进度摘要不能替代实际交付文件。'
-            + project_hint)
+            + skill_rules + project_hint)
     else:
         add('framework.skill.none', FRAMEWORK,
             '本轮未选择技能：默认不要套用任何创作指南，也不主动把闲聊拉进创作流程。'
@@ -115,16 +133,18 @@ def segments(pack, topic='', skill='', project_hint='', resource_hint='',
 
 
 def build(pack, topic='', skill='', project_hint='', resource_hint='',
-          attachments=None, checkpoint=False, permission=None, skill_catalog=None):
+          attachments=None, checkpoint=False, permission=None, skill_catalog=None,
+          selection=None):
     return ''.join(part['text'] for part in segments(
         pack, topic=topic, skill=skill, project_hint=project_hint, resource_hint=resource_hint,
         attachments=attachments, checkpoint=checkpoint, permission=permission,
-        skill_catalog=skill_catalog) if part['enabled'])
+        skill_catalog=skill_catalog, selection=selection) if part['enabled'])
 
 
 def system_prompt(topic='', skill='', project_hint='', resource_hint='', attachments=None,
-                  checkpoint=False, permission=None, skill_catalog=None, pack=None):
+                  checkpoint=False, permission=None, skill_catalog=None, pack=None,
+                  selection=None):
     """签名与原实现一致；pack 为空时取当前应用包（默认创作台）。"""
     return build(pack or current_pack(), topic=topic, skill=skill, project_hint=project_hint,
                  resource_hint=resource_hint, attachments=attachments, checkpoint=checkpoint,
-                 permission=permission, skill_catalog=skill_catalog)
+                 permission=permission, skill_catalog=skill_catalog, selection=selection)

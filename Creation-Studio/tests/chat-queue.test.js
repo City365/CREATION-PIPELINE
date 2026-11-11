@@ -16,7 +16,7 @@ function makeQueue(store = new Map()) {
   const sandbox = {
     store,
     sent: [],
-    state: { activeId: 'c1', draft: '', queues: {}, conversations: [{ id: 'c1' }, { id: 'c2' }] },
+    state: { activeId: 'c1', draft: '', queues: {}, conversations: [{ id: 'c1' }, { id: 'c2' }], skillIds: ['novel'] },
     busy: false,
     askId: () => 'q' + (++seq),
     localStorage: {
@@ -29,7 +29,9 @@ function makeQueue(store = new Map()) {
     $: () => null,
     toast: () => {},
     askRenderAll: () => {},
-    askSend: (text, chatId) => { sandbox.sent.push({ text, chatId }); return Promise.resolve(); },
+    // 这一轮用哪几个技能是入队时取的快照，出队时不能再读实时状态
+    askTurnSnapshot: () => ({ skillIds: sandbox.state.skillIds.slice(), permission: 'workspace' }),
+    askSend: (text, chatId, webSearch, turn) => { sandbox.sent.push({ text, chatId, webSearch, turn }); return Promise.resolve(); },
   };
   // eslint-disable-next-line no-new-func
   new Function('sandbox', `with (sandbox) { ${block}\n; sandbox.api = { askEnqueue, askLoadQueue, askSaveQueue, askDrainQueue, askQueueKey }; }`)(sandbox);
@@ -89,4 +91,28 @@ test('取消只移除指定那条，其余顺序不变', () => {
   list.splice(list.findIndex((x) => x.id === target), 1);
   box.api.askSaveQueue('c1');
   assert.deepEqual(box.api.askLoadQueue('c1').map((x) => x.text), ['第二条']);
+});
+
+test('排队条目带技能快照，出队时不受用户中途改技能影响', async () => {
+  const box = makeQueue();
+  box.state.skillIds = ['novel'];
+  box.api.askEnqueue('第一条', 'c1');          // 上一轮还没结束，先排着
+  box.state.skillIds = ['storyboard'];          // 用户中途把技能换成别的
+  box.api.askEnqueue('第二条', 'c1');
+  box.state.skillIds = [];                      // 又把技能取消掉
+  box.api.askDrainQueue('c1');
+  await wait(200);
+  assert.deepEqual(box.sent[0].turn.skillIds, ['novel'], '第一条必须用它自己入队时的技能');
+  box.api.askDrainQueue('c1');
+  await wait(200);
+  assert.deepEqual(box.sent[1].turn.skillIds, ['storyboard'], '第二条不能被清空后的状态带走');
+});
+
+test('队列条目持久化后仍然带着技能快照', () => {
+  const store = new Map();
+  const first = makeQueue(store);
+  first.state.skillIds = ['novel', 'script'];
+  first.api.askEnqueue('刷新前排队', 'c1');
+  const second = makeQueue(store);
+  assert.deepEqual(second.api.askLoadQueue('c1')[0].turn.skillIds, ['novel', 'script']);
 });

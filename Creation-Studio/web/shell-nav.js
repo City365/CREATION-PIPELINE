@@ -138,6 +138,33 @@
       title: '模型',
       groups: () => vendorGroups(),
     },
+    oneclick: {
+      title: '模式',
+      groups: () => [{
+        key: 'oneclick',
+        title: '',
+        sub: '',
+        // 三种模式只有入参不同：小说正文 / 剧本 / 一句话灵感
+        items: [
+          { label: '小说模式', value: 'novel' },
+          { label: '剧本模式', value: 'script' },
+          { label: '灵感模式', value: 'idea' },
+        ],
+      }],
+    },
+    smartcut: {
+      title: '执行引擎',
+      groups: () => [{
+        key: 'smartcut',
+        title: '',
+        sub: '',
+        // 两个引擎是同一个剪辑单的不同落地后端：剪映出草稿、Concat 直接渲染 mp4
+        items: [
+          { label: '剪映草稿', value: 'jianying' },
+          { label: 'Concat 引擎', value: 'concat' },
+        ],
+      }],
+    },
     assets: {
       title: '素材',
       groups: () => [{
@@ -170,6 +197,19 @@
       return item.value === currentWorkflowId();
     }
     if (route === 'image' && item.tab) return currentImageTab() === item.tab;
+    if (route === 'oneclick' && item.value) {
+      let mode = 'novel';
+      try { mode = state.oneclick.mode || 'novel'; } catch (error) { /* 未初始化 */ }
+      return mode === item.value;
+    }
+    if (route === 'smartcut' && item.value) {
+      // 当前引擎挂在页面模块里，页面没挂载时按剪映算
+      let engine = 'jianying';
+      try {
+        if (window.SMARTCUT && window.SMARTCUT.state) engine = window.SMARTCUT.state().engine || 'jianying';
+      } catch (error) { /* 未初始化 */ }
+      return engine === item.value;
+    }
     if (route === 'media' && item.tab !== undefined) {
       let current = '';
       try { current = state.mediaTask ? 'task:' + state.mediaTask : ''; } catch (error) { /* 未初始化 */ }
@@ -259,6 +299,16 @@
     if (!btn) return;
     if (btn.dataset.shellRoute === 'studio') {
       switchWorkflow(btn.dataset.shellNav);
+      setTimeout(sync, 160);
+      return;
+    }
+    if (btn.dataset.shellRoute === 'oneclick' && typeof window.__oneclickSetMode === 'function') {
+      window.__oneclickSetMode(btn.dataset.shellNav);
+      setTimeout(sync, 160);
+      return;
+    }
+    if (btn.dataset.shellRoute === 'smartcut' && typeof window.__editSetEngine === 'function') {
+      window.__editSetEngine(btn.dataset.shellNav);
       setTimeout(sync, 160);
       return;
     }

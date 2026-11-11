@@ -1,0 +1,41 @@
+{
+  "name": "程序化剪辑-竖屏测试",
+  "width": 1080,
+  "height": 1920,
+  "fps": 30,
+  "clips": [
+    {
+      "path": "D:/notebook/AIGC/CREATION-PIPELINE/Creation-Studio/web/skins/real-cafe.mp4",
+      "in": 0.5,
+      "duration": 3.0,
+      "transition": "叠化",
+      "transition_duration": "0.5s"
+    },
+    {
+      "path": "D:/notebook/AIGC/CREATION-PIPELINE/Creation-Studio/web/skins/real-reading.mp4",
+      "in": 1.0,
+      "duration": 3.0,
+      "speed": 1.25,
+      "transition": "叠化",
+      "transition_duration": "0.5s"
+    },
+    {
+      "path": "D:/notebook/AIGC/CREATION-PIPELINE/Creation-Studio/web/skins/real-cafe.mp4",
+      "in": 3.0,
+      "duration": 2.5
+    }
+  ],
+  "audio": {
+    "path": "D:/notebook/AIGC/CREATION-PIPELINE/Creation-Studio/web/skins/quiet-piano.wav",
+    "volume": 0.55,
+    "fade_in": 1.0,
+    "fade_out": 1.5,
+    "start": 0.0,
+    "in": 0.0
+  },
+  "texts": [
+    { "text": "她等了 99 天", "start": 0.4, "end": 3.2, "size": 10.0, "color": [1, 1, 1], "y": 0.25 },
+    { "text": "只为一句「我回来了」", "start": 3.4, "end": 6.0, "size": 8.0, "color": [1.0, 0.82, 0.4], "y": 0.18 },
+    { "text": "CREATION-PIPELINE", "start": 0.2, "end": 8.4, "size": 5.0, "color": [1, 1, 1], "track": "watermark", "y": -0.72 }
+  ]
+}

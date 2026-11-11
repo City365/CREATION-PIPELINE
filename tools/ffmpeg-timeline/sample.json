@@ -1,0 +1,15 @@
+{
+  "width": 1280,
+  "height": 720,
+  "fps": 30,
+  "clips": [
+    { "path": "Creation-Studio/web/skins/real-cafe.mp4", "in": 0.5, "duration": 5 },
+    { "path": "Creation-Studio/web/skins/real-reading.mp4", "in": 1.0, "duration": 5 }
+  ],
+  "transition": { "type": "fade", "duration": 1 },
+  "texts": [
+    { "text": "开源剪辑 · 代码即时间线", "start": 0.6, "end": 4.6, "size": 58, "color": "white", "y": "h*0.76" },
+    { "text": "FFmpeg filter_complex 直接出片", "start": 5.2, "end": 9.0, "size": 46, "color": "#FFD166", "y": "h*0.78" }
+  ],
+  "out": "output/ffmpeg-timeline/demo.mp4"
+}

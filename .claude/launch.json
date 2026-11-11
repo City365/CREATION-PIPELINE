@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "creation-pipeline",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["D:/notebook/AIGC/CREATION-PIPELINE/Creation-Studio/scripts/launch.js"],
+      "port": 17821
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "jianying": {
+      "command": "D:\\notebook\\AIGC\\CREATION-PIPELINE\\.venv-jianying\\Scripts\\python.exe",
+      "args": [
+        "D:\\notebook\\AIGC\\CREATION-PIPELINE\\JianYing-Automatic-editing\\src\\mcp_server.py"
+      ],
+      "cwd": "D:\\notebook\\AIGC\\CREATION-PIPELINE\\JianYing-Automatic-editing"
+    }
+  }
+}

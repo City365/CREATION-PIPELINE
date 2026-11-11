@@ -3,6 +3,7 @@
 **/data/
 **/evidence/
 **/.venv/
+/.venv-jianying/
 **/__pycache__/
 **/.pytest_cache/
 **/.cache/
@@ -33,3 +34,14 @@ Creation-Studio/background-music/
 
 # 内嵌了独立 .git 的技能目录：按子模块处理前先不纳入主仓库
 /Creation-Studio/agent_backend/skills/分镜剧本转视频提示词v8/
+
+# 外部参考项目与产物（体积过大或自带 .git），不进主仓库
+/Concat/
+/outputs/
+/cases/output/
+**/data-backup-*/
+/JianYing-Automatic-editing/output/
+
+# 编辑器临时备份与未完成的片段文件
+*.bak-*
+*.part.js

@@ -1,0 +1,84 @@
+﻿<!doctype html>
+<html lang="zh-CN" data-theme="studio-light">
+<head>
+<meta charset="utf-8" />
+<title>剪辑台面板自检</title>
+<link rel="stylesheet" href="/wmd.css" />
+<link rel="stylesheet" href="/skins.css?v=daylight-2" />
+<link rel="stylesheet" href="/shell-spec.css?v=1" />
+<link rel="stylesheet" href="/smartcut.css?v=5" />
+<style>
+  html, body { margin: 0; height: 100%; background: #f4f4f2; overflow: hidden; }
+  #sc-page { position: fixed; inset: 0; height: auto; }
+  /* 自检结果只留一个小角标，不遮页面 */
+  #result { position: fixed; left: 10px; bottom: 10px; z-index: 99; margin: 0;
+    padding: 6px 10px; border-radius: 999px; max-width: 46vw; max-height: 34vh; overflow: auto;
+    background: rgba(16,22,30,.82); color: #cfe8cf; font: 11px/1.5 Consolas, monospace; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<!-- 剪辑台面板自检页：把智能剪辑页真挂一遍，检查那一格和三个按钮是否长出来了。
+     走 /integrations/ 静态路由，不经过登录，也不需要智能体后端。 -->
+<div class="sc-page" id="sc-page"></div>
+<pre id="result">running…</pre>
+<script src="/dock-host.js?v=3"></script>
+<script src="/smartcut.js?v=6"></script>
+<script>
+(function () {
+  var lines = [];
+  function ok(name, pass, detail) {
+    lines.push((pass ? 'PASS ' : 'FAIL ') + name + (detail ? ' · ' + detail : ''));
+  }
+  function run() {
+    try {
+      window.SMARTCUT.mount(document.getElementById('sc-page'), {
+        projectId: 'dock-preview',
+        projectName: '自检项目',
+        markdown: function (text) { return '<p>' + String(text || '') + '</p>'; },
+        toast: function (message) { console.log('[toast]', message); }
+      });
+    } catch (error) {
+      ok('挂载页面', false, error.message);
+    }
+
+    var canvas = document.querySelector('#sc-dock');
+    var stage = document.querySelector('#sc-dock-stage');
+    var rail = document.querySelector('#sc-rail');
+    ok('左边是剪辑台画布', Boolean(canvas), canvas ? canvas.className : '没有 #sc-dock');
+    ok('画布里有留给原生窗口的落点', Boolean(stage), stage ? 'ok' : '没有 #sc-dock-stage');
+    ok('右边是对话栏', Boolean(rail), rail ? rail.className : '没有 #sc-rail');
+    ok('对话栏默认展开', Boolean(rail) && !rail.classList.contains('is-closed'), rail ? rail.className : '');
+    ok('打开/还原/对话 三个动作都在',
+      document.querySelectorAll('[data-dock="open"]').length >= 2 &&
+      Boolean(document.querySelector('[data-dock="restore"]')) &&
+      Boolean(document.querySelector('[data-dock="toggle"]')),
+      'open×' + document.querySelectorAll('[data-dock="open"]').length);
+    ok('DockHost 已加载', Boolean(window.DockHost && window.DockHost.rectOf), typeof window.DockHost);
+
+    var box0 = stage ? stage.getBoundingClientRect() : null;
+    ok('画布是主区域（比对话栏宽）', Boolean(box0 && rail) && box0.width > rail.getBoundingClientRect().width,
+      box0 ? Math.round(box0.width) + ' vs ' + Math.round(rail.getBoundingClientRect().width) : '无');
+
+    // 点「打开剪辑台」：后端建窗口 → 停靠 → 状态变已停靠
+    var open = document.querySelector('.sc-dock-empty [data-dock="open"]');
+    if (open) open.click();
+    setTimeout(function () {
+      ok('停靠状态有回应', Boolean(document.querySelector('#sc-dock-state')),
+        document.querySelector('#sc-dock-state').textContent);
+      var rect = window.DockHost && stage ? window.DockHost.rectOf(stage) : null;
+      ok('能算出画布坐标', Boolean(rect) && rect.w > 400, rect ? JSON.stringify(rect) : '无');
+      var fails = lines.filter(function (line) { return line.indexOf('FAIL') === 0; }).length;
+      document.getElementById('result').innerHTML =
+        '<b>' + (fails ? fails + ' 项没过' : '全部通过') + '</b>\n' + lines.join('\n');
+      document.title = fails ? 'DOCKPANE FAIL' : 'DOCKPANE OK';
+      window.__dockPreview = { fails: fails, lines: lines };
+    }, 1600);
+  }
+  window.addEventListener('load', function () { setTimeout(run, 120); });
+})();
+</script>
+</body>
+</html>
+
+
+

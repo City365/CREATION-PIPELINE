@@ -1,0 +1,239 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>剪辑台 V1 · 自检</title>
+<link rel="stylesheet" href="/concat-editor.css?v=16" />
+<style>
+  html, body { margin: 0; height: 100%; background: #141517; color: #d8dae0; }
+  body { display: flex; flex-direction: column; font: 12px/1.45 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif; }
+  #host { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .selfcheck-note {
+    flex: 0 0 auto; padding: 4px 10px; font-size: 11px; color: #6f747e;
+    background: #101114; border-bottom: 1px solid #26282d;
+  }
+</style>
+</head>
+<body>
+<div class="selfcheck-note" id="note">剪辑台 V1 自检页 · 页面直连 Concat 原生服务（/api/concat/rpc 只是传输层）</div>
+<div id="host"></div>
+<script src="/vendor/vue.global.prod.js?v=1"></script>
+<script src="/concat/rpc.js?v=1"></script>
+<script src="/concat/placing.js?v=1"></script>
+<script src="/concat-editor.js?v=16"></script>
+<script>
+  (function () {
+    var note = document.getElementById('note');
+    var params = new URLSearchParams(location.search);
+    var project = params.get('project') || '';
+    var app = window.CONCAT_EDITOR.mount(document.getElementById('host'), {
+      toast: function (message) { note.textContent = String(message); },
+    });
+    if (project) {
+      // 打开指定工程：走页面自己那条路（project.open → project.document）
+      setTimeout(function () { app.openProject(project); }, 300);
+    }
+    // 自检用：?select=<clipId>&t=<秒> 让截图能带上选中状态和画面
+    var wantSelect = params.get('select') || '';
+    var wantTime = params.get('t');
+    var check = params.get('check') || '';
+    var tries = 0;
+    var timer = setInterval(function () {
+      tries += 1;
+      if (!app || tries > 80) { clearInterval(timer); return; }
+      // 等工程真的打开完（openProject 会把播放头挪到第一个画面）
+      if (!app.doc) return;
+      if (project && String(app.notice || '').indexOf('已打开') !== 0) return;
+      clearInterval(timer);
+      if (wantSelect) app.selection = wantSelect.split(',');
+      if (wantTime !== null && wantTime !== '') app.seek(Number(wantTime), true);
+      if (check) setTimeout(function () { runCheck(check, app, note); }, 400);
+    }, 120);
+  // 自检动作：真的往 DOM 里派发指针/键盘事件，走页面自己的处理函数
+  function runCheck(kind, app, note) {
+    try {
+      note.textContent = 'CHECK start ' + kind;
+      checkBody(kind, app, note);
+    } catch (error) {
+      note.textContent = 'CHECK ERROR ' + (error && error.message);
+    }
+  }
+
+  function checkBody(kind, app, note) {
+    if (kind === 'preview') {
+      // 试听自检：联网曲目走 /api/music/preview 同源转发，报 audio 的真实错误码
+      app.setTab('audio');
+      setTimeout(function () {
+        app.setAudioSource('library');
+        setTimeout(function () {
+          app.musicQuery = '你好';
+          app.setMusicKind('music');
+          app.searchMusic();
+          var tries = 0;
+          var wait = setInterval(function () {
+            tries += 1;
+            if (app.musicSearching && tries < 90) return;
+            clearInterval(wait);
+            var item = (app.musicItems || [])[0];
+            if (!item) { note.textContent = 'CHECK preview 无结果 ' + (app.musicError || app.musicNote || ''); return; }
+            app.togglePreview(item);
+            setTimeout(function () {
+              var audio = document.querySelector('audio');
+              var err = audio && audio.error ? audio.error.code : 0;
+              note.textContent = 'CHECK preview "' + item.title + '" err=' + err +
+                ' net=' + (audio ? audio.networkState : '-') +
+                ' ready=' + (audio ? audio.readyState : '-') +
+                ' paused=' + (audio ? audio.paused : '-') +
+                ' dur=' + (audio && isFinite(audio.duration) ? audio.duration.toFixed(1) : '-') +
+                ' note=' + (app.musicError || app.musicNote) +
+                ' ' + (err === 0 && audio && audio.readyState > 0 ? 'OK' : 'FAIL');
+            }, 5000);
+          }, 700);
+        }, 1400);
+      }, 300);
+      return;
+    }
+
+    if (kind === 'musicview') {
+      // 只切到曲库并搜一次，用来截图（不放进时间线）
+      app.setTab('audio');
+      setTimeout(function () {
+        app.setAudioSource('library');
+        setTimeout(function () {
+          app.musicQuery = '治愈';
+          app.setMusicKind('music');
+          app.searchMusic();
+        }, 1200);
+      }, 300);
+      return;
+    }
+
+    if (kind === 'music') {
+      // 音频页签 → 剪映曲库 → 联网搜「治愈」→ 拿第一条放进时间线（remote 的要先下载）
+      app.setTab('audio');
+      setTimeout(function () {
+        app.setAudioSource('library');
+        setTimeout(function () {
+          var localCount = (app.musicItems || []).length;
+          app.musicQuery = '治愈';
+          app.setMusicKind('music');
+          app.searchMusic();
+          var tries = 0;
+          var wait = setInterval(function () {
+            tries += 1;
+            if (app.musicSearching && tries < 90) return;
+            clearInterval(wait);
+            var online = (app.musicItems || []).length;
+            if (!online) {
+              note.textContent = 'CHECK music 本机=' + localCount + ' 联网=0 ' + (app.musicNote || '');
+              return;
+            }
+            var pick = app.musicItems[0];
+            var before = app.clips.length;
+            app.useMusic(pick);
+            var n = 0;
+            var wait2 = setInterval(function () {
+              n += 1;
+              if (!(app.clips.length > before) && app.musicBusy && n < 120) return;
+              clearInterval(wait2);
+              note.textContent = 'CHECK music 本机=' + localCount + ' 联网=' + online +
+                ' 选="' + pick.title + '" clips ' + before + ' -> ' + app.clips.length +
+                ' ' + (app.clips.length > before ? 'OK' : 'FAIL ' + (app.error || app.musicNote || ''));
+            }, 500);
+          }, 500);
+        }, 1600);
+      }, 300);
+      return;
+    }
+
+    var clips = app.clips.slice().sort(function (a, b) { return a.start - b.start; });
+    if (!clips.length) { note.textContent = 'CHECK FAIL 没有片段'; return; }
+    var target = clips[clips.length - 1];
+    var el = document.querySelector('[data-clip="' + target.id + '"]');
+    if (!el) { note.textContent = 'CHECK FAIL 找不到片段元素 ' + target.id; return; }
+
+    if (kind === 'tab') {
+      var tabs = Array.prototype.slice.call(document.querySelectorAll('.ce-tab'));
+      var tab = tabs.filter(function (b) { return b.textContent.indexOf('转场') >= 0; })[0];
+      if (!tab) { note.textContent = 'CHECK tab FAIL 找不到转场页签'; return; }
+      tab.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      setTimeout(function () {
+        var items = document.querySelectorAll('.ce-catalog li').length;
+        note.textContent = 'CHECK tab 转场 -> ' + items + ' 条 ' + (items > 0 ? 'OK' : 'FAIL');
+      }, 1800);
+      return;
+    }
+
+    if (kind === 'menu') {
+      var menus = Array.prototype.slice.call(document.querySelectorAll('.ce-menu-item > button'));
+      var view = menus[2];
+      if (!view) { note.textContent = 'CHECK menu FAIL 找不到视图菜单'; return; }
+      view.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      setTimeout(function () {
+        var dd = document.querySelector('.ce-dropdown');
+        note.textContent = 'CHECK menu 视图 -> ' + (dd ? '展开 ' + dd.querySelectorAll('button').length + ' 项 OK' : 'FAIL');
+      }, 700);
+      return;
+    }
+
+    if (kind === 'undo') {
+      var canUndo = app.canUndo;
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }));
+      setTimeout(function () {
+        note.textContent = 'CHECK undo: canUndo before=' + canUndo + ' canRedo after=' + app.canRedo + ' ' + (app.canRedo ? 'OK' : 'FAIL');
+      }, 1200);
+      return;
+    }
+
+    if (kind === 'split') {
+      app.selection = [target.id];
+      var at = target.start + Math.min(1, target.duration / 2);
+      app.seek(at, true);
+      var before = clips.length;
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 's', bubbles: true }));
+      setTimeout(function () {
+        var after = app.clips.length;
+        note.textContent = 'CHECK split ' + target.id + ' at ' + at.toFixed(2) + 's: ' + before + ' -> ' + after + ' clips ' + (after > before ? 'OK' : 'FAIL');
+      }, 1500);
+      return;
+    }
+
+    // 默认：拖动。dx 像素按当前缩放换算，落点由 placing.js 决定
+    var rect = el.getBoundingClientRect();
+    var x = rect.left + Math.min(40, rect.width / 2);
+    var y = rect.top + rect.height / 2;
+    var dx = Math.round(3 * app.zoom);   // 往右拖 3 秒
+    var before = target.start;
+    el.dispatchEvent(new PointerEvent('pointerdown', { clientX: x, clientY: y, bubbles: true, pointerId: 1, isPrimary: true }));
+    window.dispatchEvent(new PointerEvent('pointermove', { clientX: x + dx, clientY: y, bubbles: true, pointerId: 1, isPrimary: true }));
+    window.dispatchEvent(new PointerEvent('pointerup', { clientX: x + dx, clientY: y, bubbles: true, pointerId: 1, isPrimary: true }));
+    setTimeout(function () {
+      var moved = app.clips.filter(function (clip) { return clip.id === target.id; })[0];
+      var after = moved ? moved.start : NaN;
+      var ok = Math.abs(after - before) >= 0.5;
+      note.textContent = 'CHECK drag ' + target.id + ' ' + before.toFixed(3) + 's -> ' + after.toFixed(3) + 's (dx=' + dx + 'px, zoom=' + app.zoom.toFixed(1) + ') ' + (ok ? 'OK' : 'FAIL');
+    }, 1800);
+  }
+
+    // 自检用的观测口：把关键状态挂到 window 上，便于外部断言
+    window.__V1 = {
+      app: function () { return app; },
+      note: function () { return note.textContent; },
+      state: function () {
+        return app ? {
+          project: app.projectPath,
+          clips: (app.clips || []).length,
+          tracks: (app.tracks || []).length,
+          playhead: app.playhead,
+          selection: app.selection.slice(),
+          frame: app.frameSrc,
+          canUndo: app.canUndo,
+          canRedo: app.canRedo,
+          engine: app.engineOn,
+        } : null;
+      },
+    };
+  }());
+</script>
+</body>
+</html>
