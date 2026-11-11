@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const app = fs.readFileSync(path.join(__dirname, '../web/app.js'), 'utf8');
+const app = require('./helpers/app-source')();
 const css = fs.readFileSync(path.join(__dirname, '../web/styles.css'), 'utf8');
 
 function detailModal() {

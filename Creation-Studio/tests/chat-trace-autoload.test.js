@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const root = path.join(__dirname, '..');
-const source = fs.readFileSync(path.join(root, 'web/app.js'), 'utf8');
+const source = require('./helpers/app-source')();
 const css = fs.readFileSync(path.join(root, 'web/styles.css'), 'utf8');
 
 const start = source.indexOf('function askTraceRows(');

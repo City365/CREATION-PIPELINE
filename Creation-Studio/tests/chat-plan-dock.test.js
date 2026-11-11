@@ -1,5 +1,5 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
-const source=fs.readFileSync(path.join(__dirname,'../web/app.js'),'utf8');
+const source=require('./helpers/app-source')();
 const block=source.slice(source.indexOf('function askTraceRows('),source.indexOf('function askFilesHtml('));
 const box={};new Function('module','const esc=String; const askMarkdown=String;'+block+';module.exports={askTraceHtml,askPlanDockHtml};')(box);
 const {askTraceHtml,askPlanDockHtml}=box.exports;

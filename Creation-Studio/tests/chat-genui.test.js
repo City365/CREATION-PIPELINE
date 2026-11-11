@@ -6,7 +6,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const source = fs.readFileSync(path.join(__dirname, '../web/app.js'), 'utf8');
+const source = require('./helpers/app-source')();
 const start = source.indexOf('/* ------------------- 对话里的交互组件');
 const end = source.indexOf('function askMessagesHtml(chat) {');
 assert.ok(start > 0 && end > start, '在 app.js 里找不到交互组件解析段落');

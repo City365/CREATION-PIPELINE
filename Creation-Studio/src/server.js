@@ -96,7 +96,18 @@ const STATIC = {
   '/events.js': ['events.js', 'text/javascript; charset=utf-8'],
   '/workbench-manager.js': ['workbench-manager.js', 'text/javascript; charset=utf-8'],
   '/workbench.css': ['workbench.css', 'text/css; charset=utf-8'],
-  '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
+  '/app.ask.js': ['app.ask.js', 'text/javascript; charset=utf-8'],
+  '/app.assets.js': ['app.assets.js', 'text/javascript; charset=utf-8'],
+  '/app.compare.js': ['app.compare.js', 'text/javascript; charset=utf-8'],
+  '/app.core.js': ['app.core.js', 'text/javascript; charset=utf-8'],
+  '/app.image.js': ['app.image.js', 'text/javascript; charset=utf-8'],
+  '/app.init.js': ['app.init.js', 'text/javascript; charset=utf-8'],
+  '/app.jobs.js': ['app.jobs.js', 'text/javascript; charset=utf-8'],
+  '/app.media.js': ['app.media.js', 'text/javascript; charset=utf-8'],
+  '/app.oneclick.js': ['app.oneclick.js', 'text/javascript; charset=utf-8'],
+  '/app.ops.js': ['app.ops.js', 'text/javascript; charset=utf-8'],
+  '/app.settings.js': ['app.settings.js', 'text/javascript; charset=utf-8'],
+  '/app.studio.js': ['app.studio.js', 'text/javascript; charset=utf-8'],
   '/creative.js': ['creative.js', 'text/javascript; charset=utf-8'],
   '/creative.css': ['creative.css', 'text/css; charset=utf-8'],
   '/styles.css': ['styles.css', 'text/css; charset=utf-8'],
@@ -1218,7 +1229,10 @@ async function controlService(name, action) {
 
   // 前端资源指纹：页面开着很久时用它发现「服务器已经换了新版本」，提示刷新，避免看到旧样式
   if (method === 'GET' && pathname === '/api/web-version') {
-    const files = ['index.html', 'app.js', 'styles.css', 'shell-spec.css'].map((name) => path.join(WEB, name));
+    // app.js 已按域拆成 app.*.js（core / studio / ask / …），指纹要把整组都算进去，
+    // 否则只改其中一块时页面收不到刷新提示。
+    const appParts = fs.readdirSync(WEB).filter((name) => /^app\.[\w-]+\.js$/.test(name)).sort();
+    const files = ['index.html', 'styles.css', 'shell-spec.css', ...appParts].map((name) => path.join(WEB, name));
     const parts = files.map((file) => {
       try { return Math.round(fs.statSync(file).mtimeMs).toString(36); } catch { return '0'; }
     });

@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const source = fs.readFileSync(path.join(__dirname, '../web/app.js'), 'utf8');
+const source = require('./helpers/app-source')();
 const start = source.indexOf('// 智能推荐：对话里只留一行记录');
 const end = source.indexOf('function askMessageHtml(');
 assert.ok(start > 0 && end > start, '在 app.js 里找不到问句条渲染函数');

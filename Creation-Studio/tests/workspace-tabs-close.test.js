@@ -66,7 +66,7 @@ test('关掉最后一个文件标签也一样退出，不是留一个空壳', as
 });
 
 test('app.js：右上角 ✕ 与标签关闭共用 askCloseWorkspace，并清空预览状态', () => {
-  const source = fs.readFileSync(path.join(__dirname, '../web/app.js'), 'utf8');
+  const source = require('./helpers/app-source')();
   assert.match(source, /function askCloseWorkspace\(\)/);
   assert.match(source, /if \(act === 'ask-close-cap'\) \{ return askCloseWorkspace\(\); \}/);
   assert.match(source, /open:askOpenWorkspace,close:askCloseWorkspace/);

@@ -30,7 +30,10 @@ async function until(fn, ms = 25000) {
 (async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wmd-concat-browser-'));
   const base = 'http://127.0.0.1:18945';
-  const concatRoot = path.join(dir, 'concat');
+  // 引擎的写盘根目录：放在流水线的 outputs 下（data 目录的 ACL 是收紧的，
+  // 引擎在里面建工程会拿到 os error 5；%TEMP% 同理）
+  const concatRoot = path.join(ROOT, '..', 'outputs', 'concat-accept-' + process.pid);
+  fs.rmSync(concatRoot, { recursive: true, force: true });
   fs.mkdirSync(concatRoot, { recursive: true });
   let child = null;
   let browser = null;
@@ -97,7 +100,15 @@ async function until(fn, ms = 25000) {
     const page = await context.newPage();
     page.setDefaultTimeout(15000);
     page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
-    page.on('console', (m) => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
+    page.on('response', (r) => {
+      if (r.status() < 400) return;
+      // 空工程没有素材，缩略图/波形取不到是正常的（引擎没有素材可画）；
+      // /api/styles/<空> 是应用外壳在没选风格时的既有请求，和剪辑台无关
+      if (/\/api\/concat\/assets\/(thumb|wave)/.test(r.url())) return;
+      if (/\/api\/styles\/?$/.test(r.url())) return;
+      if (/\/favicon\.ico$/.test(r.url())) return;
+      errors.push('http ' + r.status() + ' ' + r.url());
+    });
 
     await page.goto(base + '/#concat');
 
@@ -203,23 +214,43 @@ async function until(fn, ms = 25000) {
     await page.waitForSelector('.ce-shell', { timeout: 25000 });
     await until(async () => await page.evaluate(() => {
       const i = window.CONCAT_EDITOR.instance;
-      return Boolean(i && i.projectPath);
+      return Boolean(i && i.projectPath && i.doc);
     }));
     const again = await page.evaluate(() => window.CONCAT_EDITOR.instance.projectPath);
     assert.equal(again, opened.path, '再进来要开同一个引擎工程（这就是以前一直错的那条）');
     assert.equal(await page.evaluate(() => Boolean(document.querySelector('.ce-picker'))), false, '记得工程就不该再摊开选择器');
 
-    // 6) 换一个创作台工程进来：不能沿用上一个工程开的引擎工程
+    // 6) 另一个创作台工程：记忆是分开的，不会沿用上一个工程开的引擎工程
     const other = await call('/api/projects', { name: '另一个工程', styleId: '' });
     const otherId = other.id || (other.project && other.project.id);
-    await page.evaluate((id) => { localStorage.setItem('wmd.projectId', id); location.hash = '#projects'; }, otherId);
-    await page.waitForTimeout(600);
-    await page.evaluate(() => { location.hash = '#concat'; });
-    await page.waitForSelector('#ce-host', { timeout: 20000 });
-    await until(async () => await page.evaluate(() => Boolean(document.querySelector('.ce-picker'))));
-    const otherOptions = await page.evaluate(() => window.CONCAT_EDITOR.options());
-    assert.equal(otherOptions.projectId, otherId);
-    assert.equal(await page.inputValue('.ce-path-open input:not([placeholder^="工程目录"])'), '另一个工程', '换工程后预填名要跟着换');
+    const second = await rpc([{ method: 'project.create', params: { location: concatRoot, name: '另一个引擎工程' } }]);
+    assert.equal(second[0].ok, true, '第二个引擎工程没建成：' + JSON.stringify(second[0]));
+    await page.evaluate((payload) => {
+      localStorage.setItem('wmd.projectId', payload.otherId);
+      localStorage.setItem('wmd.concat.project.' + payload.otherId, payload.otherPath);
+    }, { otherId, otherPath: path.join(concatRoot, '另一个引擎工程') });
+    await page.reload();
+    await page.waitForSelector('#ce-host', { timeout: 25000 });
+    await until(async () => await page.evaluate(() => {
+      const i = window.CONCAT_EDITOR.instance;
+      return Boolean(i && i.projectPath && i.doc);
+    }));
+    const moved = await page.evaluate(() => {
+      const i = window.CONCAT_EDITOR.instance;
+      return {
+        options: window.CONCAT_EDITOR.options(),
+        path: i.projectPath,
+        doc: Boolean(i.doc),
+        picker: Boolean(document.querySelector('.ce-picker')),
+        error: i.error,
+        notice: i.notice,
+        stored: Object.keys(localStorage).filter((k) => k.startsWith('wmd.concat.project')),
+      };
+    });
+    assert.equal(moved.options.projectId, otherId, '换工程后 mount 收到的是新工程：' + JSON.stringify(moved));
+    assert.equal(moved.options.projectName, '另一个工程');
+    assert.equal(moved.path, path.join(concatRoot, '另一个引擎工程'), '每个工程记自己的引擎工程，不能串：' + JSON.stringify(moved));
+    assert.notEqual(moved.path, opened.path);
 
     assert.deepEqual(errors, [], '页面不该报错');
     console.log(JSON.stringify({

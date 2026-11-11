@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const source = fs.readFileSync(path.join(__dirname, '../web/app.js'), 'utf8');
+const source = require('./helpers/app-source')();
 const start = source.indexOf('function askAttachStatusText(');
 const end = source.indexOf('async function askUploadFile(');
 assert.ok(start > 0 && end > start, '在 app.js 里找不到 askAttachStatusText');

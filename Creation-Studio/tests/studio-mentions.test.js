@@ -1,7 +1,7 @@
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');const vm=require('node:vm');const path=require('node:path');
-const source=fs.readFileSync(path.join(__dirname,'../web/app.js'),'utf8');
+const source=require('./helpers/app-source')();
 function setup(){
  const studio={images:[null,{name:'actor.png',subject:'林辰'}],audios:[{name:'voice.wav'}]};
  const events={};const editor={value:'镜头中@林',selectionStart:6,selectionEnd:6,addEventListener(n,f){events[n]=f;},setSelectionRange(a,b){this.selectionStart=a;this.selectionEnd=b;},setAttribute(){},removeAttribute(){}};

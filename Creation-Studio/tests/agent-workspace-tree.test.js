@@ -39,7 +39,7 @@ test('workspace starts at 30 percent and resizing persists through tab changes',
  ws.resizeWidth(30);assert.match(ws.html(c),/--aw-width:30%/);
 });
 test('opening workspace does not collapse history or close the summary',()=>{
- const source=fs.readFileSync(path.join(__dirname,'../web/app.js'),'utf8');
+ const source=require('./helpers/app-source')();
  const fn=source.slice(source.indexOf('function askOpenWorkspace()'),source.indexOf('function askWorkspaceContext()'));
  const state={historyOpen:true,summaryOpen:true,capabilitiesOpen:false};
  vm.runInNewContext(fn+';askOpenWorkspace();',{askState:()=>state});

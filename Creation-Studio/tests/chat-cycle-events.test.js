@@ -1,5 +1,5 @@
 const test=require('node:test');const assert=require('node:assert/strict');const fs=require('node:fs');const path=require('node:path');
-const source=fs.readFileSync(path.join(__dirname,'../web/app.js'),'utf8');
+const source=require('./helpers/app-source')();
 const code=source.slice(source.indexOf('function askRecordLiveTool('),source.indexOf('function askApplyEvent('));
 const {askRecordTrajectory,askRecordLiveTool}=new Function(code+';return {askRecordTrajectory,askRecordLiveTool}')();
 test('streamed reasoning is replaced by durable record without duplication',()=>{

@@ -17,6 +17,7 @@
   "clean:backups": "node scripts/clean-backups.js",
   "clean:backups:apply": "node scripts/clean-backups.js --apply",
   "test:workbench-browser": "node tests/workbench-browser.js",
+  "test:concat-product-browser": "node tests/concat-product-browser.js",
   "test:channel-key-browser": "node tests/channel-key-browser.js",
   "test:tenant-storage-browser": "node tests/tenant-storage-ui-browser.js",
   "test:quota-audit-browser": "node tests/quota-audit-browser.js",

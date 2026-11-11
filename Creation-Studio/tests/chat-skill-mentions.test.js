@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const source = fs.readFileSync(path.join(__dirname, '../web/app.js'), 'utf8');
+const source = require('./helpers/app-source')();
 
 const start = source.indexOf('function askSkillList(');
 const end = source.indexOf('// 技能统一来源：内置技能 + 自定义技能都来自 /agent/skills');

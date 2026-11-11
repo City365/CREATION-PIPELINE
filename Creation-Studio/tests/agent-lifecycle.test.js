@@ -2,7 +2,7 @@ const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const vm=require('node:vm');
-const source=fs.readFileSync(require('node:path').join(__dirname,'../web/app.js'),'utf8');
+const source=require('./helpers/app-source')();
 function load(name,end,extra={}) {
  const start=source.indexOf((name==='askStop'?'async ':'')+'function '+name+'(');
  const context={...extra};vm.createContext(context);

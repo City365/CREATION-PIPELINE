@@ -65,7 +65,7 @@ test('不指定范围时整库按镜头号排成一份草稿', () => {
 
 test('媒体库不再提供内置剪辑工程，剪辑交给剪映', () => {
   const web = path.join(__dirname, '..', 'web');
-  const app = fs.readFileSync(path.join(web, 'app.js'), 'utf8');
+  const app = require('./helpers/app-source')();
   assert.equal(app.includes('剪辑 / 工程'), false);
   assert.equal(app.includes('加入剪辑'), false);
   assert.equal(app.includes('openVideoEditor'), false);

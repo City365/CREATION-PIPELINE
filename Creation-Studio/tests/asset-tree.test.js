@@ -65,7 +65,7 @@ test('目录越界或不存在时直接报错，不会去读别的目录', () =>
 });
 
 test('前端：目录树按层加载，并且不会 render→load 互相触发死循环', () => {
-  const source = fs.readFileSync(path.join(__dirname, '../web/app.js'), 'utf8');
+  const source = require('./helpers/app-source')();
   assert.match(source, /data-lib-dir-depth=/, '分类/项目两层要标出层级');
   assert.match(source, /function loadAssetDir\(rel, deep = false\)/, '缺失目录要按需加载，分类可以深读');
   assert.match(source, /if \(cached && cached\.promise\) return cached\.promise;/, '在途请求要复用同一个 promise');
@@ -81,14 +81,14 @@ test('前端：目录树按层加载，并且不会 render→load 互相触发�
 });
 
 test('右侧只列文件，不再重复列文件夹', () => {
-  const source = fs.readFileSync(path.join(__dirname, '../web/app.js'), 'utf8');
+  const source = require('./helpers/app-source')();
   const dirView = source.slice(source.indexOf('function renderDirView(view) {'), source.indexOf('function renderOtherView(data) {'));
   assert.ok(!dirView.includes('asset-folders'), '目录视图不能再渲染文件夹卡片');
   assert.ok(dirView.includes('renderAssetGrid(cards'), '目录视图列的是文件');
 });
 
 test('点图弹窗：放大 + 资料卡（项目归属、绝对位置、尺寸）', () => {
-  const source = fs.readFileSync(path.join(__dirname, '../web/app.js'), 'utf8');
+  const source = require('./helpers/app-source')();
   const modal = source.slice(source.indexOf('function assetDetailModal(item) {'), source.indexOf('function pickSlotFile('));
   for (const label of ['分类', '项目归属', '所在目录', '相对路径', '绝对位置', '文件大小', '尺寸', '修改时间']) {
     assert.ok(modal.includes(`['${label}'`), `资料卡要有「${label}」`);

@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const source = fs.readFileSync(path.join(__dirname, '../web/app.js'), 'utf8');
+const source = require('./helpers/app-source')();
 
 test('技能清单来自统一接口，工作区改为文件视图', () => {
   assert.ok(source.includes("askApi('/skills')"), '要拉取统一技能清单');

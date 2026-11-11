@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const source = fs.readFileSync(path.join(__dirname, '../web/app.js'), 'utf8');
+const source = require('./helpers/app-source')();
 const start = source.indexOf('// 最近一次运行带来的上下文分项统计');
 const end = source.indexOf('function askSummaryHtml(');
 assert.ok(start > 0 && end > start, '在 app.js 里找不到上下文分项渲染函数');

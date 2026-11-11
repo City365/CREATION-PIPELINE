@@ -11,18 +11,20 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+const appSource = require('./helpers/app-source');
 const html = read('web/index.html');
-const app = read('web/app.js');
+const app = appSource();
 const nav = read('web/shell-nav.js');
 const page = read('web/smartcut.js');
 const css = read('web/smartcut.css');
 
-test('页面资源接进了 index.html，且 smartcut.js 先于 app.js 加载', () => {
+test('页面资源接进了 index.html，且 smartcut.js 先于主应用脚本加载', () => {
   assert.match(html, /<link rel="stylesheet" href="\/smartcut\.css\?v=\d+"/);
   const atPage = html.indexOf('smartcut.js');
-  const atApp = html.indexOf('app.js?v=');
-  assert.ok(atPage > 0 && atApp > atPage, 'smartcut.js 必须在 app.js 之前，否则 mount 时模块还没定义');
-  assert.match(html, /app\.js\?v=proj5\d/);
+  // app.js 已按域拆成 app.core.js / app.studio.js / …，这里对齐第一个 app.*.js
+  const atApp = html.search(/app\.[\w.-]*\.js\?v=/);
+  assert.ok(atPage > 0 && atApp > atPage, 'smartcut.js 必须在 app.*.js 之前，否则 mount 时模块还没定义');
+  assert.match(html, /app\.core\.js\?v=/);
   assert.match(html, /shell-nav\.js\?v=\d+/);
 });
 
