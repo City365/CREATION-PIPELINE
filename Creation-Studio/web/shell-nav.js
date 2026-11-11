@@ -152,19 +152,6 @@
         ],
       }],
     },
-    smartcut: {
-      title: '执行引擎',
-      groups: () => [{
-        key: 'smartcut',
-        title: '',
-        sub: '',
-        // 两个引擎是同一个剪辑单的不同落地后端：剪映出草稿、Concat 直接渲染 mp4
-        items: [
-          { label: '剪映草稿', value: 'jianying' },
-          { label: 'Concat 引擎', value: 'concat' },
-        ],
-      }],
-    },
     assets: {
       title: '素材',
       groups: () => [{
@@ -201,14 +188,6 @@
       let mode = 'novel';
       try { mode = state.oneclick.mode || 'novel'; } catch (error) { /* 未初始化 */ }
       return mode === item.value;
-    }
-    if (route === 'smartcut' && item.value) {
-      // 当前引擎挂在页面模块里，页面没挂载时按剪映算
-      let engine = 'jianying';
-      try {
-        if (window.SMARTCUT && window.SMARTCUT.state) engine = window.SMARTCUT.state().engine || 'jianying';
-      } catch (error) { /* 未初始化 */ }
-      return engine === item.value;
     }
     if (route === 'media' && item.tab !== undefined) {
       let current = '';
@@ -304,11 +283,6 @@
     }
     if (btn.dataset.shellRoute === 'oneclick' && typeof window.__oneclickSetMode === 'function') {
       window.__oneclickSetMode(btn.dataset.shellNav);
-      setTimeout(sync, 160);
-      return;
-    }
-    if (btn.dataset.shellRoute === 'smartcut' && typeof window.__editSetEngine === 'function') {
-      window.__editSetEngine(btn.dataset.shellNav);
       setTimeout(sync, 160);
       return;
     }

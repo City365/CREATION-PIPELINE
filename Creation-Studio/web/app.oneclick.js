@@ -1,6 +1,6 @@
 'use strict';
 
-/* app.oneclick.js — 一键成片 / 智能剪辑 / 智能上剧
+/* app.oneclick.js — 一键成片 / 剪辑台 / 智能上剧
  * 由 web/app.js 按原段注释切分而来（第 5530–5595 行），代码未改写。
  * 该文件是 classic script，与其余 app.*.js 共享同一个全局作用域，加载顺序见 index.html。 */
 
@@ -38,19 +38,12 @@ function renderOneClick() {
   </div>`;
 }
 
-/* -------------------------------------------------- 智能剪辑 / 智能上剧 */
-
-// 智能剪辑是对话页：用户说人话 → 智能体出剪辑单 → 执行引擎 → 回成片地址。
-// 二级菜单的两个引擎（剪映草稿 / Concat）是执行后端，页面本身在 web/smartcut.js。
-// 这里只留一个宿主节点，避免和 page-scroll 的滚动容器打架。
+/* -------------------------------------------------- 剪辑台 / 智能上剧 */
 
 // 剪辑台：系统里的一个页面。左边剪、右边说，引擎在后台 headless 跑。
+// 宿主节点自撑满高度，避免和 page-scroll 的滚动容器打架。
 function renderConcat() {
   return '<div class="ce-page-host" id="ce-host"></div>';
-}
-
-function renderSmartCut() {
-  return '<div class="sc-page" id="sc-page"></div>';
 }
 
 function renderSmartRelease() {

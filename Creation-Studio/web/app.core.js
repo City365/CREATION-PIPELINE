@@ -732,7 +732,14 @@ function setRoute() {
     try { history.replaceState(null, '', '#tasks' + location.search); } catch { /* ignore */ }
     route = 'tasks';
   }
-  state.route = ['image', 'studio', 'script', 'oneclick', 'concat', 'smartcut', 'smartrelease', 'assets', 'batch', 'jobs', 'tasks', 'media', 'compare', 'logs', 'projects'].includes(route) ? route : 'image';
+  // 白名单只收现存的页面。已经删掉的路由（比如智能剪辑 smartcut）不能留一个
+  // 「地址还认、内容对不上」的入口：地址栏顺手改回 #image，跟上面 jobs/batch/logs 一个做法。
+  const knownRoutes = ['image', 'studio', 'script', 'oneclick', 'concat', 'smartrelease', 'assets', 'batch', 'jobs', 'tasks', 'media', 'compare', 'logs', 'projects'];
+  if (!knownRoutes.includes(route)) {
+    route = 'image';
+    try { history.replaceState(null, '', '#image' + location.search); } catch { /* ignore */ }
+  }
+  state.route = route;
   // 从地址栏恢复二级菜单状态
   const tabParam = parsed.params.get('tab');
   const dirParam = parsed.params.get('dir');
@@ -781,7 +788,6 @@ function render() {
   else if (state.route === 'script') html = renderScript();
   else if (state.route === 'oneclick') html = '<div class="page-scroll">' + renderOneClick() + '</div>';
   else if (state.route === 'concat') html = renderConcat();
-else if (state.route === 'smartcut') html = renderSmartCut();
   else if (state.route === 'smartrelease') html = '<div class="page-scroll">' + renderSmartRelease() + '</div>';
   else if (state.route === 'batch') html = '<div class="page-scroll">' + renderBatch() + '</div>';
   else if (state.route === 'jobs') html = '<div class="page-scroll">' + renderJobs() + '</div>';
@@ -807,14 +813,7 @@ else if (state.route === 'smartcut') html = renderSmartCut();
       toast,
     });
   }
-  if (state.route === 'smartcut' && window.SMARTCUT && window.SMARTCUT.mount) {
-    window.SMARTCUT.mount(host.querySelector('.sc-page'), {
-      projectId: askProjectId(),
-      projectName: (state.project && state.project.name) || '',
-      markdown: askMarkdown,
-      toast,
-    });
-  }  if(state.route === "studio" || state.route === "image") WB.bind(host,state.route === "studio" ? "video" : "image");
+  if(state.route === "studio" || state.route === "image") WB.bind(host,state.route === "studio" ? "video" : "image");
   // 整页重画之后把结构签名对齐，避免下一条进度事件又触发一次整页重画
   if (state.route === 'studio') { try { studioSignatureCache = studioStageSignature(); } catch { /* ignore */ } }
   applyVolume();

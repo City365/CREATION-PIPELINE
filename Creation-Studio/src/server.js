@@ -48,7 +48,6 @@ const videoPlugins=require('./video-plugins');
 const studioStore = require('./studio-store');
 const workbenchStore = require('./workbench-store');
 const workbenchRoutes = require('./workbench-routes');
-const localDockRoutes = require('./local-dock-routes');
 const concatRpcRoutes = require('./concat-rpc-routes');
 const concatAssetRoutes = require('./concat-asset-routes');
 const musicRoutes = require('./music-routes');
@@ -113,14 +112,11 @@ const STATIC = {
   '/styles.css': ['styles.css', 'text/css; charset=utf-8'],
   '/shell-spec.css': ['shell-spec.css', 'text/css; charset=utf-8'],
   '/shell-nav.js': ['shell-nav.js', 'text/javascript; charset=utf-8'],
-  '/smartcut.js': ['smartcut.js', 'text/javascript; charset=utf-8'],
-  '/dock-host.js': ['dock-host.js', 'text/javascript; charset=utf-8'],
   '/concat-editor.js': ['concat-editor.js', 'text/javascript; charset=utf-8'],
   '/concat-editor.css': ['concat-editor.css', 'text/css; charset=utf-8'],
   '/concat/rpc.js': ['concat/rpc.js', 'text/javascript; charset=utf-8'],
   '/concat/placing.js': ['concat/placing.js', 'text/javascript; charset=utf-8'],
   '/vendor/vue.global.prod.js': ['vendor/vue.global.prod.js', 'text/javascript; charset=utf-8'],
-  '/smartcut.css': ['smartcut.css', 'text/css; charset=utf-8'],
   '/skins.css': ['skins.css', 'text/css; charset=utf-8'],
   '/wallpaper-library.js': ['wallpaper-library.js', 'text/javascript; charset=utf-8'],
   '/skins/anime-sea.png': ['skins/anime-sea.png', 'image/png'],
@@ -737,8 +733,6 @@ async function handle(req, res) {
   const unassignedKey = () => (tenantId === tenants.DEFAULT_TENANT ? 'default' : 'unassigned:' + tenantId);
   const scopeKey = (value) => scoped(value) || unassignedKey();
 
-  // 原生窗口停靠（M1）：只认回环，前端报矩形、后端挪窗口
-  if (await localDockRoutes(req, res, url, { ok, readBody })) return;
   // 剪辑台：页面是 Concat 原生服务的客户端，本层只做传输（/api/concat/engine、/rpc、/frame）
   if (await concatRpcRoutes(req, res, url, { ok, readBody })) return;
   // 剪辑台的素材缓存（缩略图 / 波形）：引擎没有这两样，浏览器需要有人算一次

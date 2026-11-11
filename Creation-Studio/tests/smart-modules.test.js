@@ -1,5 +1,6 @@
 'use strict';
-// 左侧一级菜单：智能剪辑 / 智能上剧 是真路由，点进去有页面，不是摆着好看的装饰
+// 左侧一级菜单：剪辑台 / 智能上剧 是真路由，点进去有页面，不是摆着好看的装饰。
+// 智能剪辑（smartcut）已经整页摘掉，路由表、菜单、渲染、挂载都不该再有它的影子。
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -15,16 +16,18 @@ function rail() {
   return html.slice(at, end);
 }
 
-test('一级菜单里有智能剪辑和智能上剧', () => {
+test('一级菜单里有剪辑台和智能上剧，智能剪辑已摘掉', () => {
   const nav = rail();
-  assert.match(nav, /data-route="smartcut"[\s\S]*?<span>智能剪辑<\/span>/);
+  assert.match(nav, /data-route="concat"[\s\S]*?<span>剪辑台<\/span>/);
   assert.match(nav, /data-route="smartrelease"[\s\S]*?<span>智能上剧<\/span>/);
+  assert.doesNotMatch(nav, /data-route="smartcut"/, '智能剪辑页已删除，菜单不能留一个点进去是空白的入口');
+  assert.doesNotMatch(html, /smartcut\.(js|css)/, 'index.html 不该再引用智能剪辑的资源');
 });
 
-test('两个菜单排在创作流程之后、素材库之前', () => {
+test('菜单顺序：创作流程 → 剪辑台 → 上剧 → 素材库 → 任务/媒体/对比', () => {
   const order = [...rail().matchAll(/data-route="([a-z]+)"/g)].map((m) => m[1]);
   assert.deepEqual(order, [
-    'image', 'studio', 'script', 'oneclick', 'smartcut', 'smartrelease',
+    'image', 'studio', 'script', 'oneclick', 'concat', 'smartrelease',
     'assets', 'tasks', 'media', 'compare',
   ]);
 });
@@ -53,23 +56,29 @@ test('一键成片三个模式只有入参不同，页面按模式渲染', () =>
   assert.match(modes, /id: 'novel', name: '小说模式'/);
   assert.match(modes, /id: 'script', name: '剧本模式'/);
   assert.match(modes, /id: 'idea', name: '灵感模式'/);
-  assert.match(source, /'oneclick', 'smartcut'/, '路由白名单要收');
+  assert.match(source, /'oneclick', 'concat'/, '路由白名单要收');
   assert.match(source, /state\.route === 'oneclick'\) html = /, 'render 要有分支');
-  const page = source.slice(source.indexOf('function renderOneClick('), source.indexOf('/* -------------------------------------------------- 智能剪辑'));
+  const page = source.slice(source.indexOf('function renderOneClick('), source.indexOf('/* -------------------------------------------------- 剪辑台'));
   assert.match(page, /<h1>一键成片<\/h1>/);
   assert.match(page, /mode\.name/, '标题跟着模式走');
   assert.match(page, /mode\.input/, '入参跟着模式走');
   assert.doesNotMatch(page, /<textarea|<input/, '这一轮只做菜单，不填输入区');
 });
 
-test('两个路由真的能渲染出页面', () => {
-  assert.match(source, /'smartcut', 'smartrelease'/, '路由白名单要收');
-  assert.match(source, /state\.route === 'smartcut'\) html = /, 'render 要有分支');
+test('剪辑台和智能上剧都是真路由，智能剪辑的渲染与挂载一起清掉了', () => {
+  assert.match(source, /'concat', 'smartrelease'/, '路由白名单要收');
+  assert.match(source, /state\.route === 'concat'\) html = /, 'render 要有分支');
   assert.match(source, /state\.route === 'smartrelease'\) html = /);
-  // 智能剪辑是对话页（宿主 + 模块），标题和布局在 web/smartcut.js 里，不再用 page-head
-  const cut = source.slice(source.indexOf('function renderSmartCut('), source.indexOf('function renderSmartRelease('));
-  assert.match(cut, /class="sc-page"/, '智能剪辑给自己留一个撑满高度的宿主');
-  assert.doesNotMatch(cut, /page-head/, '对话页不该套普通页头');
+  assert.doesNotMatch(source, /renderSmartCut|state\.route === 'smartcut'|window\.SMARTCUT/, '智能剪辑的渲染、挂载、模块引用要一起清掉');
+  const cut = source.slice(source.indexOf('function renderConcat('), source.indexOf('function renderSmartRelease('));
+  assert.match(cut, /class="ce-page-host"/, '剪辑台给自己留一个撑满高度的宿主');
+  assert.doesNotMatch(cut, /page-head/, '剪辑台不该套普通页头');
   const rel = source.slice(source.indexOf('function renderSmartRelease('), source.indexOf('ask 页复刻'));
   assert.match(rel, /<h1>智能上剧<\/h1>/);
+});
+
+test('二级菜单不再给智能剪辑留「执行引擎」那一栏', () => {
+  const nav = fs.readFileSync(path.join(__dirname, '../web/shell-nav.js'), 'utf8');
+  assert.doesNotMatch(nav, /smartcut/, '二级菜单里不能再有 smartcut 的键或分支');
+  assert.doesNotMatch(nav, /__editSetEngine/, '引擎切换钩子是智能剪辑页的，跟着一起删');
 });
