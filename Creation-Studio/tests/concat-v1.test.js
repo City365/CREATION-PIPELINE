@@ -273,10 +273,17 @@ test('版式照 Slint 前端：标题栏 + 三栏 + 时间线，与原生分区�
     assert.ok(source.includes(part), '缺少 ' + part);
   }
   const css = readWeb('concat-editor.css');
-  // 原生 dark 调色板的令牌必须真的落到页面上
-  for (const token of ['#212123', '#151517', '#cbf53f', '#1a1a1c', '#3373d1', '#34c46f', '#cf5a99']) {
-    assert.ok(css.includes(token), '缺少调色板颜色 ' + token);
+  // 配色不再自带一套深色板：全部引用系统设计令牌，跟着 html[data-theme] 自动换肤。
+  // 只有素材分类色保留品牌值（video / audio / image / text），它们的 well 用 color-mix 跟底色混。
+  for (const token of ['var(--wmd-bg-0)', 'var(--wmd-bg-1)', 'var(--wmd-accent)', 'var(--wmd-text)']) {
+    assert.ok(css.includes(token), '缺少系统令牌引用 ' + token);
   }
+  for (const kind of ['--kind-video: #3373d1', '--kind-audio: #34c46f',
+    '--kind-image: #8f52c8', '--kind-text: #b83f80']) {
+    assert.ok(css.includes(kind), '素材分类色缺失 ' + kind);
+  }
+  assert.ok(!/#cbf53f/.test(css), '写死的 lime 强调色要撤掉，统一走 --wmd-accent');
+  assert.ok(!/#212123/.test(css) && !/#151517/.test(css), '不再保留原生 dark 调色板的写死底色');
   assert.ok(css.includes('.ce-clip-head'));
   assert.ok(css.includes('.ce-clip-body'));
   assert.ok(css.includes('.ce-edge'));
@@ -327,7 +334,10 @@ test('版式自检：页签排得满、预览按比例撑满、控件不被壁�
 
   // 壁纸模式那条全局 !important 会给 input/select 刷浅色，剪辑台必须自己扳回来
   assert.ok(css.includes('html[data-wallpaper="true"] .ce-shell :is(input, select, textarea)'));
-  assert.ok(css.includes('color-scheme: dark'));
+  // 原生 select / 滚动条的配色跟着外层主题：:root 已经声明 dark / light，这里继承即可。
+  // 写死 dark 会在亮色主题下把下拉弹成黑板。
+  assert.ok(/color-scheme:\s*inherit/.test(css), '原生控件配色要继承外层主题');
+  assert.ok(!/color-scheme:\s*dark/.test(css), '不能再写死 dark');
 });
 
 test('左侧面板：一排页签 + 二级竖菜单 + 内容区，十个页签都有真东西', () => {

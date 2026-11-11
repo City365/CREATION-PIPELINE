@@ -1,9 +1,12 @@
 /* 剪辑台 V1 —— 照 Slint 前端重排
  *
- * 颜色全部取自 Concat 的 dark 调色板（src/crates/concat/ui/theme/dark.slint）：
- *   panel #212123 / raised #2b2b2e / well #19191b / field #323235
- *   强调 lime #cbf53f，播放头同色；lane #1a1a1c、lane-alt #1e1e20、ruler #171719
- *   五种素材色：video #3373d1 / audio #34c46f / image #9f63d6 / text #cf5a99
+ * 配色不再自带一套深色板，而是全部引用系统设计令牌（wmd.css 的 --wmd-*）：
+ *   底色 --wmd-bg-0..4、描边 --wmd-border*、文字 --wmd-text*、强调 --wmd-accent*
+ * 于是剪辑台跟着 html[data-theme] 自动走亮色（studio-light / studio-mint）、
+ * 暗色（studio-teal / violet / amber）和场景皮肤，不再是一块固定的黑。
+ *
+ * 只有「素材分类色」保留品牌值（video / audio / image / text），
+ * 它们的 well（轨道上那块底）用 color-mix 跟当前底色混，亮色自动变浅、暗色自动变深。
  */
 .ce-page-host {
   flex: 1;
@@ -24,37 +27,51 @@ html[data-wallpaper="true"] .ce-shell :is(input, textarea)::placeholder {
   color: var(--fg-dim) !important;
 }
 
+/* 壁纸主题下整站是透明 + 模糊，剪辑台若还填实 --page 就会糊一块深蓝把壁纸盖死。
+   这里只让最外层让位；面板、轨道这些带内容的块仍然是实心的，保证可读。 */
+html[data-wallpaper="true"] .ce-shell {
+  --page: transparent;
+}
+
 .ce-shell {
-  --page: #151517;
-  --panel: #212123;
-  --raised: #2b2b2e;
-  --well: #19191b;
-  --field: #323235;
-  --field-hover: #3b3b3e;
-  --field-active: #46464a;
-  --line: #ffffff1a;
-  --line-strong: #ffffff33;
-  --fg: #f5f5f7;
-  --fg-muted: #a1a1a6;
-  --fg-dim: #6e6e73;
-  --accent: #cbf53f;
-  --accent-hover: #d9ff63;
-  --accent-soft: #cbf53f33;
-  --on-accent: #15220a;
-  --lane: #1a1a1c;
-  --lane-alt: #1e1e20;
-  --ruler: #171719;
-  --grid: #ffffff24;
-  --playhead: #cbf53f;
-  --wave: #a7f0c2b3;
+  /* ---- 底色阶梯：跟着系统的 bg-0..4 走 ---- */
+  --page: var(--wmd-bg-0);
+  --panel: var(--wmd-bg-1);
+  --raised: var(--wmd-bg-3);
+  --well: color-mix(in srgb, var(--wmd-bg-0) 55%, var(--wmd-bg-2));
+  --field: var(--wmd-bg-2);
+  --field-hover: var(--wmd-bg-3);
+  --field-active: var(--wmd-bg-4);
+  /* ---- 描边 ---- */
+  --line: var(--wmd-border);
+  --line-strong: var(--wmd-border-strong);
+  /* ---- 文字 ---- */
+  --fg: var(--wmd-text);
+  --fg-muted: var(--wmd-text-2);
+  --fg-dim: var(--wmd-text-3);
+  /* ---- 强调：跟着系统强调色（亮色 #ffc000，各主题各自不同）---- */
+  --accent: var(--wmd-accent);
+  --accent-hover: var(--wmd-accent-hover);
+  --accent-soft: var(--wmd-accent-soft);
+  --on-accent: var(--wmd-text-on-accent);
+  /* ---- 时间轴：轨道比页面底色淡一档，双色交替 ---- */
+  --lane: color-mix(in srgb, var(--wmd-bg-2) 55%, var(--wmd-bg-0));
+  --lane-alt: color-mix(in srgb, var(--wmd-bg-2) 85%, var(--wmd-bg-0));
+  --ruler: var(--wmd-bg-0);
+  --grid: color-mix(in srgb, var(--wmd-text) 16%, transparent);
+  --playhead: var(--wmd-accent);
+  --wave: color-mix(in srgb, var(--wmd-info) 60%, transparent);
+  /* ---- 素材分类色：主色是品牌值，well 跟当前底色混 ----
+     主色要在「亮色白字」和「亮色浅底深字」两种用法下都够对比，
+     所以 image / text 比原始品牌值压深一点（#9f63d6→#8f52c8、#cf5a99→#b83f80）。 */
   --kind-video: #3373d1;
-  --kind-video-well: #142238;
+  --kind-video-well: color-mix(in srgb, #3373d1 26%, var(--wmd-bg-0));
   --kind-audio: #34c46f;
-  --kind-audio-well: #12301c;
-  --kind-image: #9f63d6;
-  --kind-image-well: #2a1e34;
-  --kind-text: #cf5a99;
-  --kind-text-well: #321c29;
+  --kind-audio-well: color-mix(in srgb, #34c46f 26%, var(--wmd-bg-0));
+  --kind-image: #8f52c8;
+  --kind-image-well: color-mix(in srgb, #8f52c8 26%, var(--wmd-bg-0));
+  --kind-text: #b83f80;
+  --kind-text-well: color-mix(in srgb, #b83f80 26%, var(--wmd-bg-0));
 
   /* 字号：4 档。剪映一个面板里也不会更多；说明/辅助 10、标签 11、正文 12、标题 14 */
   --ce-fs-1: 10px;
@@ -85,7 +102,9 @@ html[data-wallpaper="true"] .ce-shell :is(input, textarea)::placeholder {
   line-height: 1.4;
   user-select: none;
   -webkit-font-smoothing: antialiased;
-  color-scheme: dark; /* 原生 select / 滚动条跟着走深色，不然是两块白板 */
+  /* 原生 select / 滚动条跟着外层主题走：:root 与 :root[data-theme=…] 已经声明过
+     dark / light，这里继承即可，写死 dark 会在亮色主题下把下拉弹成黑板 */
+  color-scheme: inherit;
 }
 
 /* ------------------------------------------------------------ 标题栏 */
@@ -121,7 +140,7 @@ html[data-wallpaper="true"] .ce-shell :is(input, textarea)::placeholder {
   padding: 5px;
   border-radius: var(--ce-r-2);
   background: var(--raised);
-  box-shadow: 0 14px 34px #00000099;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, .28);
   z-index: 60;
   display: flex;
   flex-direction: column;
@@ -618,7 +637,7 @@ html[data-wallpaper="true"] .ce-shell :is(input, textarea)::placeholder {
 }
 
 .ce-tab.is-active {
-  background: #ffffff12;
+  background: color-mix(in srgb, var(--wmd-text) 8%, transparent);
   color: var(--fg);
 }
 
@@ -1206,23 +1225,23 @@ html[data-wallpaper="true"] .ce-shell :is(input, textarea)::placeholder {
 }
 
 .ce-music-note.is-err {
-  color: #e0736f;
+  color: var(--wmd-danger);
 }
 
 .ce-music-retry {
   margin-left: 6px;
   padding: 0 6px;
   height: 16px;
-  border: 1px solid #e0736f66;
+  border: 1px solid var(--wmd-danger-border);
   border-radius: var(--ce-r-1);
   background: transparent;
-  color: #e0736f;
+  color: var(--wmd-danger);
   font-size: var(--ce-fs-1);
   cursor: pointer;
 }
 
 .ce-music-retry:hover {
-  background: #e0736f22;
+  background: var(--wmd-danger-soft);
 }
 
 .ce-music-list {
@@ -1283,8 +1302,8 @@ html[data-wallpaper="true"] .ce-shell :is(input, textarea)::placeholder {
 }
 
 .ce-music-badge.paid {
-  background: #cf5a9933;
-  color: #cf5a99;
+  background: color-mix(in srgb, var(--kind-text) 20%, transparent);
+  color: var(--kind-text);
 }
 
 .ce-music-act {
@@ -1347,7 +1366,7 @@ html[data-wallpaper="true"] .ce-shell :is(input, textarea)::placeholder {
 
 .ce-tile.kind-audio .ce-tile-art {
   background: var(--kind-audio-well);
-  border-color: #34c46f66;
+  border-color: color-mix(in srgb, var(--kind-audio) 40%, transparent);
 }
 
 .ce-tile-wave {
@@ -1828,11 +1847,11 @@ html[data-wallpaper="true"] .ce-shell :is(input, textarea)::placeholder {
 }
 
 .ce-lane.lane-audio {
-  background-color: #1b1f1d;
+  background-color: color-mix(in srgb, var(--kind-audio) 7%, var(--lane));
 }
 
 .ce-lane.lane-text {
-  background-color: #1e1b1d;
+  background-color: color-mix(in srgb, var(--kind-text) 7%, var(--lane));
 }
 
 .ce-clip {
@@ -1903,7 +1922,7 @@ html[data-wallpaper="true"] .ce-shell :is(input, textarea)::placeholder {
 .ce-clip-text {
   align-self: center;
   padding: 0 7px;
-  color: #ffe4b2;
+  color: var(--kind-text);
   font-size: var(--ce-fs-1);
   overflow: hidden;
   white-space: nowrap;
@@ -2028,7 +2047,7 @@ html[data-wallpaper="true"] .ce-shell :is(input, textarea)::placeholder {
 }
 
 .ce-err {
-  color: #ff453a;
+  color: var(--wmd-danger);
 }
 
 /* ------------------------------------------------------------ 工程选择 */
@@ -2249,7 +2268,7 @@ html[data-wallpaper="true"] .ce-shell :is(input, textarea)::placeholder {
 
 .ce-chain-x:hover {
   background: var(--field-hover);
-  color: #ff453a;
+  color: var(--wmd-danger);
 }
 
 /* 状态栏：导出进度 */
@@ -2277,8 +2296,8 @@ html[data-wallpaper="true"] .ce-shell :is(input, textarea)::placeholder {
 }
 
 .ce-export-bar button:hover {
-  border-color: #ff453a;
-  color: #ff453a;
+  border-color: var(--wmd-danger);
+  color: var(--wmd-danger);
 }
 
 .ce-btn-sq.on {
@@ -2399,7 +2418,7 @@ html[data-wallpaper="true"] .ce-shell :is(input, textarea)::placeholder {
 
 .ce-curve-grid {
   fill: none;
-  stroke: #ffffff1f;
+  stroke: var(--grid);
   stroke-width: 0.6;
 }
 
@@ -2411,13 +2430,13 @@ html[data-wallpaper="true"] .ce-shell :is(input, textarea)::placeholder {
 
 .ce-curve-dot {
   fill: var(--accent);
-  stroke: #101012;
+  stroke: var(--wmd-bg-0);
   stroke-width: 0.8;
   cursor: grab;
 }
 
 .ce-curve-dot:hover {
-  fill: #fff;
+  fill: var(--wmd-text);
 }
 
 /* ------------------------------------------------------- 画面链展开 / 关键帧 / 遮罩
@@ -2497,7 +2516,7 @@ html[data-wallpaper="true"] .ce-shell :is(input, textarea)::placeholder {
   position: absolute;
   z-index: 6;
   border: 1px solid var(--accent);
-  background: #cbf53f1f;
+  background: var(--accent-soft);
   pointer-events: none;
 }
 
@@ -2559,7 +2578,7 @@ html[data-wallpaper="true"] .ce-shell :is(input, textarea)::placeholder {
 }
 
 .ce-music-act.starred {
-  color: #ffd60a;
+  color: var(--wmd-warning);
 }
 
 /* 曲库分类那一排：比主芯片小一号，不抢「音乐/音效/本机/收藏/最近」的位置 */
