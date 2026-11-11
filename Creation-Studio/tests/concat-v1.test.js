@@ -687,3 +687,37 @@ test('预览帧：拖播放头/播放时带 nearest=1（引擎源码已支持，
   assert.ok(routes.includes("url.searchParams.get('nearest') === '1'"), '服务端直通 nearest');
   assert.ok(routes.includes("url.searchParams.get('proxy') === '1'"), '服务端直通 proxy');
 });
+
+test('时间轴操作手感：播放头能直接抓、移出标尺不断、中键平移、预览留边不写死黑', () => {
+  const page = readWeb('concat-editor.js');
+  const css = readWeb('concat-editor.css');
+
+  // 播放头本体是 pointer-events:none 的 1px 线，那颗倒三角是伪元素，直接点是点不到的。
+  // 必须在标尺高度内铺一条能接事件的透明热区，才谈得上「抓住播放头拖」。
+  const hot = css.indexOf('.ce-playhead::after');
+  assert.ok(hot >= 0, '播放头要有可抓的透明热区');
+  const hotRule = css.slice(hot, css.indexOf('}', hot));
+  assert.ok(/pointer-events:\s*auto/.test(hotRule), '热区要能接事件');
+  assert.ok(/height:\s*26px/.test(hotRule), '热区只盖标尺那 26px，别挡住轨道上拖片段');
+  assert.ok(page.includes('@pointerdown.stop="onRulerDown"'), '按在播放头上要能开始拖');
+
+  // 拖动期间 move/up 挂 window：原先挂在 26px 高的标尺上，鼠标一移出去就断，手感像拖不住
+  assert.ok(page.includes('startScrub: function'), '要有 startScrub');
+  assert.ok(page.includes("window.addEventListener('pointermove', move)"), 'pointermove 要挂 window 而不是标尺');
+  assert.ok(page.includes("window.addEventListener('pointerup', up)"), 'pointerup 同理');
+  assert.ok(!/@pointerleave="onRulerUp"/.test(page), '标尺上不能再挂 pointerleave，那会在拖出界时打断');
+  assert.ok(/this\.rulerDrag = true/.test(page), '拖动期间要置 rulerDrag，预览帧才会走 nearest');
+
+  // 中键（标尺上是 Shift+左键）按住拖 = 平移视图，左键留给拖片段/裁剪/框选
+  assert.ok(page.includes('startPan: function'), '要有中键平移');
+  assert.ok(/event\.button === 1/.test(page), '中键要单独分支，不能被 button !== 0 直接 return 掉');
+  assert.ok(/host\.scrollLeft = startLeft - /.test(page), '平移要反向跟手');
+  assert.ok(css.includes('.ce-tl-scroll.is-panning'), '平移时换成抓手光标');
+  assert.ok(/host\.scrollLeft \+= dx/.test(page), 'Shift+滚轮 / 触控板横扫也要能横向滑');
+
+  // 预览留边跟着主题走，别写死纯黑
+  const imgRule = css.slice(css.indexOf('.ce-stage img {'), css.indexOf('}', css.indexOf('.ce-stage img {')));
+  assert.ok(!/#000\b|#000000\b/.test(imgRule), '预览留边不能写死黑');
+  assert.ok(/background:\s*var\(--well\)/.test(imgRule), '预览留边走 well 色，跟着主题亮暗');
+  assert.ok(!/\.ce-stage:fullscreen\s*\{[^}]*#000/.test(css), '全屏预览底色也不写死黑');
+});

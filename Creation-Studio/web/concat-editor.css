@@ -1424,14 +1424,15 @@ html[data-wallpaper="true"] .ce-shell {
 }
 
 /* 引擎给的预览帧只有画布那么大（比如 640×360），别让它按原始像素缩在中间：
-   撑满整个监视器高度，按画布比例留边，跟剪映的播放器一个观感 */
+   撑满整个监视器高度，按画布比例留边，跟剪映的播放器一个观感。
+   留边不用纯黑：跟着主题走 well 色，亮色主题下不再是两块黑板。 */
 .ce-stage img {
   width: 100%;
   height: 100%;
   object-fit: contain;
   object-position: center;
   display: block;
-  background: #000;
+  background: var(--well);
   border-radius: var(--ce-r-1);
 }
 
@@ -1808,6 +1809,13 @@ html[data-wallpaper="true"] .ce-shell {
   background: var(--ruler);
 }
 
+/* 按住中键（或 Shift+左键）拖动 = 平移时间轴；拖的时候全局换成抓手，
+   不然经过片段会变成移动光标，让人以为在拖片段 */
+.ce-tl-scroll.is-panning,
+.ce-tl-scroll.is-panning * {
+  cursor: grabbing !important;
+}
+
 .ce-ruler {
   height: 26px;
   position: relative;
@@ -1970,11 +1978,26 @@ html[data-wallpaper="true"] .ce-shell {
   content: "";
   position: absolute;
   top: 0;
-  left: -5px;
-  width: 11px;
-  height: 8px;
+  left: -6px;
+  width: 13px;
+  height: 9px;
   background: var(--playhead);
   clip-path: polygon(0 0, 100% 0, 50% 100%);
+}
+
+/* 播放头原来整条 pointer-events:none，只能去标尺上「大概那个位置」点，
+   按住那颗小三角反而抓不住。这里在标尺高度内铺一条 13px 宽的透明热区，
+   直接按住播放头就能拖；只盖标尺那 26px，下面的轨道照常拖片段。 */
+.ce-playhead::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -6px;
+  width: 13px;
+  height: 26px;
+  background: transparent;
+  pointer-events: auto;
+  cursor: ew-resize;
 }
 
 /* 电平表 */
@@ -2315,9 +2338,9 @@ html[data-wallpaper="true"] .ce-shell {
   opacity: 1;
 }
 
-/* 全屏预览 */
+/* 全屏预览：底色跟主题走，暗色主题下本来就近黑，亮色主题下不至于突然变一块黑板 */
 .ce-stage:fullscreen {
-  background: #000;
+  background: var(--wmd-bg-0);
   padding: 0;
 }
 

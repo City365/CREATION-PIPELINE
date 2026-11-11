@@ -656,9 +656,9 @@
     '          <span class="ce-lane-tag" :class="\'kind-\' + track.kind">{{ track.label }}</span>',
     '        </div>',
     '      </div>',
-    '      <div class="ce-tl-scroll" ref="tlScroll" @wheel="onWheel" @pointerdown="onLaneDown">',
+    '      <div class="ce-tl-scroll" ref="tlScroll" :class="{ \'is-panning\': panning }" @wheel="onWheel" @pointerdown="onLaneDown">',
     '        <div class="ce-ruler" :style="{ width: contentWidth + \'px\' }"',
-    '             @pointerdown="onRulerDown" @pointermove="onRulerMove" @pointerup="onRulerUp" @pointerleave="onRulerUp">',
+    '             @pointerdown="onRulerDown">',
     '          <span v-for="tick in ticks" :key="tick.at" class="ce-tick" :style="{ left: (tick.at * zoom) + \'px\' }"><em>{{ tick.label }}</em></span>',
     '        </div>',
     '        <div v-for="track in tracksDesc" :key="track.id" class="ce-lane"',
@@ -682,7 +682,7 @@
     '            <span class="ce-edge right" @pointerdown.stop="onClipDown($event, clip, \'trim-end\')"></span>',
     '          </div>',
     '        </div>',
-    '        <div class="ce-playhead" :style="{ left: (playhead * zoom) + \'px\' }"></div>',
+    '        <div class="ce-playhead" :style="{ left: (playhead * zoom) + \'px\' }" @pointerdown.stop="onRulerDown"></div>',
     '        <div class="ce-marquee" v-if="marquee && marquee.moved" :style="marqueeStyle()"></div>',
     '      </div>',
     '      <div class="ce-meters">',
@@ -704,7 +704,7 @@
     '    <span v-else-if="notice">{{ notice }}</span>',
     '    <span v-else-if="error" class="ce-err">{{ error }}</span>',
     '    <span v-else-if="healthWarnings.length" class="ce-err" :title="healthTitle">{{ healthWarnings[0] }}</span>',
-    '    <span v-else class="ce-dim">拖片段移动 · 拖两端裁剪 · S 切开 · Del 删除 · ←/→ 逐帧 · 空格播放 · Ctrl+滚轮缩放</span>',
+    '    <span v-else class="ce-dim">拖片段移动 · 拖两端裁剪 · S 切开 · Del 删除 · ←/→ 逐帧 · 空格播放 · 中键拖动平移 · Ctrl+滚轮缩放</span>',
     '    <span class="ce-status-right">{{ engineOn ? "引擎 " + apiVersion : "引擎未启动" }}</span>',
     '  </footer>',
     '</div>',
@@ -819,6 +819,7 @@
           peaks: {},
           drag: null,
           rulerDrag: false,
+          panning: false,
           playTimer: 0,
           lastFrameAt: 0,
           frameTimer: 0,
@@ -3161,9 +3162,34 @@
           };
         },
 
+        /* --------------------------------------------------- 平移时间轴 */
+        /* 中键按住拖（标尺上则是 Shift+左键）左右平移视图。左键留给拖片段/裁剪/框选，
+           中键在整个剪辑软件里都是「拖画面」的那只手，不会误触任何编辑动作。 */
+        startPan: function (event) {
+          var host = this.$refs.tlScroll;
+          if (!host) return;
+          event.preventDefault();
+          var self = this;
+          var startX = event.clientX;
+          var startLeft = host.scrollLeft;
+          this.panning = true;
+          var move = function (e) {
+            /* 鼠标往右拖，内容跟着往右走，所以是减 */
+            host.scrollLeft = startLeft - (e.clientX - startX);
+          };
+          var up = function () {
+            self.panning = false;
+            window.removeEventListener('pointermove', move);
+            window.removeEventListener('pointerup', up);
+          };
+          window.addEventListener('pointermove', move);
+          window.addEventListener('pointerup', up);
+        },
+
         /* --------------------------------------------------- 拖动/裁剪 */
         /* 框选：空白处按下拖一个矩形，松手选中框里的片段（Shift/Ctrl 追加） */
         onLaneDown: function (event) {
+          if (event.button === 1) { this.startPan(event); return; }
           if (event.button !== 0) return;
           var target = event.target;
           if (target && target.closest && (target.closest('.ce-clip') || target.closest('.ce-ruler') || target.closest('.ce-playhead'))) return;
@@ -3394,7 +3420,29 @@
           this.playhead = next;
           if (force) this.queueFrame(0, true);
         },
-        onRulerDown: function (event) { this.rulerDrag = true; this.seekAtPoint(event); },
+        onRulerDown: function (event) {
+          /* 标尺上左键 = 拖播放头（老手感保留）；中键或 Shift+左键 = 平移视图，
+             这样想横向滑的时候不用去够滚动条，也不会把播放头带跑。 */
+          if (event.button === 1 || event.shiftKey) { this.startPan(event); return; }
+          if (event.button !== 0) return;
+          this.startScrub(event);
+        },
+        /* 拖播放头：move/up 挂在 window 上。原先挂在标尺元素上，鼠标一移出
+           26px 高的标尺（往下拖到轨道区、或拖出容器）就触发 pointerleave 断掉，
+           手感上就是「拖不住」。 */
+        startScrub: function (event) {
+          var self = this;
+          this.rulerDrag = true;
+          this.seekAtPoint(event);
+          var move = function (e) { self.seekAtPoint(e); };
+          var up = function () {
+            self.rulerDrag = false;
+            window.removeEventListener('pointermove', move);
+            window.removeEventListener('pointerup', up);
+          };
+          window.addEventListener('pointermove', move);
+          window.addEventListener('pointerup', up);
+        },
         onRulerMove: function (event) { if (this.rulerDrag) this.seekAtPoint(event); },
         onRulerUp: function () { this.rulerDrag = false; },
         seekAtPoint: function (event) {
@@ -3636,9 +3684,19 @@
           window.addEventListener('pointerup', up);
         },
         onWheel: function (event) {
-          if (!event.ctrlKey && !event.metaKey) return;
+          if (event.ctrlKey || event.metaKey) {
+            event.preventDefault();
+            this.zoomBy(event.deltaY < 0 ? 1.12 : 0.89);
+            return;
+          }
+          var host = this.$refs.tlScroll;
+          if (!host) return;
+          /* 触控板横扫、Shift+滚轮都是「时间轴左右滑」；普通竖滚留给轨道列表上下滚 */
+          var dx = event.deltaX;
+          if (!dx && event.shiftKey) dx = event.deltaY;
+          if (!dx) return;
           event.preventDefault();
-          this.zoomBy(event.deltaY < 0 ? 1.12 : 0.89);
+          host.scrollLeft += dx;
         },
         onKeyDown: function (event) {
           var tag = (event.target && event.target.tagName) || '';
